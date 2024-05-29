@@ -9,6 +9,15 @@ import numpy as np
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+#device = torch.device("cpu")
+print(device)
+
 # Define a CNN model
 class CNN(nn.Module):
     def __init__(self, in_size=1, out_size=10):
@@ -64,6 +73,7 @@ def retrain_model(model, trainloader, criterion, optimizer, num_epochs=5):
     for epoch in range(num_epochs):
         running_loss = 0.0
         for inputs, labels in trainloader:
+            inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs, _ = model(inputs)
             loss = criterion(outputs, labels)
@@ -76,7 +86,7 @@ def retrain_model(model, trainloader, criterion, optimizer, num_epochs=5):
     print("Model retraining complete.")
 
 # Initialize the model, optimizer, and criterion
-model = CNN(1,10)
+model = CNN(1,10).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -89,6 +99,7 @@ def extract_latent_features(model, dataloader, num_batches=5):
         for batch_idx, (inputs, targets) in enumerate(dataloader):
             if batch_idx >= num_batches:
                 break
+            inputs, targets = inputs.to(device), targets.to(device)
             _, latent_features = model(inputs)
             features.append(latent_features.cpu().numpy())
             labels.append(targets.cpu().numpy())
@@ -144,6 +155,7 @@ for epoch in range(num_epochs):
     running_loss = 0.0
     for i, data in enumerate(trainloader, 0):
         inputs, labels = data
+        inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         outputs, _ = model(inputs)
         loss = criterion(outputs, labels)
