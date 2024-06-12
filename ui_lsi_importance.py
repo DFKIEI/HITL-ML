@@ -26,7 +26,7 @@ else:
 
 # Define a CNN model
 class CNN(nn.Module):
-    def __init__(self, in_channels=1, out_size=10,num_layers=3,dropout=0.1):
+    def __init__(self, in_channels=1, out_size=10, num_layers=3, dropout=0.1):
         super(CNN, self).__init__()
         self.num_layers = num_layers
         hidden = (32, 64, 128)[:num_layers]
@@ -46,55 +46,35 @@ class CNN(nn.Module):
         self.global_max_pool = nn.AdaptiveMaxPool2d((1, 1))
         self.fc1 = nn.Linear(hidden[-1], 128)
         self.fc2 = nn.Linear(128, out_size)
-        
-        #self.conv1 = nn.Conv2d(in_size, hidden[0], kernel_size=kernel1)
-        #self.dropout1 = nn.Dropout(dropout)
-        #self.conv2 = nn.Conv2d(hidden[0], hidden[1], kernel_size=kernel2)
-        #self.dropout2 = nn.Dropout(dropout)
-        #self.conv3 = nn.Conv2d(hidden[1], hidden[2], kernel_size=kernel3)
-        #self.dropout3 = nn.Dropout(dropout)
-        #self.global_max_pool = nn.AdaptiveMaxPool2d((1, 1))
-
-        # Classifier head
-        #self.fc1 = nn.Linear(hidden[2], 128)
-        #self.fc2 = nn.Linear(128, out_size)
 
     def forward(self, x):
-        # Apply convolutional layers
         x = F.relu(self.conv1(x))
         x = self.dropout1(x)
+        intermediate_outputs = [x]
 
         for conv_layer, dropout_layer in zip(self.conv_layers, self.dropout_layers):
             x = F.relu(conv_layer(x))
             x = dropout_layer(x)
-
-        #x = F.relu(self.conv2(x))
-        #x = self.dropout2(x)
-        #x = F.relu(self.conv3(x))
-        #x = self.dropout3(x)
+            intermediate_outputs.append(x)
         
-        # Global max pooling
         x = self.global_max_pool(x)
-
-        # Flatten for fully connected layers
         x = x.view(x.size(0), -1)
-
-        # Latent features
         latent_features = F.relu(self.fc1(x))
-
-        # Fully connected layers
+        intermediate_outputs.append(latent_features)
         x = self.fc2(latent_features)
-        return x, latent_features
+
+        return x, latent_features, intermediate_outputs
+
 
 # Load MNIST dataset
 transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
 trainset = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=64, shuffle=True)
 
-def update_layers(event):
-    global num_layers
-    num_layers = layer_slider.get()
-    reinitialize_model()
+#def update_layers(event):
+#    global num_layers
+#    num_layers = layer_slider.get()
+#    reinitialize_model()
 
 def reinitialize_model():
     global model, optimizer
@@ -116,10 +96,30 @@ distance_weight = 0.1
 # Variable to hold manually corrected distances
 corrected_distances = {}
 
+selected_layer=3
+
+
+
 num_features_for_plotting_highd=10
+
+current_num_epochs = num_epochs
+current_layer = selected_layer
+current_num_features = num_features_for_plotting_highd
 
 def start_training():
     global training, training_thread
+    global current_num_epochs, current_layer, current_num_features
+
+    if (num_epochs != current_num_epochs or 
+        selected_layer != current_layer or 
+        num_features_for_plotting_highd != current_num_features):
+        stop_training()
+        #reinitialize_model()
+        current_num_epochs = num_epochs
+        current_layer = num_layers
+        current_num_features = num_features_for_plotting_highd
+        reinitialize_model()
+
     if training_thread is None or not training_thread.is_alive():
         training = True
         training_thread = threading.Thread(target=train_model)
@@ -142,12 +142,14 @@ def stop_training():
     training = False
 
 def update_epochs(event):
-    global num_epochs
+    global num_epochs, current_num_epochs
     num_epochs = epoch_slider.get()
+    current_num_epochs = num_epochs
 
 def update_features(event):
-    global num_features_for_plotting_highd
+    global num_features_for_plotting_highd, current_num_features
     num_features_for_plotting_highd = feature_slider.get()
+    current_num_features = num_features_for_plotting_highd
 
 def train_model():
     global training    
@@ -161,7 +163,7 @@ def train_model():
             inputs, labels = data
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
-            outputs, latent_features = model(inputs)
+            outputs, latent_features, _ = model(inputs)
             loss = criterion(outputs, labels)
             loss += distance_weight * calculate_distance_loss(latent_features,labels)
             loss.backward()
@@ -180,6 +182,7 @@ def update_status_labels(epoch, batch, loss):
     batch_label_var.set(f"Batch: {batch}")
     loss_label_var.set(f"Loss: {loss:.3f}")
 
+# Update the display_visualization function to handle the new dropdown
 def display_visualization():
     selected_tab = notebook.index(notebook.select())
     if selected_tab == 0:
@@ -189,22 +192,29 @@ def display_visualization():
     elif selected_tab == 2:
         display_parallel_coordinates()
 
+    layer_dropdown['values'] = [f'Layer {i}' for i in range(num_layers + 1)]
+    layer_dropdown.current(num_layers)
+
 def display_scatter_plot():
-    InteractivePlot(model, trainloader, 'scatter')
+    InteractivePlot(model, trainloader, 'scatter', get_classes(trainloader))
 
 def display_radar_chart():
-    InteractivePlot(model, trainloader, 'radar')
+    selected_classes = list(map(int, selected_classes_var.get().split(", ")))
+    InteractivePlot(model, trainloader, 'radar', selected_classes)
 
 def display_parallel_coordinates():
-    InteractivePlot(model, trainloader, 'parallel')
+    selected_classes = list(map(int, selected_classes_var.get().split(", ")))
+    InteractivePlot(model, trainloader, 'parallel', selected_classes)
+
 
     
 
 class InteractivePlot:
-    def __init__(self, model, dataloader, plot_type):
+    def __init__(self, model, dataloader, plot_type, selected_classes):
         self.model = model
         self.dataloader = dataloader
         self.plot_type = plot_type
+        self.selected_classes = selected_classes
         self.latent_features, self.labels = extract_latent_features(self.model, self.dataloader, num_batches=5)
         n_components = min(50, self.latent_features.shape[0], self.latent_features.shape[1])
         self.pca = PCA(n_components=n_components)
@@ -276,10 +286,15 @@ class InteractivePlot:
 
 
     def plot_radar(self):
-        num_features = min(num_features_for_plotting_highd, self.pca_features.shape[1])
+        selected_indices = np.isin(self.labels, self.selected_classes)
+        selected_features = self.pca_features[selected_indices]
+        selected_labels = self.labels[selected_indices]
+
+        num_features = min(num_features_for_plotting_highd, selected_features.shape[1])
         important_indices = np.argsort(self.feature_importance)[-num_features:]
         feature_names = [f"Feature {i}" for i in important_indices]
-        data_mean = np.mean(self.pca_features[:, important_indices], axis=0)
+        data_mean = np.mean(selected_features[:, important_indices], axis=0)
+
         fig, ax = plt.subplots(figsize=(12, 8), subplot_kw=dict(polar=True))
         angles = np.linspace(0, 2 * np.pi, len(feature_names), endpoint=False).tolist()
         data = np.concatenate((data_mean, [data_mean[0]]))
@@ -295,7 +310,6 @@ class InteractivePlot:
                 distances = np.sqrt((data - y) ** 2)
                 index = np.argmin(distances)
                 selected_index_var.set(f"Selected Index: {index}")
-                # You can add further processing here based on the selected index
 
         fig.canvas.mpl_connect('button_press_event', on_click)
 
@@ -307,24 +321,26 @@ class InteractivePlot:
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def plot_parallel_coordinates(self):
-        num_features = min(num_features_for_plotting_highd, self.pca_features.shape[1])
+        selected_indices = np.isin(self.labels, self.selected_classes)
+        selected_features = self.pca_features[selected_indices]
+        selected_labels = self.labels[selected_indices]
+
+        num_features = min(num_features_for_plotting_highd, selected_features.shape[1])
         important_indices = np.argsort(self.feature_importance)[-num_features:]
-        df = pd.DataFrame(self.pca_features[:, important_indices])
-        df['label'] = self.labels
+        df = pd.DataFrame(selected_features[:, important_indices])
+        df['label'] = selected_labels
+
         fig, ax = plt.subplots(figsize=(12, 8))
         parallel_coordinates(df, 'label', colormap='tab10', ax=ax)
 
         def on_click(event):
             if event.inaxes is not None:
                 line_y = event.ydata
-                # Find the index of the closest line to the clicked y-coordinate
                 distances = np.abs(ax.get_lines()[0].get_ydata() - line_y)
                 closest_line_index = np.argmin(distances)
                 selected_data_point = df.iloc[closest_line_index]
                 selected_index_var.set(f"Selected Data Point Index: {closest_line_index}")
-                #selected_label_var.set(f"Selected Label: {selected_data_point['label']}")
-                # You can add further processing here based on the selected data point
-        
+
         fig.canvas.mpl_connect('button_press_event', on_click)
 
         for widget in parallel_tab.winfo_children():
@@ -373,15 +389,79 @@ def extract_latent_features(model, dataloader, num_batches=5):
             if batch_idx >= num_batches:
                 break
             inputs, targets = inputs.to(device), targets.to(device)
-            _, latent_features = model(inputs)
+            _, latent_features, _ = model(inputs)
             features.append(latent_features.cpu().numpy())
             labels.append(targets.cpu().numpy())
     features = np.concatenate(features)
     labels = np.concatenate(labels)
     return features, labels
 
+# Update the function to extract intermediate features
+def extract_intermediate_features(model, dataloader, num_batches=5, selected_layer=3):
+    model.eval()
+    features = []
+    labels = []
+    layer_index = selected_layer
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(dataloader):
+            if batch_idx >= num_batches:
+                break
+            inputs, targets = inputs.to(device), targets.to(device)
+            _, _, intermediate_outputs = model(inputs)
+            selected_features = intermediate_outputs[layer_index]
+            if selected_features.dim() > 2:
+                selected_features = selected_features.view(selected_features.size(0), -1)
+            features.append(selected_features.cpu().numpy())
+            labels.append(targets.cpu().numpy())
+    features = np.concatenate(features)
+    labels = np.concatenate(labels)
+    return features, labels
+
+
+
 def on_tab_changed(event):
     display_visualization()
+
+def update_layer_selection(event):
+    global selected_layer, current_layers
+    selected_layer = layer_dropdown.current()
+    current_layer = selected_layer
+
+def get_classes(dataloader):
+    classes = set()
+    for _, labels in dataloader:
+        classes.update(labels.numpy())
+    return sorted(list(classes))
+
+
+class MultiSelectDropdown(tk.Toplevel):
+    def __init__(self, parent, options, title="Select Classes"):
+        super().__init__(parent)
+        self.title(title)
+        self.selected_options = []
+
+        self.check_vars = []
+        for option in options:
+            var = tk.BooleanVar()
+            chk = tk.Checkbutton(self, text=option, variable=var)
+            chk.pack(anchor=tk.W)
+            self.check_vars.append((var, option))
+
+        btn = tk.Button(self, text="OK", command=self.on_ok)
+        btn.pack()
+
+    def on_ok(self):
+        self.selected_options = [option for var, option in self.check_vars if var.get()]
+        self.destroy()
+
+def show_class_selection():
+    classes = get_classes(trainloader)
+    dropdown = MultiSelectDropdown(root, classes)
+    root.wait_window(dropdown)
+    selected_classes_var.set(", ".join(map(str, dropdown.selected_options)))
+
+
+
 
 # TKinter setup
 root = tk.Tk()
@@ -396,10 +476,10 @@ control_panel = ttk.LabelFrame(main_frame, text="Control Panel")
 control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
 # Add layer slider
-ttk.Label(control_panel, text="Number of Layers:").pack(pady=5)
-layer_slider = tk.Scale(control_panel, from_=1, to=3, orient=tk.HORIZONTAL, command=update_layers)
-layer_slider.set(num_layers)
-layer_slider.pack(padx=5, pady=5)
+#ttk.Label(control_panel, text="Number of Layers:").pack(pady=5)
+#layer_slider = tk.Scale(control_panel, from_=1, to=3, orient=tk.HORIZONTAL, command=update_layers)
+#layer_slider.set(num_layers)
+#layer_slider.pack(padx=5, pady=5)
 
 # Add epoch slider
 ttk.Label(control_panel, text="Number of Epochs:").pack(pady=5)
@@ -419,6 +499,26 @@ start_button.pack(pady=5)
 
 pause_button = ttk.Button(control_panel, text="Pause Training", command=pause_training)
 pause_button.pack(pady=5)
+
+# Adding a dropdown for selecting intermediate layers
+ttk.Label(control_panel, text="Select Intermediate Layer:").pack(pady=5)
+layer_var = tk.StringVar()
+layer_dropdown = ttk.Combobox(control_panel, textvariable=layer_var)
+layer_dropdown['values'] = [f'Layer {i}' for i in range(num_layers + 1)]
+layer_dropdown.current(num_layers)
+layer_dropdown.bind("<<ComboboxSelected>>", update_layer_selection)
+layer_dropdown.pack(pady=5)
+
+selected_layer = layer_dropdown.current()
+
+# Add classes dropdown
+ttk.Label(control_panel, text="Select Classes to Visualize:").pack(pady=5)
+selected_classes_var = tk.StringVar()
+selected_classes_label = ttk.Label(control_panel, textvariable=selected_classes_var)
+selected_classes_label.pack(pady=5)
+select_classes_button = ttk.Button(control_panel, text="Select Classes", command=show_class_selection)
+select_classes_button.pack(pady=5)
+
 
 #resume_button = ttk.Button(control_panel, text="Resume Training", command=resume_training)
 #resume_button.pack(pady=5)
