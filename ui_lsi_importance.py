@@ -15,6 +15,22 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import threading
 import pandas as pd
 from pandas.plotting import parallel_coordinates
+from PAMAP2_data import PAMAP2
+from torch.utils.data import DataLoader
+from matplotlib.colors import ListedColormap
+
+def create_dataloaders(data_dir, batch_size=32, window_size=200, window_step=50, frequency=50, columns=None):
+    # Create dataset instances
+    train_dataset = PAMAP2(data_dir=data_dir, users='train', window_size=window_size, window_step=window_step, frequency=frequency, columns=columns)
+    val_dataset = PAMAP2(data_dir=data_dir, users='val', window_size=window_size, window_step=window_step, frequency=frequency, columns=columns)
+    test_dataset = PAMAP2(data_dir=data_dir, users='test', window_size=window_size, window_step=window_step, frequency=frequency, columns=columns)
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    
+    return train_loader, val_loader, test_loader, train_dataset, val_dataset, test_dataset
 
 # Device selection
 if torch.cuda.is_available():
@@ -24,7 +40,7 @@ elif torch.backends.mps.is_available():
 else:
     device = torch.device("cpu")
 
-# Define a CNN model
+
 class CNN(nn.Module):
     def __init__(self, in_channels=1, out_size=10, num_layers=3, dropout=0.1):
         super(CNN, self).__init__()
@@ -65,11 +81,116 @@ class CNN(nn.Module):
 
         return x, latent_features, intermediate_outputs
 
+class CNN_PAMAP2(nn.Module):
+    def __init__(self, in_size, out_size, **kwargs):
+        super(CNN, self).__init__()
+        hidden = 32, 64, 128, 1024
+        kernel1, kernel2, kernel3 = 24, 16, 8
+        dropout = 0.1
+        self.conv1 = nn.Conv1d(in_size, hidden[0], kernel_size=kernel1)
+        self.dropout1 = nn.Dropout(dropout)
+        self.conv2 = nn.Conv1d(hidden[0], hidden[1], kernel_size=kernel2)
+        self.dropout2 = nn.Dropout(dropout)
+        self.conv3 = nn.Conv1d(hidden[1], hidden[2], kernel_size=kernel3)
+        self.dropout3 = nn.Dropout(dropout)
+        self.global_max_pool = nn.AdaptiveMaxPool1d(output_size=1)
+
+        # Classifier head
+        self.dense1 = nn.Linear(hidden[2], hidden[3])
+        self.dense2 = nn.Linear(hidden[3], out_size)
+
+    def forward(self, x):
+        x = x.permute(0, 2, 1)
+        x = torch.relu(self.conv1(x))
+        x = self.dropout1(x)
+        x = torch.relu(self.conv2(x))
+        x = self.dropout2(x)
+        x = torch.relu(self.conv3(x))
+        x = self.dropout3(x)
+        x = torch.flatten(self.global_max_pool(x), start_dim=1)
+
+        x = torch.relu(self.dense1(x))
+        x = self.dense2(x)
+        return x
+
+    @torch.no_grad()
+    def predict(self, x):
+        self.eval()
+        r = self.forward(x)
+        return r.argmax(dim=-1)
+
+# Define a CNN model
+class CNN_PAMAP2(nn.Module):
+    def __init__(self, in_size, out_size, dropout=0.1):
+        super(CNN_PAMAP2, self).__init__()
+        hidden = (32, 64, 128, 1024)
+        kernel1, kernel2, kernel3 = 24, 16, 8
+
+        self.conv1 = nn.Conv1d(in_size, hidden[0], kernel_size=kernel1)
+        self.dropout1 = nn.Dropout(dropout)
+        self.conv2 = nn.Conv1d(hidden[0], hidden[1], kernel_size=kernel2)
+        self.dropout2 = nn.Dropout(dropout)
+        self.conv3 = nn.Conv1d(hidden[1], hidden[2], kernel_size=kernel3)
+        self.dropout3 = nn.Dropout(dropout)
+        self.global_max_pool = nn.AdaptiveMaxPool1d(output_size=1)
+
+        # Classifier head
+        self.dense1 = nn.Linear(hidden[2], hidden[3])
+        self.dense2 = nn.Linear(hidden[3], out_size)
+
+    def forward(self, x):
+        x = x.permute(0, 2, 1)  # Permute to match the expected input shape of Conv1d
+        x = F.relu(self.conv1(x))
+        x = self.dropout1(x)
+        intermediate_outputs = [x]
+        
+        x = F.relu(self.conv2(x))
+        x = self.dropout2(x)
+        intermediate_outputs.append(x)
+        
+        x = F.relu(self.conv3(x))
+        x = self.dropout3(x)
+        intermediate_outputs.append(x)
+        
+        x = torch.flatten(self.global_max_pool(x), start_dim=1)
+        
+        latent_features = F.relu(self.dense1(x))
+        intermediate_outputs.append(latent_features)
+        
+        x = self.dense2(latent_features)
+
+        return x, latent_features, intermediate_outputs
+
+    @torch.no_grad()
+    def predict(self, x):
+        self.eval()
+        r, _, _ = self.forward(x)
+        return r.argmax(dim=-1)
+
+
 
 # Load MNIST dataset
 transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
 trainset = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=64, shuffle=True)
+
+
+data_dir = "dataset"
+batch_size = 32
+window_size = 200
+window_step = 50
+frequency = 50
+columns = ['hand_acc_16g_x', 'hand_acc_16g_y', 'hand_acc_16g_z', 
+           'hand_gyroscope_x', 'hand_gyroscope_y', 'hand_gyroscope_z', 
+           'hand_magnometer_x', 'hand_magnometer_y', 'hand_magnometer_z', 
+           'chest_acc_16g_x', 'chest_acc_16g_y', 'chest_acc_16g_z', 
+           'chest_gyroscope_x', 'chest_gyroscope_y', 'chest_gyroscope_z', 
+           'chest_magnometer_x', 'chest_magnometer_y', 'chest_magnometer_z', 
+           'ankle_acc_16g_x', 'ankle_acc_16g_y', 'ankle_acc_16g_z',  
+           'ankle_gyroscope_x', 'ankle_gyroscope_y', 'ankle_gyroscope_z', 
+           'ankle_magnometer_x', 'ankle_magnometer_y', 'ankle_magnometer_z']
+
+#trainloader, valloader, testloader, trainset, valdataset, testdataset = create_dataloaders(data_dir, batch_size, window_size, window_step, frequency, columns)
 
 #def update_layers(event):
 #    global num_layers
@@ -92,7 +213,7 @@ optimizer = optim.Adam(model.parameters(), lr=0.001)
 training = False
 num_epochs = 5
 training_thread = None
-distance_weight = 0.1
+distance_weight = 0.01
 # Variable to hold manually corrected distances
 corrected_distances = {}
 
@@ -157,6 +278,8 @@ def train_model():
         if not training:
             break
         running_loss = 0.0
+        correct_predictions = 0
+        total_predictions = 0
         for i, data in enumerate(trainloader, 0):
             if not training:
                 break
@@ -164,23 +287,31 @@ def train_model():
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs, latent_features, _ = model(inputs)
+            predictions = outputs.argmax(dim=1)
             loss = criterion(outputs, labels)
-            loss += distance_weight * calculate_distance_loss(latent_features,labels)
+            loss += distance_weight * calculate_distance_loss(latent_features,labels) # use this to enable interactive loss function
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+
+            # Calculate accuracy
+            correct_predictions += (predictions == labels).sum().item()
+            total_predictions += labels.size(0)
+            
             if i % 200 == 199:
                 avg_loss = running_loss / 200
-                print(f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}")
-                update_status_labels(epoch + 1, i + 1, avg_loss)
+                accuracy = correct_predictions / total_predictions
+                print(f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.3f}")
+                update_status_labels(epoch + 1, i + 1, avg_loss, accuracy)
                 running_loss = 0.0
         if training:
             root.after(0, display_visualization)
 
-def update_status_labels(epoch, batch, loss):
+def update_status_labels(epoch, batch, loss, accuracy):
     epoch_label_var.set(f"Epoch: {epoch}")
     batch_label_var.set(f"Batch: {batch}")
     loss_label_var.set(f"Loss: {loss:.3f}")
+    accuracy_label_var.set(f"Accuracy: {accuracy:.3f}")
 
 # Update the display_visualization function to handle the new dropdown
 def display_visualization():
@@ -203,8 +334,12 @@ def display_radar_chart():
     InteractivePlot(model, trainloader, 'radar', selected_classes)
 
 def display_parallel_coordinates():
-    selected_classes = list(map(int, selected_classes_var.get().split(", ")))
-    InteractivePlot(model, trainloader, 'parallel', selected_classes)
+    try:
+        selected_classes = [int(cls) for cls in selected_classes_var.get().split(", ") if cls]
+        InteractivePlot(model, trainloader, 'parallel', selected_classes)
+    except ValueError:
+        print("Invalid class selection. Please ensure all selected classes are valid integers.")
+
 
 
     
@@ -222,6 +357,7 @@ class InteractivePlot:
         self.tsne = TSNE(n_components=2, random_state=0)
         self.reduced_features = self.tsne.fit_transform(self.pca_features)
         self.feature_importance = self.compute_feature_importance()
+        self.cluster_centers = self.calculate_cluster_centers()
         self.plot()
 
     def compute_feature_importance(self):
@@ -230,6 +366,14 @@ class InteractivePlot:
         num_features = min(50, len(feature_importance))  # Limit to the number of components
         important_indices = np.argsort(feature_importance)[-num_features:]
         return important_indices
+
+    def calculate_cluster_centers(self):
+        cluster_centers = []
+        for label in np.unique(self.labels):
+            cluster_points = self.reduced_features[self.labels == label]
+            center = np.mean(cluster_points, axis=0)
+            cluster_centers.append(center)
+        return np.array(cluster_centers)
 
     def update_cluster_center(self,selected_index):
         if selected_index is not None:
@@ -259,8 +403,16 @@ class InteractivePlot:
 
     def plot_scatter(self):
         fig, ax = plt.subplots(figsize=(12, 8))
+        cmap = ListedColormap(plt.cm.tab10.colors)
         self.scatter = ax.scatter(self.reduced_features[:, 0], self.reduced_features[:, 1], c=self.labels, cmap='tab10', alpha=0.6)
         plt.colorbar(self.scatter)
+
+        # Plot cluster centers with a cross marker
+        #plt.scatter(self.cluster_centers[:, 0], self.cluster_centers[:, 1], c=self.labels, marker='x', s=100, label='Cluster Centers', alpha=0.6)
+        
+        cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
+        for center, color in zip(self.cluster_centers, cluster_center_colors):
+            ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
 
         def on_click(event):
             if event.inaxes is not None:
@@ -370,15 +522,48 @@ class InteractivePlot:
         corrected_distances[index] = correct_midpoint
 
 def calculate_distance_loss(latent_features, labels):
-    # Use the manually corrected distances if available
-    if corrected_distances:
-        distance_loss = 0.0
-        for idx, correct_cluster_midpoint in corrected_distances.items():
-            selected_point = latent_features[idx].cpu().detach().numpy()
-            distance = np.linalg.norm(selected_point - correct_cluster_midpoint)
-            distance_loss += distance
-        return distance_loss / len(corrected_distances)
-    return 0.0
+    unique_labels = labels.unique()
+    distance_loss = 0.0
+    for label in unique_labels:
+        class_features = latent_features[labels == label]
+        cluster_center = class_features.mean(dim=0)
+        distances = torch.norm(class_features - cluster_center, dim=1)
+        distance_loss += distances.mean()
+    return distance_loss
+
+def calculate_distance_loss_total(latent_features, labels):
+    try:
+        unique_labels = labels.unique()
+        num_classes = len(unique_labels)
+        distance_loss_within = 0.0
+        distance_loss_between = 0.0
+        cluster_centers = []
+
+        # Calculate within-cluster distance and find cluster centers
+        for label in unique_labels:
+            class_features = latent_features[labels == label]
+            cluster_center = class_features.mean(dim=0)
+            cluster_centers.append(cluster_center)
+            distances = torch.norm(class_features - cluster_center, dim=1)
+            distance_loss_within += distances.mean()
+        
+        # Calculate between-cluster distance
+        for i in range(num_classes):
+            for j in range(i + 1, num_classes):
+                distance_loss_between += torch.norm(cluster_centers[i] - cluster_centers[j])
+        
+        # Normalize the between-cluster distance by the number of comparisons
+        if num_classes > 1:
+            distance_loss_between /= (num_classes * (num_classes - 1) / 2)
+        
+        # Combine the two components: within-cluster and between-cluster distances
+        total_distance_loss = distance_loss_within - distance_loss_between
+        
+        return total_distance_loss
+    
+    except Exception as e:
+        print(f"Error calculating distance loss: {e}")
+        return 0.0
 
 def extract_latent_features(model, dataloader, num_batches=5):
     model.eval()
@@ -433,6 +618,15 @@ def get_classes(dataloader):
         classes.update(labels.numpy())
     return sorted(list(classes))
 
+def toggle_training():
+    global training
+    if not training:
+        start_training()
+        training_button_text.set("Pause Training")
+    else:
+        pause_training()
+        training_button_text.set("Resume Training")
+
 
 class MultiSelectDropdown(tk.Toplevel):
     def __init__(self, parent, options, title="Select Classes"):
@@ -467,6 +661,10 @@ def show_class_selection():
 root = tk.Tk()
 root.title("Training Control Panel")
 
+# Get all classes and initialize selected_classes_var
+all_classes = get_classes(trainloader)
+selected_classes_var = tk.StringVar(value=", ".join(map(str, all_classes)))
+
 # Create the main frame
 main_frame = tk.Frame(root)
 main_frame.pack(fill=tk.BOTH, expand=True)
@@ -494,11 +692,20 @@ feature_slider.set(num_features_for_plotting_highd)
 feature_slider.pack(padx=5, pady=5)
 
 # Add control buttons
-start_button = ttk.Button(control_panel, text="Start Training", command=start_training)
-start_button.pack(pady=5)
+#start_button = ttk.Button(control_panel, text="Start Training", command=start_training)
+#start_button.pack(pady=5)
 
-pause_button = ttk.Button(control_panel, text="Pause Training", command=pause_training)
-pause_button.pack(pady=5)
+#pause_button = ttk.Button(control_panel, text="Pause Training", command=pause_training)
+#pause_button.pack(pady=5)
+
+
+# Training control button
+training_button_text = tk.StringVar()
+training_button = ttk.Button(control_panel, textvariable=training_button_text, command=toggle_training)
+training_button.pack(pady=5)
+
+# Set initial button text
+training_button_text.set("Start Training")
 
 # Adding a dropdown for selecting intermediate layers
 ttk.Label(control_panel, text="Select Intermediate Layer:").pack(pady=5)
@@ -527,6 +734,7 @@ select_classes_button.pack(pady=5)
 epoch_label_var = tk.StringVar(value="Epoch: 0")
 batch_label_var = tk.StringVar(value="Batch: 0")
 loss_label_var = tk.StringVar(value="Loss: 0.000")
+accuracy_label_var = tk.StringVar(value="Accuracy: 0.00")
 distance_label_var = tk.StringVar(value="Distance to Correct Cluster Midpoint: 0.000")
 
 epoch_label = ttk.Label(control_panel, textvariable=epoch_label_var)
@@ -537,6 +745,9 @@ batch_label.pack(pady=5)
 
 loss_label = ttk.Label(control_panel, textvariable=loss_label_var)
 loss_label.pack(pady=5)
+
+accuracy_label = ttk.Label(control_panel, textvariable=accuracy_label_var)
+accuracy_label.pack(pady=5)
 
 distance_label = ttk.Label(control_panel, textvariable=distance_label_var)
 distance_label.pack(pady=5)
