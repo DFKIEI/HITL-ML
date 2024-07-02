@@ -350,7 +350,7 @@ class InteractivePlot:
         self.dataloader = dataloader
         self.plot_type = plot_type
         self.selected_classes = selected_classes
-        self.latent_features, self.labels = extract_latent_features(self.model, self.dataloader, num_batches=5)
+        self.latent_features, self.labels, self.preds = extract_latent_features(self.model, self.dataloader, num_batches=5)
         n_components = min(50, self.latent_features.shape[0], self.latent_features.shape[1])
         self.pca = PCA(n_components=n_components)
         self.pca_features = self.pca.fit_transform(self.latent_features)
@@ -404,15 +404,30 @@ class InteractivePlot:
     def plot_scatter(self):
         fig, ax = plt.subplots(figsize=(12, 8))
         cmap = ListedColormap(plt.cm.tab10.colors)
-        self.scatter = ax.scatter(self.reduced_features[:, 0], self.reduced_features[:, 1], c=self.labels, cmap='tab10', alpha=0.6)
-        plt.colorbar(self.scatter)
 
-        # Plot cluster centers with a cross marker
-        #plt.scatter(self.cluster_centers[:, 0], self.cluster_centers[:, 1], c=self.labels, marker='x', s=100, label='Cluster Centers', alpha=0.6)
-        
+        correct = self.preds == self.labels
+        incorrect = self.preds != self.labels
+
+        #self.scatter = ax.scatter(self.reduced_features[:, 0], self.reduced_features[:, 1], c=self.labels, cmap='tab10', alpha=0.6)
+        plt.scatter(self.reduced_features[correct, 0], self.reduced_features[correct, 1], c=self.labels[correct], cmap='tab10', alpha=0.6)
+
+
         cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
         for center, color in zip(self.cluster_centers, cluster_center_colors):
             ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
+
+
+
+        plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', s=5, edgecolor='black', linewidth=0.5)
+        #plt.colorbar(self.scatter)
+        plt.colorbar()
+
+        # Plot cluster centers with a cross marker
+        #plt.scatter(self.cluster_centers[:, 0], self.cluster_centers[:, 1], c=self.labels, marker='x', s=100, label='Cluster Centers', alpha=0.6)
+
+
+        
+        
 
         def on_click(event):
             if event.inaxes is not None:
@@ -569,17 +584,21 @@ def extract_latent_features(model, dataloader, num_batches=5):
     model.eval()
     features = []
     labels = []
+    preds = []
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(dataloader):
             if batch_idx >= num_batches:
                 break
             inputs, targets = inputs.to(device), targets.to(device)
-            _, latent_features, _ = model(inputs)
+            outputs, latent_features, _ = model(inputs)
+            predicted_labels = outputs.argmax(dim=1).cpu().numpy()
             features.append(latent_features.cpu().numpy())
             labels.append(targets.cpu().numpy())
+            preds.append(predicted_labels)
     features = np.concatenate(features)
     labels = np.concatenate(labels)
-    return features, labels
+    preds = np.concatenate(preds)
+    return features, labels, preds
 
 # Update the function to extract intermediate features
 def extract_intermediate_features(model, dataloader, num_batches=5, selected_layer=3):
