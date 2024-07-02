@@ -289,7 +289,7 @@ def train_model():
             outputs, latent_features, _ = model(inputs)
             predictions = outputs.argmax(dim=1)
             loss = criterion(outputs, labels)
-            loss += distance_weight * calculate_distance_loss(latent_features,labels) # use this to enable interactive loss function
+            loss += distance_weight * calculate_distance_loss_total(latent_features,labels) # use this to enable interactive loss function
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -436,10 +436,11 @@ class InteractivePlot:
                 index = np.argmin(distances)
                 #selected_label_var.set(str(self.labels[index]))
                 selected_index_var.set(f"Selected Index : {index}")
+                self.calculate_distance(index)
                 #self.calculate_distance(index)
-                self.update_cluster_center(index)
-                self.update_cluster_radius(index)
-                self.highlight_cluster()
+                #self.update_cluster_center(index)
+                #self.update_cluster_radius(index)
+                #self.highlight_cluster()
 
         fig.canvas.mpl_connect('button_press_event', on_click)
 
@@ -523,13 +524,15 @@ class InteractivePlot:
         selected_label = self.labels[index]
 
         # Find all points with the correct label
-        correct_points = self.reduced_features[self.labels == selected_label]
+        #correct_points = self.reduced_features[self.labels == selected_label]
 
         # Compute the midpoint of the correct cluster
-        correct_midpoint = np.mean(correct_points, axis=0)
+        #correct_midpoint = np.mean(correct_points, axis=0)
 
-        # Calculate the distance from the selected point to the correct cluster midpoint
         selected_point = self.reduced_features[index]
+
+        correct_midpoint = self.cluster_centers[selected_label]
+
         distance = np.linalg.norm(selected_point - correct_midpoint)
         distance_label_var.set(f"Distance to Correct Cluster Midpoint: {distance:.3f}")
 
