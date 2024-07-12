@@ -269,8 +269,8 @@ class InteractivePlot:
         self.dataloader = dataloader
         self.plot_type = plot_type
         self.selected_classes = selected_classes
-        self.latent_features, self.labels = extract_latent_features(self.model, self.dataloader, num_batches=5)
-        self.predicted_labels = self.get_predictions()
+        self.latent_features, self.labels, self.predicted_labels = extract_latent_features(self.model, self.dataloader, num_batches=5)
+        #self.predicted_labels = self.get_predictions()
         n_components = min(50, self.latent_features.shape[0], self.latent_features.shape[1])
         self.pca = PCA(n_components=n_components)
         self.pca_features = self.pca.fit_transform(self.latent_features)
@@ -339,18 +339,37 @@ class InteractivePlot:
         try:
             fig, ax = plt.subplots(figsize=(12, 8))
             cmap = ListedColormap(plt.cm.tab10.colors)
-            self.scatter = ax.scatter(self.reduced_features[:, 0], self.reduced_features[:, 1], c=self.labels, cmap='tab10', alpha=0.6)
-            plt.colorbar(self.scatter)
-            #plt.scatter(self.cluster_centers[:, 0], self.cluster_centers[:, 1], c='red', marker='x', s=100, label='Cluster Centers')
-            
+
+            correct = self.predicted_labels == self.labels
+            incorrect = self.predicted_labels != self.labels
+
+            plt.scatter(self.reduced_features[correct, 0], self.reduced_features[correct, 1], c=self.labels[correct], cmap='tab10', alpha=0.6)
+
+
             cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
             for center, color in zip(self.cluster_centers, cluster_center_colors):
                 ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
 
+
+
+            plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', s=5, edgecolor='black', linewidth=0.5)
+            #plt.colorbar(self.scatter)
+            plt.colorbar()
+
+            #######OLD##########
+
+            #.scatter = ax.scatter(self.reduced_features[:, 0], self.reduced_features[:, 1], c=self.labels, cmap='tab10', alpha=0.6)
+            #plt.colorbar(self.scatter)
+            #plt.scatter(self.cluster_centers[:, 0], self.cluster_centers[:, 1], c='red', marker='x', s=100, label='Cluster Centers')
+            
+            #cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
+            #for center, color in zip(self.cluster_centers, cluster_center_colors):
+            #    ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
+
             # Highlight misclassified points
-            misclassified_indices = np.where(self.labels != self.predicted_labels)[0]
-            for idx in misclassified_indices:
-                ax.scatter(self.reduced_features[idx, 0], self.reduced_features[idx, 1], edgecolors=cmap(self.predicted_labels[idx]), facecolors='none', s=100, linewidths=2, alpha=0.8)
+            #misclassified_indices = np.where(self.labels != self.predicted_labels)[0]
+            #for idx in misclassified_indices:
+            #    ax.scatter(self.reduced_features[idx, 0], self.reduced_features[idx, 1], edgecolors=cmap(self.predicted_labels[idx]), facecolors='none', s=100, linewidths=2, alpha=0.8)
 
 
             def on_click(event):
@@ -510,20 +529,24 @@ def extract_latent_features(model, dataloader, num_batches=5):
     model.eval()
     features = []
     labels = []
+    predicted_labels = []
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(dataloader):
             if batch_idx >= num_batches:
                 break
             try:
                 inputs, targets = inputs.to(device), targets.to(device)
-                _, latent_features, _ = model(inputs)
+                _, latent_features, outputs = model(inputs)
                 features.append(latent_features.cpu().numpy())
                 labels.append(targets.cpu().numpy())
+                predictions = model.predict(inputs)
+                predicted_labels.append(predictions.cpu().numpy())
             except Exception as e:
                 print(f"Error extracting latent features: {e}")
     features = np.concatenate(features, axis=0) if features else np.array([])
     labels = np.concatenate(labels, axis=0) if labels else np.array([])
-    return features, labels
+    predicted_labels = np.concatenate(predicted_labels, axis=0) if predicted_labels else np.array([])
+    return features, labels, predicted_labels
 
 def extract_intermediate_features(model, dataloader, num_batches=5, selected_layer=3):
     model.eval()
