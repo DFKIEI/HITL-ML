@@ -1,3 +1,4 @@
+from struct import pack
 from scipy.spatial import distance
 import torch
 import torchvision.transforms as transforms
@@ -45,11 +46,10 @@ else:
     device = torch.device("cpu")
 
 class CNN_PAMAP2(nn.Module):
-    def __init__(self, in_size, out_size, dropout=0.1):
+    def __init__(self, in_size, out_size, dropout=0.5):
         super(CNN_PAMAP2, self).__init__()
         hidden = (32, 64, 128, 1024)
         kernel1, kernel2, kernel3 = 24, 16, 8
-
         self.conv1 = nn.Conv1d(in_size, hidden[0], kernel_size=kernel1)
         self.dropout1 = nn.Dropout(dropout)
         self.conv2 = nn.Conv1d(hidden[0], hidden[1], kernel_size=kernel2)
@@ -116,7 +116,7 @@ def reinitialize_model():
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 num_layers = 3
-model = CNN_PAMAP2(len(columns), 10).to(device)
+model = CNN_PAMAP2(len(columns), 11).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -132,6 +132,9 @@ num_features_for_plotting_highd = 10
 current_num_epochs = num_epochs
 current_layer = selected_layer
 current_num_features = num_features_for_plotting_highd
+
+current_batch=0
+current_epoch=0
 
 def start_training():
     global training, training_thread
@@ -178,15 +181,23 @@ def update_features(event):
     current_num_features = num_features_for_plotting_highd
 
 def train_model():
-    global training    
-    for epoch in range(num_epochs):
+    global training, current_epoch, current_batch
+    freq=800
+    selected_loss_option = loss_option.get()
+    alpha_lr_value = float(alpha_lr.get())
+    
+    for epoch in range(current_epoch, num_epochs):
         if not training:
+            current_epoch = epoch
             break
         running_loss = 0.0
         correct_predictions = 0
         total_predictions = 0
         for i, data in enumerate(trainloader, 0):
+            if i < current_batch:
+                continue
             if not training:
+                current_batch = i
                 break
             inputs, labels = data
             inputs, labels = inputs.to(device), labels.to(device)
@@ -194,7 +205,14 @@ def train_model():
             outputs, latent_features, _ = model(inputs)
             predictions = outputs.argmax(dim=1)
             loss = criterion(outputs, labels)
-            loss += distance_weight * calculate_distance_loss(latent_features, labels)
+
+
+            if selected_loss_option=="inter_distance_loss" and i!=0 and i%freq==0:
+                loss += alpha_lr_value * calculate_distance_loss(latent_features, labels)
+            elif selected_loss_option=="inter_and_intra_distance_loss" and i!=0 and i%freq==0:
+                loss += alpha_lr_value * calculate_distance_loss_total(latent_features, labels)
+            
+
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -211,6 +229,13 @@ def train_model():
                 running_loss = 0.0
         if training:
             root.after(0, display_visualization)
+        if not training:
+            current_epoch = epoch
+
+    current_epoch = 0
+    current_batch = 0
+    training = False
+    training_button_text.set("Start Training")
 
 def update_status_labels(epoch, batch, loss, accuracy):
     epoch_label_var.set(f"Epoch: {epoch}")
@@ -279,6 +304,7 @@ class InteractivePlot:
         self.feature_importance = self.compute_feature_importance()
         self.cluster_centers = self.calculate_cluster_centers()
         self.plot()
+        self.dragging_center = None
 
     def get_predictions(self):
         self.model.eval()
@@ -337,24 +363,30 @@ class InteractivePlot:
 
     def plot_scatter(self):
         try:
-            fig, ax = plt.subplots(figsize=(12, 8))
+            fig, ax = plt.subplots(figsize=(11, 8))
             cmap = ListedColormap(plt.cm.tab10.colors)
 
             correct = self.predicted_labels == self.labels
             incorrect = self.predicted_labels != self.labels
 
-            plt.scatter(self.reduced_features[correct, 0], self.reduced_features[correct, 1], c=self.labels[correct], cmap='tab10', alpha=0.6)
+            scatter_correct = plt.scatter(self.reduced_features[correct, 0], self.reduced_features[correct, 1], c=self.labels[correct], cmap='tab10', alpha=0.6)
 
 
             cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
             for center, color in zip(self.cluster_centers, cluster_center_colors):
-                ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
+                self.cluster_center_scatter = ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
 
 
 
-            plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', s=5, edgecolor='black', linewidth=0.5)
+            scatter_incorrect = plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', alpha=0.8, edgecolor='black', linewidth=2.0)
             #plt.colorbar(self.scatter)
-            plt.colorbar()
+            #plt.colorbar(ticks=range(12))
+            # Add color bar
+            colorbar = plt.colorbar(scatter_correct, ticks=range(12))
+            colorbar.set_label('Classes')
+            colorbar.set_ticks(range(12))
+            colorbar.set_ticklabels(range(12))
+
 
             #######OLD##########
 
@@ -371,6 +403,26 @@ class InteractivePlot:
             #for idx in misclassified_indices:
             #    ax.scatter(self.reduced_features[idx, 0], self.reduced_features[idx, 1], edgecolors=cmap(self.predicted_labels[idx]), facecolors='none', s=100, linewidths=2, alpha=0.8)
 
+            def on_click1(event):
+                if event.inaxes is not None:
+                    x, y = event.xdata, event.ydata
+                    distances = np.sqrt((self.cluster_centers[:, 0] - x) ** 2 + (self.cluster_centers[:, 1] - y) ** 2)
+                    index = np.argmin(distances)
+                    if distances[index] < 0.1:  # Tolerance for selecting a center
+                        self.dragging_center = index
+
+            def on_release(event):
+                if self.dragging_center is not None:
+                    x, y = event.xdata, event.ydata
+                    self.update_cluster_center(self.dragging_center, np.array([x, y]))
+                    self.dragging_center = None
+
+            def on_motion(event):
+                if self.dragging_center is not None:
+                    x, y = event.xdata, event.ydata
+                    self.cluster_centers[self.dragging_center] = [x, y]
+                    self.cluster_center_scatter.set_offsets(self.cluster_centers)
+                    fig.canvas.draw()
 
             def on_click(event):
                 if event.inaxes is not None:
@@ -382,7 +434,11 @@ class InteractivePlot:
                     self.update_cluster_radius(index)
                     self.highlight_cluster()
 
-            fig.canvas.mpl_connect('button_press_event', on_click)
+            #fig.canvas.mpl_connect('button_press_event', on_click)
+
+            fig.canvas.mpl_connect('button_press_event', on_click1)
+            fig.canvas.mpl_connect('button_release_event', on_release)
+            fig.canvas.mpl_connect('motion_notify_event', on_motion)
 
             for widget in scatter_tab.winfo_children():
                 widget.destroy()
@@ -476,6 +532,14 @@ class InteractivePlot:
         except Exception as e:
             print(f"Error calculating distance: {e}")
 
+    def update_cluster_center(self, label, new_center):
+        label_indices = np.where(self.labels == label)[0]
+        old_center = np.mean(self.reduced_features[label_indices], axis=0)
+        offset = new_center - old_center
+        self.reduced_features[label_indices] += offset
+        self.cluster_centers[label] = new_center
+        self.plot()
+
 def calculate_distance_loss(latent_features, labels):
     try:
         unique_labels = labels.unique()
@@ -497,6 +561,7 @@ def calculate_distance_loss_total(latent_features, labels):
         distance_loss_within = 0.0
         distance_loss_between = 0.0
         cluster_centers = []
+        beta_lr_value = float(beta_lr.get())
 
         # Calculate within-cluster distance and find cluster centers
         for label in unique_labels:
@@ -507,22 +572,77 @@ def calculate_distance_loss_total(latent_features, labels):
             distance_loss_within += distances.mean()
         
         # Calculate between-cluster distance
+        num_comparisons = 0
         for i in range(num_classes):
             for j in range(i + 1, num_classes):
                 distance_loss_between += torch.norm(cluster_centers[i] - cluster_centers[j])
+                num_comparisons += 1
         
         # Normalize the between-cluster distance by the number of comparisons
-        if num_classes > 1:
-            distance_loss_between /= (num_classes * (num_classes - 1) / 2)
+        if num_comparisons > 0:
+            distance_loss_between /= num_comparisons
         
-        # Combine the two components: within-cluster and between-cluster distances
-        total_distance_loss = distance_loss_within - distance_loss_between
+        # Combine the two components with a balancing factor
+        #balancing_factor = 0.1  # Adjust this factor to balance within and between distances
+        total_distance_loss = distance_loss_within - beta_lr_value * distance_loss_between
         
         return total_distance_loss
     
     except Exception as e:
         print(f"Error calculating distance loss: {e}")
         return 0.0
+
+
+def calculate_distance_loss_interaction(latent_features, labels, previous_centers=None):
+    try:
+        unique_labels = labels.unique()
+        num_classes = len(unique_labels)
+        distance_loss_within = 0.0
+        distance_loss_between = 0.0
+        cluster_centers = []
+        beta_lr_value = float(beta_lr.get())
+        #gamma_lr_value = float(gamma_lr.get())
+
+        # Calculate within-cluster distance and find cluster centers
+        for label in unique_labels:
+            class_features = latent_features[labels == label]
+            cluster_center = class_features.mean(dim=0)
+            cluster_centers.append(cluster_center)
+            distances = torch.norm(class_features - cluster_center, dim=1)
+            distance_loss_within += distances.mean()
+        
+        # Calculate between-cluster distance
+        num_comparisons = 0
+        for i in range(num_classes):
+            for j in range(i + 1, num_classes):
+                distance = torch.norm(cluster_centers[i] - cluster_centers[j])
+                distance_loss_between += 1 / (distance + 1e-5)  # Encourage separation
+                num_comparisons += 1
+        
+        # Normalize the between-cluster distance by the number of comparisons
+        if num_comparisons > 0:
+            distance_loss_between /= num_comparisons
+        
+        # Calculate cluster movement loss
+        movement_loss = 0.0
+        if previous_centers is not None:
+            for current, previous in zip(cluster_centers, previous_centers):
+                movement_loss += torch.norm(current - previous)
+            movement_loss /= len(cluster_centers)
+        
+        # Combine all components
+        total_distance_loss = (
+            distance_loss_within 
+            + beta_lr_value * distance_loss_between  # Now we add this term
+            + gamma_lr_value * movement_loss
+        )
+        
+        return total_distance_loss, cluster_centers
+    
+    except Exception as e:
+        print(f"Error calculating distance loss: {e}")
+        return 0.0, []
+
 
 
 def extract_latent_features(model, dataloader, num_batches=5):
@@ -626,6 +746,15 @@ def show_class_selection():
     except Exception as e:
         print(f"Error showing class selection: {e}")
 
+def on_loss_option_change():
+    selected_option = loss_option.get()
+    if selected_option == "no_loss":
+        loss_option.set("no_loss")
+    elif selected_option == "inter_distance_loss":
+        loss_option.set("inter_distance_loss")
+    elif selected_option == "inter_and_intra_distance_loss":
+        loss_option.set("inter_and_intra_distance_loss")
+
 root = tk.Tk()
 root.title("Training Control Panel")
 
@@ -640,7 +769,7 @@ try:
     control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
     ttk.Label(control_panel, text="Number of Epochs:").pack(pady=5)
-    epoch_slider = tk.Scale(control_panel, from_=1, to=10, orient=tk.HORIZONTAL, command=update_epochs)
+    epoch_slider = tk.Scale(control_panel, from_=1, to=20, orient=tk.HORIZONTAL, command=update_epochs)
     epoch_slider.set(num_epochs)
     epoch_slider.pack(padx=5, pady=5)
 
@@ -696,6 +825,45 @@ try:
     selected_index_var = tk.StringVar(value="Selected Index: None")
     selected_index = ttk.Label(control_panel, textvariable=selected_index_var)
     selected_index.pack(pady=5)
+
+    loss_option = tk.StringVar(value="no_loss")
+    alpha = tk.DoubleVar(value=0.01)
+    beta = tk.DoubleVar(value=0.1)
+    #gamma = tk.DoubleVar(value=0.01)
+
+    loss_option_label = ttk.Label(control_panel, text="Loss Option")
+    loss_option_label.pack(pady=5)
+
+
+    no_loss_radio = ttk.Radiobutton(control_panel, text="No Loss", variable=loss_option, value="no_loss", command=on_loss_option_change)
+    no_loss_radio.pack(pady=5)
+
+    inter_distance_loss = ttk.Radiobutton(control_panel, text="Inter distance Loss", variable=loss_option, value="inter_distance_loss", command=on_loss_option_change)
+    inter_distance_loss.pack(pady=5)
+
+    inter_and_intra_distance_loss = ttk.Radiobutton(control_panel, text="Inter and Intra distance loss", variable=loss_option, value="inter_and_intra_distance_loss", command=on_loss_option_change)
+    inter_and_intra_distance_loss.pack(pady=5)
+
+    #distance_and_interaction_loss = ttk.Radiobutton(control_panel, text="Distance and interaction loss", variable=loss_option, value="distance_and_interaction_loss", command=on_loss_option_change)
+    #distance_and_interaction_loss.pack(pady=5)
+
+    alpha_lr_label = ttk.Label(control_panel, text="Alpha")
+    alpha_lr_label.pack(pady=5)
+
+    alpha_lr = ttk.Entry(control_panel, textvariable=alpha)
+    alpha_lr.pack(padx=5,pady=5)
+
+    beta_lr_label = ttk.Label(control_panel, text="Beta")
+    beta_lr_label.pack(pady=5)
+
+    beta_lr = ttk.Entry(control_panel, textvariable=beta)
+    beta_lr.pack(padx=5,pady=5)
+
+    #gamma_lr_label = ttk.Label(control_panel, text="Gamma")
+    #gamma_lr_label.pack(pady=5)
+
+    #gamma_lr = ttk.Entry(control_panel, textvariable=gamma)
+    #gamma_lr.pack(padx=5,pady=5)
 
     notebook = ttk.Notebook(main_frame)
     notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
