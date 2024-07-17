@@ -208,9 +208,9 @@ def train_model():
 
 
             if selected_loss_option=="inter_distance_loss" and i!=0 and i%freq==0:
-                loss += alpha_lr_value * calculate_distance_loss(latent_features, labels)
+                loss = loss*alpha_lr_value + (1-alpha_lr_value)* calculate_distance_loss(latent_features, labels)
             elif selected_loss_option=="inter_and_intra_distance_loss" and i!=0 and i%freq==0:
-                loss += alpha_lr_value * calculate_distance_loss_total(latent_features, labels)
+                loss = loss*alpha_lr_value + (1-alpha_lr_value) * calculate_distance_loss_total(latent_features, labels)
             
 
             loss.backward()
@@ -584,7 +584,7 @@ def calculate_distance_loss_total(latent_features, labels):
         
         # Combine the two components with a balancing factor
         #balancing_factor = 0.1  # Adjust this factor to balance within and between distances
-        total_distance_loss = distance_loss_within - beta_lr_value * distance_loss_between
+        total_distance_loss = beta_lr_value * distance_loss_within + (1-beta_lr_value) * distance_loss_between
         
         return total_distance_loss
     
