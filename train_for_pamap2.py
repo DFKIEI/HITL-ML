@@ -182,9 +182,14 @@ def update_features(event):
 
 def train_model():
     global training, current_epoch, current_batch
-    freq=800
-    selected_loss_option = loss_option.get()
+    freq=200
+    inter_dl = inter_distance_loss_var.get()
+    intra_dl = intra_distance_loss_var.get()
+    mv_loss = movement_loss_var.get()
+    #selected_loss_option = loss_option.get()
     alpha_lr_value = float(alpha_lr.get())
+    beta_lr_value = float(beta_lr.get())
+    gamma_lr_value = float(gamma_lr.get())
     
     for epoch in range(current_epoch, num_epochs):
         if not training:
@@ -207,10 +212,12 @@ def train_model():
             loss = criterion(outputs, labels)
 
 
-            if selected_loss_option=="inter_distance_loss" and i!=0 and i%freq==0:
-                loss = loss*alpha_lr_value + (1-alpha_lr_value)* calculate_distance_loss(latent_features, labels)
-            elif selected_loss_option=="inter_and_intra_distance_loss" and i!=0 and i%freq==0:
-                loss = loss*alpha_lr_value + (1-alpha_lr_value) * calculate_distance_loss_total(latent_features, labels)
+            loss = calculate_loss(loss,alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss)
+            #create checkboxes for the losses selected and use the selection
+            #if selected_loss_option=="inter_distance_loss" and i!=0 and i%freq==0:
+            #    loss = loss*alpha_lr_value + (1-alpha_lr_value)* calculate_distance_loss(latent_features, labels)
+            #elif selected_loss_option=="inter_and_intra_distance_loss" and i!=0 and i%freq==0:
+            #    loss = loss*alpha_lr_value + (1-alpha_lr_value) * calculate_distance_loss_total(latent_features, labels)
             
 
             loss.backward()
@@ -236,6 +243,18 @@ def train_model():
     current_batch = 0
     training = False
     training_button_text.set("Start Training")
+
+def calculate_loss(loss,alpha, beta, gamma, inter_dl, intra_dl, mv_loss):
+    if(inter_dl==1):
+        if(intra_dl==1):
+            if(mv_loss==1):
+                loss = loss*alpha + (1-alpha)*(beta*inter_dl + (1-beta)*(gamma*intra_dl + (1-gamma)*mv_loss))
+
+
+
+    ###Add other conditions here
+    return loss
+
 
 def update_status_labels(epoch, batch, loss, accuracy):
     epoch_label_var.set(f"Epoch: {epoch}")
@@ -301,6 +320,7 @@ class InteractivePlot:
         self.pca_features = self.pca.fit_transform(self.latent_features)
         self.tsne = TSNE(n_components=2, random_state=0)
         self.reduced_features = self.tsne.fit_transform(self.pca_features)
+        #self.reduced_features = self.pca_features
         self.feature_importance = self.compute_feature_importance()
         self.cluster_centers = self.calculate_cluster_centers()
         self.plot()
@@ -540,36 +560,34 @@ class InteractivePlot:
         self.cluster_centers[label] = new_center
         self.plot()
 
-def calculate_distance_loss(latent_features, labels):
+def calculate_distance_loss_within(latent_features, labels):
     try:
         unique_labels = labels.unique()
-        distance_loss = 0.0
-        for label in unique_labels:
-            class_features = latent_features[labels == label]
-            cluster_center = class_features.mean(dim=0)
-            distances = torch.norm(class_features - cluster_center, dim=1)
-            distance_loss += distances.mean()
-        return distance_loss
-    except Exception as e:
-        print(f"Error calculating distance loss: {e}")
-        return 0.0
-
-def calculate_distance_loss_total(latent_features, labels):
-    try:
-        unique_labels = labels.unique()
-        num_classes = len(unique_labels)
         distance_loss_within = 0.0
-        distance_loss_between = 0.0
         cluster_centers = []
-        beta_lr_value = float(beta_lr.get())
-
-        # Calculate within-cluster distance and find cluster centers
         for label in unique_labels:
             class_features = latent_features[labels == label]
             cluster_center = class_features.mean(dim=0)
             cluster_centers.append(cluster_center)
             distances = torch.norm(class_features - cluster_center, dim=1)
             distance_loss_within += distances.mean()
+        return distance_loss_within
+    except Exception as e:
+        print(f"Error calculating distance loss: {e}")
+        return 0.0
+
+def calculate_distance_loss_between(latent_features, labels):
+    try:
+        unique_labels = labels.unique()
+        num_classes = len(unique_labels)
+        distance_loss_between = 0.0
+        cluster_centers = []
+        #beta_lr_value = float(beta_lr.get())
+
+        for label in unique_labels:
+            class_features = latent_features[labels == label]
+            cluster_center = class_features.mean(dim=0)
+            cluster_centers.append(cluster_center)
         
         # Calculate between-cluster distance
         num_comparisons = 0
@@ -584,44 +602,18 @@ def calculate_distance_loss_total(latent_features, labels):
         
         # Combine the two components with a balancing factor
         #balancing_factor = 0.1  # Adjust this factor to balance within and between distances
-        total_distance_loss = beta_lr_value * distance_loss_within + (1-beta_lr_value) * distance_loss_between
+        #total_distance_loss = beta_lr_value * distance_loss_within + (1-beta_lr_value) * distance_loss_between
         
-        return total_distance_loss
+        return distance_loss_between
     
     except Exception as e:
         print(f"Error calculating distance loss: {e}")
         return 0.0
 
 
-def calculate_distance_loss_interaction(latent_features, labels, previous_centers=None):
+def calculate_distance_loss_only_interaction(latent_features, labels, previous_centers=None):
     try:
-        unique_labels = labels.unique()
-        num_classes = len(unique_labels)
-        distance_loss_within = 0.0
-        distance_loss_between = 0.0
         cluster_centers = []
-        beta_lr_value = float(beta_lr.get())
-        #gamma_lr_value = float(gamma_lr.get())
-
-        # Calculate within-cluster distance and find cluster centers
-        for label in unique_labels:
-            class_features = latent_features[labels == label]
-            cluster_center = class_features.mean(dim=0)
-            cluster_centers.append(cluster_center)
-            distances = torch.norm(class_features - cluster_center, dim=1)
-            distance_loss_within += distances.mean()
-        
-        # Calculate between-cluster distance
-        num_comparisons = 0
-        for i in range(num_classes):
-            for j in range(i + 1, num_classes):
-                distance = torch.norm(cluster_centers[i] - cluster_centers[j])
-                distance_loss_between += 1 / (distance + 1e-5)  # Encourage separation
-                num_comparisons += 1
-        
-        # Normalize the between-cluster distance by the number of comparisons
-        if num_comparisons > 0:
-            distance_loss_between /= num_comparisons
         
         # Calculate cluster movement loss
         movement_loss = 0.0
@@ -630,19 +622,11 @@ def calculate_distance_loss_interaction(latent_features, labels, previous_center
                 movement_loss += torch.norm(current - previous)
             movement_loss /= len(cluster_centers)
         
-        # Combine all components
-        total_distance_loss = (
-            distance_loss_within 
-            + beta_lr_value * distance_loss_between  # Now we add this term
-            + gamma_lr_value * movement_loss
-        )
-        
-        return total_distance_loss, cluster_centers
+        return movement_loss
     
     except Exception as e:
         print(f"Error calculating distance loss: {e}")
         return 0.0, []
-
 
 
 def extract_latent_features(model, dataloader, num_batches=5):
@@ -827,22 +811,25 @@ try:
     selected_index.pack(pady=5)
 
     loss_option = tk.StringVar(value="no_loss")
-    alpha = tk.DoubleVar(value=0.01)
-    beta = tk.DoubleVar(value=0.1)
-    #gamma = tk.DoubleVar(value=0.01)
+    alpha = tk.DoubleVar(value=0.5)
+    beta = tk.DoubleVar(value=0.5)
+    gamma = tk.DoubleVar(value=0.5)
+
+    inter_distance_loss_var= tk.IntVar(value=1)
+    intra_distance_loss_var=tk.IntVar(value=1)
+    movement_loss_var=tk.IntVar(value=1)
 
     loss_option_label = ttk.Label(control_panel, text="Loss Option")
     loss_option_label.pack(pady=5)
 
-
-    no_loss_radio = ttk.Radiobutton(control_panel, text="No Loss", variable=loss_option, value="no_loss", command=on_loss_option_change)
-    no_loss_radio.pack(pady=5)
-
-    inter_distance_loss = ttk.Radiobutton(control_panel, text="Inter distance Loss", variable=loss_option, value="inter_distance_loss", command=on_loss_option_change)
+    inter_distance_loss = ttk.Checkbutton(control_panel, text="Within clusters distance loss", variable=inter_distance_loss_var)
     inter_distance_loss.pack(pady=5)
 
-    inter_and_intra_distance_loss = ttk.Radiobutton(control_panel, text="Inter and Intra distance loss", variable=loss_option, value="inter_and_intra_distance_loss", command=on_loss_option_change)
-    inter_and_intra_distance_loss.pack(pady=5)
+    intra_distance_loss = ttk.Checkbutton(control_panel, text="Between clusters distance loss", variable=intra_distance_loss_var)
+    intra_distance_loss.pack(pady=5)
+
+    movement_loss = ttk.Checkbutton(control_panel, text="Cluster movement loss", variable=movement_loss_var)
+    movement_loss.pack(pady=5)
 
     #distance_and_interaction_loss = ttk.Radiobutton(control_panel, text="Distance and interaction loss", variable=loss_option, value="distance_and_interaction_loss", command=on_loss_option_change)
     #distance_and_interaction_loss.pack(pady=5)
@@ -859,11 +846,11 @@ try:
     beta_lr = ttk.Entry(control_panel, textvariable=beta)
     beta_lr.pack(padx=5,pady=5)
 
-    #gamma_lr_label = ttk.Label(control_panel, text="Gamma")
-    #gamma_lr_label.pack(pady=5)
+    gamma_lr_label = ttk.Label(control_panel, text="Gamma")
+    gamma_lr_label.pack(pady=5)
 
-    #gamma_lr = ttk.Entry(control_panel, textvariable=gamma)
-    #gamma_lr.pack(padx=5,pady=5)
+    gamma_lr = ttk.Entry(control_panel, textvariable=gamma)
+    gamma_lr.pack(padx=5,pady=5)
 
     notebook = ttk.Notebook(main_frame)
     notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
