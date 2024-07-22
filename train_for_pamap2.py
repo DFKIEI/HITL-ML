@@ -18,6 +18,28 @@ from pandas.plotting import parallel_coordinates
 from PAMAP2_data import PAMAP2
 from torch.utils.data import DataLoader
 from matplotlib.colors import ListedColormap
+import os
+import csv
+import queue
+import datetime
+
+plot_queue = queue.Queue()
+
+# Directory to save reports and images
+report_dir = "reports/pamap2"
+if not os.path.exists(report_dir):
+    os.makedirs(report_dir)
+
+# Create CSV file for the report
+#now = datetime.datetime.now()
+#date_time = now.strftime("%Y%m%d_%H%M%S")
+#filename = f"{dataset_name}_{epoch}_{layer_selected}_{date_time}.csv"
+#report_csv = os.path.join(report_dir, "training_report.csv")
+#if not os.path.exists(report_csv):
+#    with open(report_csv, mode='w', newline='') as file:
+#        writer = csv.writer(file)
+#        writer.writerow(["Epoch", "Loss", "Accuracy", "Alpha", "Beta", "Gamma", "Layer Selected"])
+
 
 def create_dataloaders(data_dir, batch_size=32, window_size=200, window_step=50, frequency=50, columns=None):
     try:
@@ -180,6 +202,30 @@ def update_features(event):
     num_features_for_plotting_highd = feature_slider.get()
     current_num_features = num_features_for_plotting_highd
 
+# Function to save report
+def save_report(epoch, loss, accuracy, alpha, beta, gamma, layer_selected):
+    now = datetime.datetime.now()
+    date_time = now.strftime("%Y%m%d_%H%M%S")
+    filename = f"PAMAP2_{epoch+1}_{layer_selected}_{date_time}.csv"
+    report_path = os.path.join(report_dir, filename)
+    
+    # Check if file needs to be created or if it already exists
+    if not os.path.exists(report_path):
+        with open(report_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            # Add additional column headers as required
+            writer.writerow(["Epoch", "Loss", "Accuracy", "Alpha", "Beta", "Gamma", "Layer Selected"])
+    
+    # Append data to the report
+    with open(report_path, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        # Add corresponding data entries for additional metrics
+        writer.writerow([epoch+1, loss, accuracy, alpha, beta, gamma, layer_selected])
+
+    # Save the scatter plot image
+    #image_path = os.path.join(report_dir, f"scatter_epoch_{epoch}.png")
+    #scatter_fig.savefig(image_path)
+
 def train_model():
     global training, current_epoch, current_batch
     freq=200
@@ -239,6 +285,19 @@ def train_model():
         if not training:
             current_epoch = epoch
 
+        # Capture scatter plot data and put it into the queue
+        try:
+            #fig, ax = plt.subplots(figsize=(11, 8))
+            #scatter_plot = InteractivePlot(model, trainloader, 'scatter', get_classes(trainloader))
+            #scatter_plot.plot_scatter()
+            #plot_data = (epoch + 1, avg_loss, accuracy, alpha_lr_value, beta_lr_value, gamma_lr_value, selected_layer, fig)
+            #plot_queue.put(plot_data)
+            save_report(epoch, avg_loss, accuracy, alpha_lr_value, beta_lr_value, gamma_lr_value, selected_layer)
+        except Exception as e:
+            print(f"Error in creating scatter plot: {e}")
+        #finally:
+        #    plt.close(fig)
+
     current_epoch = 0
     current_batch = 0
     training = False
@@ -269,8 +328,17 @@ def calculate_accuracy(outputs, labels):
     return accuracy, preds
 
 def display_visualization():
+    #global selected_layer
     try:
+        #if 'selected_layer' not in globals():
+        #    selected_layer = 3  # Initialize to default layer if not already set
+
         selected_tab = notebook.index(notebook.select())
+        #if not plot_queue.empty():
+            #plot_data = plot_queue.get()
+            #epoch, avg_loss, accuracy, alpha_lr_value, beta_lr_value, gamma_lr_value, selected_layer, fig = plot_data
+        
+
         if selected_tab == 0:
             display_scatter_plot()
         elif selected_tab == 1:
@@ -285,7 +353,8 @@ def display_visualization():
 
 def display_scatter_plot():
     try:
-        InteractivePlot(model, trainloader, 'scatter', get_classes(trainloader))
+        #InteractivePlot(model, trainloader, 'scatter', get_classes(trainloader))
+        InteractivePlot(model, trainloader, 'scatter', get_classes(testloader))
     except Exception as e:
         print(f"Error displaying scatter plot: {e}")
 
