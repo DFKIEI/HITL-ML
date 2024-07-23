@@ -257,8 +257,8 @@ def train_model():
             predictions = outputs.argmax(dim=1)
             loss = criterion(outputs, labels)
 
-
-            loss = calculate_loss(loss,alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss)
+            if i % freq == 0:
+                loss = calculate_loss(loss,alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss,latent_features, labels)
             #create checkboxes for the losses selected and use the selection
             #if selected_loss_option=="inter_distance_loss" and i!=0 and i%freq==0:
             #    loss = loss*alpha_lr_value + (1-alpha_lr_value)* calculate_distance_loss(latent_features, labels)
@@ -303,16 +303,53 @@ def train_model():
     training = False
     training_button_text.set("Start Training")
 
-def calculate_loss(loss,alpha, beta, gamma, inter_dl, intra_dl, mv_loss):
-    if(inter_dl==1):
-        if(intra_dl==1):
-            if(mv_loss==1):
-                loss = loss*alpha + (1-alpha)*(beta*inter_dl + (1-beta)*(gamma*intra_dl + (1-gamma)*mv_loss))
+def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, latent_features, labels):
+    additional_loss = 0.0
 
+    if inter_dl:
+        inter_loss = calculate_distance_loss_between(latent_features, labels)
+    else:
+        inter_loss = 0
 
+    if intra_dl:
+        intra_loss = calculate_distance_loss_within(latent_features, labels)
+    else:
+        intra_loss = 0
 
-    ###Add other conditions here
-    return loss
+    if mv_loss:
+        move_loss = calculate_distance_loss_only_interaction(latent_features, labels)
+    else:
+        move_loss = 0
+
+    # Calculate the weighted sum of losses when all three are enabled
+    if inter_dl and intra_dl and mv_loss:
+        additional_loss = beta * inter_loss + (1 - beta) * (gamma * intra_loss + (1 - gamma) * move_loss)
+    
+    # Calculate the weighted sum of losses when only inter and intra are enabled
+    elif inter_dl and intra_dl:
+        additional_loss = beta * inter_loss + (1 - beta) * intra_loss
+
+    # Calculate the weighted sum of losses when only inter and movement are enabled
+    elif inter_dl and mv_loss:
+        additional_loss = beta * inter_loss + (1 - beta) * move_loss
+    
+    # Calculate the weighted sum of losses when only intra and movement are enabled
+    elif intra_dl and mv_loss:
+        additional_loss = beta * intra_loss + (1 - beta) * move_loss
+
+    # Single condition cases
+    elif inter_dl:
+        additional_loss = inter_loss
+
+    elif intra_dl:
+        additional_loss = intra_loss
+
+    elif mv_loss:
+        additional_loss = move_loss
+
+    # Combine base loss with additional losses weighted by alpha
+    total_loss = alpha * base_loss + (1 - alpha) * additional_loss
+    return total_loss
 
 
 def update_status_labels(epoch, batch, loss, accuracy):
@@ -453,7 +490,7 @@ class InteractivePlot:
     def plot_scatter(self):
         try:
             fig, ax = plt.subplots(figsize=(11, 8))
-            cmap = ListedColormap(plt.cm.tab10.colors)
+            cmap = ListedColormap(plt.cm.tab20.colors)
 
             correct = self.predicted_labels == self.labels
             incorrect = self.predicted_labels != self.labels
@@ -461,13 +498,22 @@ class InteractivePlot:
             scatter_correct = plt.scatter(self.reduced_features[correct, 0], self.reduced_features[correct, 1], c=self.labels[correct], cmap='tab10', alpha=0.6)
 
 
-            cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
-            for center, color in zip(self.cluster_centers, cluster_center_colors):
-                self.cluster_center_scatter = ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
+            #cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
+            #for center, color in zip(self.cluster_centers, cluster_center_colors):
+            #    self.cluster_center_scatter = ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
 
 
 
-            scatter_incorrect = plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', alpha=0.8, edgecolor='black', linewidth=2.0)
+            #scatter_incorrect = plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', alpha=0.8, edgecolor='black', linewidth=2.0)
+            # Plot cluster centers
+            for center, label in zip(self.cluster_centers, np.unique(self.labels)):
+                color = cmap(label)  # Use label to fetch the appropriate color
+                ax.scatter(center[0], center[1], c=[color], marker='x', s=100,
+                       label=f'Cluster Center for Class {label}', alpha=0.8)
+            
+            scatter_incorrect = ax.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], 
+                                       c=self.labels[incorrect], cmap=cmap, alpha=0.8, edgecolor='black', linewidth=2)
+
             #plt.colorbar(self.scatter)
             #plt.colorbar(ticks=range(12))
             # Add color bar

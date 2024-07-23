@@ -274,7 +274,8 @@ def train_model():
             outputs, latent_features, _ = model(inputs)
             predictions = outputs.argmax(dim=1)
             loss = criterion(outputs, labels)
-            loss = calculate_loss(loss, alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss)
+            if i % freq == 0:
+                loss = calculate_loss(loss, alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss, latent_features, labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
@@ -312,12 +313,54 @@ def train_model():
     training = False
     training_button_text.set("Start Training")
 
-def calculate_loss(loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss):
-    if inter_dl == 1:
-        if intra_dl == 1:
-            if mv_loss == 1:
-                loss = loss * alpha + (1 - alpha) * (beta * inter_dl + (1 - beta) * (gamma * intra_dl + (1 - gamma) * mv_loss))
-    return loss
+def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, latent_features, labels):
+    additional_loss = 0.0
+
+    if inter_dl:
+        inter_loss = calculate_distance_loss_between(latent_features, labels)
+    else:
+        inter_loss = 0
+
+    if intra_dl:
+        intra_loss = calculate_distance_loss_within(latent_features, labels)
+    else:
+        intra_loss = 0
+
+    if mv_loss:
+        move_loss = calculate_distance_loss_only_interaction(latent_features, labels)
+    else:
+        move_loss = 0
+
+    # Calculate the weighted sum of losses when all three are enabled
+    if inter_dl and intra_dl and mv_loss:
+        additional_loss = beta * inter_loss + (1 - beta) * (gamma * intra_loss + (1 - gamma) * move_loss)
+    
+    # Calculate the weighted sum of losses when only inter and intra are enabled
+    elif inter_dl and intra_dl:
+        additional_loss = beta * inter_loss + (1 - beta) * intra_loss
+
+    # Calculate the weighted sum of losses when only inter and movement are enabled
+    elif inter_dl and mv_loss:
+        additional_loss = beta * inter_loss + (1 - beta) * move_loss
+    
+    # Calculate the weighted sum of losses when only intra and movement are enabled
+    elif intra_dl and mv_loss:
+        additional_loss = beta * intra_loss + (1 - beta) * move_loss
+
+    # Single condition cases
+    elif inter_dl:
+        additional_loss = inter_loss
+
+    elif intra_dl:
+        additional_loss = intra_loss
+
+    elif mv_loss:
+        additional_loss = move_loss
+
+    # Combine base loss with additional losses weighted by alpha
+    total_loss = alpha * base_loss + (1 - alpha) * additional_loss
+    return total_loss
+
 
 def update_status_labels(epoch, batch, loss, accuracy):
     epoch_label_var.set(f"Epoch: {epoch}")
@@ -451,7 +494,8 @@ class InteractivePlot:
     def plot_scatter(self):
         try:
             fig, ax = plt.subplots(figsize=(11, 8))
-            cmap = ListedColormap(plt.cm.tab10.colors)
+            #cmap = ListedColormap(plt.cm.tab10.colors)
+            cmap = ListedColormap(plt.cm.nipy_spectral(np.linspace(0, 1, 100))) # Updated method to access colormap
 
             correct = self.predicted_labels == self.labels
             incorrect = self.predicted_labels != self.labels
@@ -463,10 +507,14 @@ class InteractivePlot:
                 self.cluster_center_scatter = ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
 
             scatter_incorrect = plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', alpha=0.8, edgecolor='black', linewidth=2.0)
-            colorbar = plt.colorbar(scatter_correct, ticks=range(100))
+            #colorbar = plt.colorbar(scatter_correct, ticks=range(100))
+            #colorbar.set_label('Classes')
+            #colorbar.set_ticks(range(100))
+            #colorbar.set_ticklabels(range(100))
+            colorbar = plt.colorbar(scatter_correct, ax=ax)
             colorbar.set_label('Classes')
-            colorbar.set_ticks(range(100))
-            colorbar.set_ticklabels(range(100))
+            colorbar.set_ticks(np.linspace(0, 1, 10))  # Setting 10 major ticks
+            colorbar.set_ticklabels(range(0, 100, 10))  # Labels for major ticks
 
             def on_click1(event):
                 if event.inaxes is not None:
