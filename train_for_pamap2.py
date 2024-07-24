@@ -158,6 +158,8 @@ current_num_features = num_features_for_plotting_highd
 current_batch=0
 current_epoch=0
 
+selected_index=None
+
 def start_training():
     global training, training_thread
     global current_num_epochs, current_layer, current_num_features
@@ -488,6 +490,7 @@ class InteractivePlot:
             print(f"Error plotting {self.plot_type}: {e}")
 
     def plot_scatter(self):
+        global selected_index
         try:
             fig, ax = plt.subplots(figsize=(11, 8))
             cmap = ListedColormap(plt.cm.tab20.colors)
@@ -542,9 +545,12 @@ class InteractivePlot:
                 if event.inaxes is not None:
                     x, y = event.xdata, event.ydata
                     distances = np.sqrt((self.cluster_centers[:, 0] - x) ** 2 + (self.cluster_centers[:, 1] - y) ** 2)
-                    index = np.argmin(distances)
-                    if distances[index] < 0.1:  # Tolerance for selecting a center
-                        self.dragging_center = index
+                    selected_index = np.argmin(distances)
+                    #self.highlight_selected_data(selected_index)
+                    selected_index_var.set(f"Selected Index: {selected_index}")
+                    if distances[selected_index] < 0.1:  # Tolerance for selecting a center
+                        self.dragging_center = selected_index
+                        
 
             def on_release(event):
                 if self.dragging_center is not None:
@@ -569,6 +575,8 @@ class InteractivePlot:
                     self.update_cluster_radius(index)
                     self.highlight_cluster()
 
+
+
             #fig.canvas.mpl_connect('button_press_event', on_click)
 
             fig.canvas.mpl_connect('button_press_event', on_click1)
@@ -583,6 +591,12 @@ class InteractivePlot:
             canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         except Exception as e:
             print(f"Error in scatter plot: {e}")
+
+    #def highlight_selected_data(self, index):
+        # Highlight in parallel coordinates
+        #self.plot_parallel_coordinates()
+        # Optionally update other plots
+        #self.plot_radar(index)
 
     def plot_radar(self):
         try:
@@ -623,6 +637,7 @@ class InteractivePlot:
             print(f"Error in radar plot: {e}")
 
     def plot_parallel_coordinates(self):
+        global selected_index
         try:
             selected_indices = np.isin(self.labels, self.selected_classes)
             selected_features = self.pca_features[selected_indices]
@@ -634,7 +649,20 @@ class InteractivePlot:
             df['label'] = selected_labels
 
             fig, ax = plt.subplots(figsize=(12, 8))
-            parallel_coordinates(df, 'label', colormap='tab10', ax=ax)
+
+            index = selected_index_var.get().split(': ')[1]  # Splits the string at ': ' and takes the second part
+            index = int(index)
+            # Define colors based on selection
+            if index is not None and index in selected_indices:
+                colors = ['#555555' if i != index else 'red' for i in range(len(df))]
+                parallel_coordinates(df, 'label', color=colors, ax=ax)
+            else:
+                parallel_coordinates(df, 'label', colormap='tab10', ax=ax)
+            #parallel_coordinates(df, 'label', colormap='tab10', ax=ax)
+
+            # Highlight the selected point
+            #parallel_coordinates(df, 'Label', color=['#555555' if i != index else 'red' for i in range(len(df))], ax=ax)
+    
 
             def on_click(event):
                 if event.inaxes is not None:
@@ -922,8 +950,8 @@ try:
     distance_label.pack(pady=5)
 
     selected_index_var = tk.StringVar(value="Selected Index: None")
-    selected_index = ttk.Label(control_panel, textvariable=selected_index_var)
-    selected_index.pack(pady=5)
+    selected_index_label = ttk.Label(control_panel, textvariable=selected_index_var)
+    selected_index_label.pack(pady=5)
 
     loss_option = tk.StringVar(value="no_loss")
     alpha = tk.DoubleVar(value=0.5)
