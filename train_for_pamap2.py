@@ -1,4 +1,5 @@
 from struct import pack
+from tkinter.constants import NO
 from scipy.spatial import distance
 import torch
 import torchvision.transforms as transforms
@@ -25,8 +26,9 @@ import datetime
 
 plot_queue = queue.Queue()
 
+
 # Directory to save reports and images
-report_dir = "reports/pamap2"
+report_dir = "reports/pamap2/3_layer/with_movement_loss"
 if not os.path.exists(report_dir):
     os.makedirs(report_dir)
 
@@ -138,7 +140,7 @@ def reinitialize_model():
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 num_layers = 3
-model = CNN_PAMAP2(len(columns), 11).to(device)
+model = CNN_PAMAP2(len(columns), 13).to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -228,6 +230,68 @@ def save_report(epoch, loss, accuracy, alpha, beta, gamma, layer_selected):
     #image_path = os.path.join(report_dir, f"scatter_epoch_{epoch}.png")
     #scatter_fig.savefig(image_path)
 
+
+
+
+def calculate_2d_coordinates(latent_features, method='tsne', n_components=2):
+    if method == 'tsne':
+        tsne = TSNE(n_components=n_components, random_state=0)
+        coordinates = tsne.fit_transform(latent_features.detach().cpu().numpy())
+    elif method == 'pca':
+        pca = PCA(n_components=n_components)
+        coordinates = pca.fit_transform(latent_features.detach().cpu().numpy())
+    else:
+        raise ValueError("Invalid method. Choose 'tsne' or 'pca'.")
+    return torch.tensor(coordinates, device=latent_features.device)
+
+def calculate_class_weights(latent_features, labels, beta, gamma,  method='tsne', previous_centers=None):
+    # Calculate 2D coordinates using t-SNE or PCA
+    coordinates = calculate_2d_coordinates(latent_features, method=method)
+    
+    unique_labels = labels.unique()
+    cluster_centers = {}
+    intra_cluster_distances = []
+    movement_penalties = []
+
+    for label in unique_labels:
+        class_features = coordinates[labels == label]
+        cluster_center = class_features.mean(dim=0)
+        cluster_centers[label.item()] = cluster_center
+        
+        # Calculate intra-cluster distance (condensation)
+        distances = torch.norm(class_features - cluster_center, dim=1)
+        intra_cluster_distance = distances.mean().item()
+        intra_cluster_distances.append(intra_cluster_distance)
+        
+        # Calculate movement penalty if previous centers are provided
+        if previous_centers is not None and label.item() in previous_centers:
+            previous_center = previous_centers[label.item()]
+            movement_penalty = torch.norm(cluster_center - previous_center).item()
+            movement_penalties.append(movement_penalty)
+        else:
+            movement_penalties.append(0)
+
+    # Compute the overall center for inter-cluster distance calculation
+    overall_center = torch.mean(torch.stack(list(cluster_centers.values())), dim=0)
+    
+    # Calculate inter-cluster distance (separation)
+    inter_cluster_distances = [torch.norm(center - overall_center).item() for center in cluster_centers]
+    
+    # Combine intra-cluster, inter-cluster distances and movement penalty
+    class_weights = [(1 - beta) * intra + beta * ((1-gamma)*inter + gamma * move)
+                     for intra, inter, move in zip(intra_cluster_distances, inter_cluster_distances, movement_penalties)]
+    
+    return torch.tensor(class_weights, device=latent_features.device), cluster_centers
+
+def custom_loss(outputs, labels, class_weights, alpha):
+    weights = class_weights[labels]  # Get the weight for each sample based on its label
+    base_loss = F.cross_entropy(outputs, labels, reduction='none')  # Compute base cross-entropy loss
+    weighted_loss = base_loss * weights  # Apply weights to the base loss
+    combined_loss = alpha * base_loss + (1 - alpha) * weighted_loss  # Combine base loss and weighted loss
+    return combined_loss.mean()  # Return the mean combined loss
+
+
+
 def train_model():
     global training, current_epoch, current_batch
     freq=200
@@ -238,8 +302,11 @@ def train_model():
     alpha_lr_value = float(alpha_lr.get())
     beta_lr_value = float(beta_lr.get())
     gamma_lr_value = float(gamma_lr.get())
+
+    previous_centers={}
     
     for epoch in range(current_epoch, num_epochs):
+        current_epoch=epoch
         if not training:
             current_epoch = epoch
             break
@@ -247,6 +314,7 @@ def train_model():
         correct_predictions = 0
         total_predictions = 0
         for i, data in enumerate(trainloader, 0):
+            current_batch=i
             if i < current_batch:
                 continue
             if not training:
@@ -260,7 +328,10 @@ def train_model():
             loss = criterion(outputs, labels)
 
             if i % freq == 0:
-                loss = calculate_loss(loss,alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss,latent_features, labels)
+                class_weights, cluster_centers = calculate_class_weights(latent_features, labels, beta_lr_value, gamma_lr_value,'tsne', previous_centers)
+                previous_centers = cluster_centers
+                loss = custom_loss(outputs, labels, class_weights, alpha_lr_value)
+                #loss, previous_centers = calculate_loss(loss,alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss,latent_features, labels, previous_centers)
             #create checkboxes for the losses selected and use the selection
             #if selected_loss_option=="inter_distance_loss" and i!=0 and i%freq==0:
             #    loss = loss*alpha_lr_value + (1-alpha_lr_value)* calculate_distance_loss(latent_features, labels)
@@ -268,7 +339,7 @@ def train_model():
             #    loss = loss*alpha_lr_value + (1-alpha_lr_value) * calculate_distance_loss_total(latent_features, labels)
             
 
-            loss.backward()
+            loss.backward(retain_graph=True)
             optimizer.step()
             running_loss += loss.item()
 
@@ -279,8 +350,8 @@ def train_model():
             if i % 200 == 199:
                 avg_loss = running_loss / 200
                 accuracy = correct_predictions / total_predictions
-                print(f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.3f}")
-                update_status_labels(epoch + 1, i + 1, avg_loss, accuracy)
+                print(f"[Epoch {current_epoch + 1}, Batch {current_batch + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.3f}")
+                update_status_labels(current_epoch + 1, current_batch + 1, avg_loss, accuracy)
                 running_loss = 0.0
         if training:
             root.after(0, display_visualization)
@@ -305,8 +376,9 @@ def train_model():
     training = False
     training_button_text.set("Start Training")
 
-def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, latent_features, labels):
+def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, latent_features, labels, previous_centers=None):
     additional_loss = 0.0
+    new_centers = []
 
     if inter_dl:
         inter_loss = calculate_distance_loss_between(latent_features, labels)
@@ -319,7 +391,7 @@ def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, l
         intra_loss = 0
 
     if mv_loss:
-        move_loss = calculate_distance_loss_only_interaction(latent_features, labels)
+        move_loss, new_centers = calculate_distance_loss_only_interaction(latent_features, labels, previous_centers)
     else:
         move_loss = 0
 
@@ -351,7 +423,7 @@ def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, l
 
     # Combine base loss with additional losses weighted by alpha
     total_loss = alpha * base_loss + (1 - alpha) * additional_loss
-    return total_loss
+    return total_loss, new_centers
 
 
 def update_status_labels(epoch, batch, loss, accuracy):
@@ -490,40 +562,78 @@ class InteractivePlot:
             print(f"Error plotting {self.plot_type}: {e}")
 
     def plot_scatter(self):
-        global selected_index
+        global selected_index, current_epoch, current_batch
         try:
             fig, ax = plt.subplots(figsize=(11, 8))
+            #cmap = ListedColormap(plt.cm.tab20.colors)
+            num_classes = len(np.unique(self.labels))
             cmap = ListedColormap(plt.cm.tab20.colors)
 
             correct = self.predicted_labels == self.labels
             incorrect = self.predicted_labels != self.labels
 
-            scatter_correct = plt.scatter(self.reduced_features[correct, 0], self.reduced_features[correct, 1], c=self.labels[correct], cmap='tab10', alpha=0.6)
+            scatter_correct = plt.scatter(self.reduced_features[correct, 0],
+            self.reduced_features[correct, 1], c=self.labels[correct], cmap='tab20', alpha=0.6)
 
 
+            cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
+            for center, color in zip(self.cluster_centers, cluster_center_colors):
+                self.cluster_center_scatter = ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
             #cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
             #for center, color in zip(self.cluster_centers, cluster_center_colors):
             #    self.cluster_center_scatter = ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
 
+            # Plot cluster centers with correct colors
+            #unique_labels = np.unique(self.labels)
+            #for i, center in enumerate(self.cluster_centers):
+            #    label_index = np.where(unique_labels == self.labels[i])[0][0]  # Find the index of the label
+            #    ax.scatter(center[0], center[1], c=[cmap.colors[label_index]], marker='x', s=100, 
+            #           label=f'Cluster Center for Class {self.labels[i]}', alpha=1.0)
 
 
             #scatter_incorrect = plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', alpha=0.8, edgecolor='black', linewidth=2.0)
             # Plot cluster centers
-            for center, label in zip(self.cluster_centers, np.unique(self.labels)):
-                color = cmap(label)  # Use label to fetch the appropriate color
-                ax.scatter(center[0], center[1], c=[color], marker='x', s=100,
-                       label=f'Cluster Center for Class {label}', alpha=0.8)
+           # Plot cluster centers
             
             scatter_incorrect = ax.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], 
                                        c=self.labels[incorrect], cmap=cmap, alpha=0.8, edgecolor='black', linewidth=2)
 
+
+            # Plot cluster centers with corresponding colors mapped to class labels
+            #for i, center in enumerate(self.cluster_centers):
+                # Using modulo operation to cycle through colors if more classes than colors
+            #    label = np.unique(self.labels)[i % num_classes]  
+            #    color = cmap.colors[i % num_classes]  
+            #    ax.scatter(center[0], center[1], c=[color], marker='x', s=100, 
+            #           label=f'Cluster Center for Class {label}', alpha=0.8)
+
+            # Add a color bar for clarity
+            colorbar = plt.colorbar(scatter_correct, ticks=range(num_classes))
+            colorbar.set_label('Classes')
+            colorbar.set_ticks(range(num_classes))
+            colorbar.set_ticklabels(range(num_classes))
+
             #plt.colorbar(self.scatter)
             #plt.colorbar(ticks=range(12))
             # Add color bar
-            colorbar = plt.colorbar(scatter_correct, ticks=range(12))
-            colorbar.set_label('Classes')
-            colorbar.set_ticks(range(12))
-            colorbar.set_ticklabels(range(12))
+            # Add a color bar for clarity
+            #colorbar = plt.colorbar(scatter_correct, ticks=range(len(np.unique(self.labels))))
+            #colorbar.set_label('Classes')
+            #colorbar.set_ticks(range(len(np.unique(self.labels))))
+            #colorbar.set_ticklabels(range(len(np.unique(self.labels))))
+
+            #plt.title(f'Epoch {epoch+1}: Accuracy {accuracy:.3f}, Loss {loss:.3f}')
+
+            # Save the plot
+            #timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if current_epoch>=1 or (current_epoch==0 and current_batch>1):
+                now = datetime.datetime.now()
+                date_time = now.strftime("%Y%m%d_%H%M%S")
+                #filename = f'epoch_plots/scatter_plot_epoch_{epoch+1}_{timestamp}.png'
+                filename = f"PAMAP2_{current_epoch+1}_{date_time}.png"
+                report_path = os.path.join(report_dir, filename)
+                plt.savefig(report_path)
+                plt.close(fig)
 
 
             #######OLD##########
@@ -725,6 +835,7 @@ def calculate_distance_loss_between(latent_features, labels):
         num_classes = len(unique_labels)
         distance_loss_between = 0.0
         cluster_centers = []
+        distance = 0.0
         #beta_lr_value = float(beta_lr.get())
 
         for label in unique_labels:
@@ -736,7 +847,9 @@ def calculate_distance_loss_between(latent_features, labels):
         num_comparisons = 0
         for i in range(num_classes):
             for j in range(i + 1, num_classes):
-                distance_loss_between += torch.norm(cluster_centers[i] - cluster_centers[j])
+                distance += torch.norm(cluster_centers[i] - cluster_centers[j])
+                if distance > 0:
+                    distance_loss_between += 1/distance
                 num_comparisons += 1
         
         # Normalize the between-cluster distance by the number of comparisons
@@ -757,6 +870,12 @@ def calculate_distance_loss_between(latent_features, labels):
 def calculate_distance_loss_only_interaction(latent_features, labels, previous_centers=None):
     try:
         cluster_centers = []
+        unique_labels = labels.unique()
+        for label in unique_labels:
+            mask = (labels == label)
+            cluster_features = latent_features[mask]
+            cluster_center = cluster_features.mean(dim=0)
+            cluster_centers.append(cluster_center.detach())
         
         # Calculate cluster movement loss
         movement_loss = 0.0
@@ -765,7 +884,7 @@ def calculate_distance_loss_only_interaction(latent_features, labels, previous_c
                 movement_loss += torch.norm(current - previous)
             movement_loss /= len(cluster_centers)
         
-        return movement_loss
+        return movement_loss, cluster_centers
     
     except Exception as e:
         print(f"Error calculating distance loss: {e}")
