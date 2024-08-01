@@ -58,7 +58,7 @@ else:
     device = torch.device("cpu")
 
 class SimpleCNN_CIFAR100(nn.Module):
-    def __init__(self, num_classes=100):
+    def __init__(self, num_classes=10):
         super(SimpleCNN_CIFAR100, self).__init__()
         self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
         self.pool = nn.MaxPool2d(2, 2)
@@ -142,7 +142,7 @@ def reinitialize_model():
 
 num_layers = 1
 model = SimpleCNN_CIFAR100().to(device)
-criterion = nn.CrossEntropyLoss(reduction='none')
+criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 training = False
@@ -225,12 +225,75 @@ def normalize_loss(loss, mean, std):
         return loss
     return (loss - mean) / std
 
+def normalize_weights(alpha, beta, gamma, base_weight=1.0):
+    total = base_weight + alpha + beta + gamma
+    return base_weight / total, alpha / total, beta / total, gamma / total
+
+
+def calculate_2d_coordinates(latent_features, method='tsne', n_components=2):
+    if method == 'tsne':
+        tsne = TSNE(n_components=n_components, random_state=0)
+        coordinates = tsne.fit_transform(latent_features.detach().cpu().numpy())
+    elif method == 'pca':
+        pca = PCA(n_components=n_components)
+        coordinates = pca.fit_transform(latent_features.detach().cpu().numpy())
+    else:
+        raise ValueError("Invalid method. Choose 'tsne' or 'pca'.")
+    return torch.tensor(coordinates, device=latent_features.device)
+
+def calculate_class_weights(latent_features, labels, beta, gamma,  method='tsne', previous_centers=None):
+    # Calculate 2D coordinates using t-SNE or PCA
+    coordinates = calculate_2d_coordinates(latent_features, method=method)
+    
+    unique_labels = labels.unique()
+    cluster_centers = {}
+    intra_cluster_distances = []
+    movement_penalties = []
+
+    for label in unique_labels:
+        class_features = coordinates[labels == label]
+        cluster_center = class_features.mean(dim=0)
+        cluster_centers[label.item()] = cluster_center
+        
+        # Calculate intra-cluster distance (condensation)
+        distances = torch.norm(class_features - cluster_center, dim=1)
+        intra_cluster_distance = distances.mean().item()
+        intra_cluster_distances.append(intra_cluster_distance)
+        
+        # Calculate movement penalty if previous centers are provided
+        if previous_centers is not None and label.item() in previous_centers:
+            previous_center = previous_centers[label.item()]
+            movement_penalty = torch.norm(cluster_center - previous_center).item()
+            movement_penalties.append(movement_penalty)
+        else:
+            movement_penalties.append(0)
+
+    # Compute the overall center for inter-cluster distance calculation
+    overall_center = torch.mean(torch.stack(list(cluster_centers.values())), dim=0)
+    
+    # Calculate inter-cluster distance (separation)
+    inter_cluster_distances = [torch.norm(center - overall_center).item() for center in cluster_centers]
+    
+    # Combine intra-cluster, inter-cluster distances and movement penalty
+    class_weights = [(1 - beta) * intra + beta * ((1-gamma)*inter + gamma * move)
+                     for intra, inter, move in zip(intra_cluster_distances, inter_cluster_distances, movement_penalties)]
+    
+    return torch.tensor(class_weights, device=latent_features.device), cluster_centers
+
+def custom_loss(outputs, labels, class_weights, alpha):
+    weights = class_weights[labels]  # Get the weight for each sample based on its label
+    base_loss = F.cross_entropy(outputs, labels, reduction='none')  # Compute base cross-entropy loss
+    weighted_loss = base_loss * weights  # Apply weights to the base loss
+    combined_loss = alpha * base_loss + (1 - alpha) * weighted_loss  # Combine base loss and weighted loss
+    return combined_loss.mean()  # Return the mean combined loss
+
+
 def train_model():
     global training, current_epoch, current_batch
-    freq = 200
+    freq = 100
     
     
-    previous_centers = None
+    previous_centers = {}
     intra_losses=[]
     inter_losses=[]
     mv_losses=[]
@@ -253,44 +316,74 @@ def train_model():
             optimizer.zero_grad()
             outputs, latent_features, _ = model(inputs)
             predictions = outputs.argmax(dim=1)
-            base_loss = criterion(outputs, labels)
+            loss = criterion(outputs, labels)
             #magnet_loss, current_centers = calculate_magnet_loss(latent_features, labels, previous_centers, alpha_lr_value, beta_lr_value)
-            inter_loss, current_centers = calculate_inter_loss_2d(latent_features, labels)
-            intra_loss, current_centers = calculate_intra_loss_2d(latent_features, labels)
-            mv_loss, current_clusters = calculate_mv_loss_2d(latent_features, labels, previous_centers)
-            #mv_loss, current_centers = calculate_mv_loss(latent_features, labels, previous_centers)
-            inter_distance_loss_en = inter_distance_loss_var.get()
-            intra_distance_loss_en = intra_distance_loss_var.get()
-            #mv_distance_loss_en = mv_loss_var.get()
-            alpha_lr_value = float(alpha_lr.get())
-            beta_lr_value = float(beta_lr.get())
-
-            # Store losses for normalization
-            inter_losses.append(inter_loss.item())
-            intra_losses.append(intra_loss.item())
-            mv_losses.append(mv_loss)
-
-            # Calculate means and standard deviations
-            inter_mean, inter_std = np.mean(inter_losses), np.std(inter_losses)
-            intra_mean, intra_std = np.mean(intra_losses), np.std(intra_losses)
-            mv_mean, mv_std = np.mean(mv_losses), np.std(mv_losses)
-
-            # Normalize losses
-            inter_loss_norm = normalize_loss(inter_loss, inter_mean, inter_std)
-            intra_loss_norm = normalize_loss(intra_loss, intra_mean, intra_std)
-            mv_loss_norm = normalize_loss(mv_loss, mv_mean, mv_std)
-
-            if inter_distance_loss_en and intra_distance_loss_en:
-                magnet_loss = alpha_lr_value*base_loss.mean() + (1-alpha_lr_value)*(beta_lr_value*inter_loss_norm + (1-beta_lr_value)*intra_loss_norm)
-            elif inter_distance_loss_en:
-                magnet_loss = alpha_lr_value*base_loss.mean() + (1-alpha_lr_value)*inter_loss_norm
-            elif intra_distance_loss_en:
-                magnet_loss = alpha_lr_value*base_loss.mean() + (1-alpha_lr_value)*intra_loss_norm
-            else:
-                magnet_loss = 1.0*base_loss.mean()
             
-            loss = magnet_loss
-            loss.backward()
+            
+            if i % freq == 0:
+                alpha_lr_value = float(alpha_lr.get())
+                beta_lr_value = float(beta_lr.get())
+                gamma_lr_value = float(gamma_lr.get())
+
+                class_weights, cluster_centers = calculate_class_weights(latent_features, labels, beta_lr_value, gamma_lr_value,'tsne', previous_centers)
+                previous_centers = cluster_centers
+                loss = custom_loss(outputs, labels, class_weights, alpha_lr_value)
+
+                #inter_distance_loss_en = inter_distance_loss_var.get()
+                #intra_distance_loss_en = intra_distance_loss_var.get()
+                #mv_distance_loss_en = movement_loss_var.get()
+                #alpha_lr_value = float(alpha_lr.get())
+                #beta_lr_value = float(beta_lr.get())
+                #gamma_lr_value = float(gamma_lr.get())
+
+                #loss1, previous_centers = calculate_loss(base_loss,alpha_lr_value, beta_lr_value, gamma_lr_value, inter_distance_loss_en, 
+                #intra_distance_loss_en, mv_distance_loss_en,latent_features, labels, previous_centers)
+           
+            
+                #inter_loss, current_centers = calculate_inter_loss_2d(latent_features, labels, method='tsne')
+                #intra_loss, current_centers = calculate_intra_loss_2d(latent_features, labels, method='tsne')
+                #mv_loss, current_clusters = calculate_mv_loss_2d(latent_features, labels, method='tsne')
+
+                # Store losses for normalization
+                #inter_losses.append(inter_loss.item())
+                #intra_losses.append(intra_loss.item())
+                #mv_losses.append(mv_loss)
+
+                # Calculate means and standard deviations
+                #inter_mean, inter_std = np.mean(inter_losses), np.std(inter_losses)
+                #intra_mean, intra_std = np.mean(intra_losses), np.std(intra_losses)
+                #mv_mean, mv_std = np.mean(mv_losses), np.std(mv_losses)
+
+                # Normalize losses
+                #inter_loss_norm = normalize_loss(inter_loss, inter_mean, inter_std)
+                #intra_loss_norm = normalize_loss(intra_loss, intra_mean, intra_std)
+                #mv_loss_norm = normalize_loss(mv_loss, mv_mean, mv_std)
+
+                # Normalize weights
+                #base_weight, normalized_alpha, normalized_beta, normalized_gamma = normalize_weights(
+                #    alpha_lr_value, beta_lr_value, gamma_lr_value
+                #)
+
+                #Calculate magnet loss
+                #if inter_distance_loss_en and intra_distance_loss_en and mv_distance_loss_en:
+                #   magnet_loss = base_weight * base_loss.mean() + normalized_alpha * inter_loss_norm + normalized_beta * intra_loss_norm + normalized_gamma * mv_loss_norm
+                #elif inter_distance_loss_en and intra_distance_loss_en:
+                #    magnet_loss = base_weight * base_loss.mean() + normalized_alpha * inter_loss_norm + normalized_beta * intra_loss_norm
+                #elif inter_distance_loss_en and mv_distance_loss_en:
+                #    magnet_loss = base_weight * base_loss.mean() + normalized_alpha * inter_loss_norm + normalized_gamma * mv_loss_norm
+                #elif intra_distance_loss_en and mv_distance_loss_en:
+                #    magnet_loss = base_weight * base_loss.mean() + normalized_beta * intra_loss_norm + normalized_gamma * mv_loss_norm
+                #elif inter_distance_loss_en:
+                #    magnet_loss = base_weight * base_loss.mean() + normalized_alpha * inter_loss_norm
+                #elif intra_distance_loss_en:
+                #    magnet_loss = base_weight * base_loss.mean() + normalized_beta * intra_loss_norm
+                #elif mv_distance_loss_en:
+                #    magnet_loss = base_weight * base_loss.mean() + normalized_gamma * mv_loss_norm
+                #else:
+                #    magnet_loss = base_weight * base_loss.mean()
+            
+                #loss = magnet_loss
+            loss.backward(retain_graph=True)
             optimizer.step()
             running_loss += loss.item()
 
@@ -310,12 +403,139 @@ def train_model():
 
         save_report(epoch, avg_loss, accuracy, alpha_lr_value, beta_lr_value, selected_layer)
 
-        previous_centers = current_centers
+        #previous_centers = current_centers
 
     current_epoch = 0
     current_batch = 0
     training = False
     training_button_text.set("Start Training")
+
+def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, latent_features, labels, previous_centers=None):
+    additional_loss = 0.0
+    new_centers = []
+
+    if inter_dl:
+        inter_loss = calculate_distance_loss_between(latent_features, labels)
+    else:
+        inter_loss = 0
+
+    if intra_dl:
+        intra_loss = calculate_distance_loss_within(latent_features, labels)
+    else:
+        intra_loss = 0
+
+    if mv_loss:
+        move_loss, new_centers = calculate_distance_loss_only_interaction(latent_features, labels, previous_centers)
+    else:
+        move_loss = 0
+
+    # Calculate the weighted sum of losses when all three are enabled
+    if inter_dl and intra_dl and mv_loss:
+        additional_loss = beta * inter_loss + (1 - beta) * (gamma * intra_loss + (1 - gamma) * move_loss)
+    
+    # Calculate the weighted sum of losses when only inter and intra are enabled
+    elif inter_dl and intra_dl:
+        additional_loss = beta * inter_loss + (1 - beta) * intra_loss
+
+    # Calculate the weighted sum of losses when only inter and movement are enabled
+    elif inter_dl and mv_loss:
+        additional_loss = beta * inter_loss + (1 - beta) * move_loss
+    
+    # Calculate the weighted sum of losses when only intra and movement are enabled
+    elif intra_dl and mv_loss:
+        additional_loss = beta * intra_loss + (1 - beta) * move_loss
+
+    # Single condition cases
+    elif inter_dl:
+        additional_loss = inter_loss
+
+    elif intra_dl:
+        additional_loss = intra_loss
+
+    elif mv_loss:
+        additional_loss = move_loss
+
+    # Combine base loss with additional losses weighted by alpha
+    total_loss = alpha * base_loss + (1 - alpha) * additional_loss
+    return total_loss, new_centers
+
+def calculate_distance_loss_within(latent_features, labels):
+    try:
+        unique_labels = labels.unique()
+        distance_loss_within = 0.0
+        cluster_centers = []
+        for label in unique_labels:
+            class_features = latent_features[labels == label]
+            cluster_center = class_features.mean(dim=0)
+            cluster_centers.append(cluster_center)
+            distances = torch.norm(class_features - cluster_center, dim=1)
+            distance_loss_within += distances.mean()
+        return distance_loss_within
+    except Exception as e:
+        print(f"Error calculating distance loss: {e}")
+        return 0.0
+
+def calculate_distance_loss_between(latent_features, labels):
+    try:
+        unique_labels = labels.unique()
+        num_classes = len(unique_labels)
+        distance_loss_between = 0.0
+        cluster_centers = []
+        distance = 0.0
+        #beta_lr_value = float(beta_lr.get())
+
+        for label in unique_labels:
+            class_features = latent_features[labels == label]
+            cluster_center = class_features.mean(dim=0)
+            cluster_centers.append(cluster_center)
+        
+        # Calculate between-cluster distance
+        num_comparisons = 0
+        for i in range(num_classes):
+            for j in range(i + 1, num_classes):
+                distance += torch.norm(cluster_centers[i] - cluster_centers[j])
+                if distance > 0:
+                    distance_loss_between += 1/distance
+                num_comparisons += 1
+        
+        # Normalize the between-cluster distance by the number of comparisons
+        if num_comparisons > 0:
+            distance_loss_between /= num_comparisons
+        
+        # Combine the two components with a balancing factor
+        #balancing_factor = 0.1  # Adjust this factor to balance within and between distances
+        #total_distance_loss = beta_lr_value * distance_loss_within + (1-beta_lr_value) * distance_loss_between
+        
+        return distance_loss_between
+    
+    except Exception as e:
+        print(f"Error calculating distance loss: {e}")
+        return 0.0
+
+
+def calculate_distance_loss_only_interaction(latent_features, labels, previous_centers=None):
+    try:
+        cluster_centers = []
+        unique_labels = labels.unique()
+        for label in unique_labels:
+            mask = (labels == label)
+            cluster_features = latent_features[mask]
+            cluster_center = cluster_features.mean(dim=0)
+            cluster_centers.append(cluster_center.detach())
+        
+        # Calculate cluster movement loss
+        movement_loss = 0.0
+        if previous_centers is not None:
+            for current, previous in zip(cluster_centers, previous_centers):
+                movement_loss += torch.norm(current - previous)
+            movement_loss /= len(cluster_centers)
+        
+        return movement_loss, cluster_centers
+    
+    except Exception as e:
+        print(f"Error calculating distance loss: {e}")
+        return 0.0, []
+
 
 def calculate_intra_loss_2d(latent_features, labels, method='pca', n_components=2):
     """
@@ -338,7 +558,7 @@ def calculate_intra_loss_2d(latent_features, labels, method='pca', n_components=
     if method == 'pca':
         reducer = PCA(n_components=n_components)
     elif method == 'tsne':
-        reducer = TSNE(n_components=n_components, random_state=0)
+        reducer = TSNE(n_components=n_components, random_state=0, perplexity=5)
     else:
         raise ValueError("Invalid method. Choose 'pca' or 'tsne'.")
     
@@ -414,7 +634,7 @@ def calculate_inter_loss_2d(latent_features, labels, method='pca', n_components=
     if method == 'pca':
         reducer = PCA(n_components=n_components)
     elif method == 'tsne':
-        reducer = TSNE(n_components=n_components, random_state=0)
+        reducer = TSNE(n_components=n_components, random_state=0, perplexity=5)
     else:
         raise ValueError("Invalid method. Choose 'pca' or 'tsne'.")
     
@@ -441,38 +661,19 @@ def calculate_inter_loss_2d(latent_features, labels, method='pca', n_components=
     
     return magnet_loss, cluster_centers
 
-def calculate_mv_loss_2d(latent_features, labels, previous_centers, method='pca', n_components=2):
-    """
-    Calculate movement loss based on the change in cluster centers in 2D plot dimensions.
-    
-    Args:
-        latent_features (torch.Tensor): Latent features from the neural network.
-        labels (torch.Tensor): Corresponding class labels.
-        previous_centers (list): Cluster centers from the previous epoch.
-        method (str): Method for dimensionality reduction ('pca' or 'tsne').
-        n_components (int): Number of components for dimensionality reduction.
-
-    Returns:
-        float: Movement loss.
-        list: Current cluster centers in 2D.
-    """
-    if previous_centers is None:
-        # If there are no previous centers, return zero movement loss
-        return 0.0, None
-
+def calculate_mv_loss_2d(latent_features, labels, method='pca', n_components=2):
     latent_features_np = latent_features.detach().cpu().numpy()
     labels_np = labels.detach().cpu().numpy()
-    
-    # Perform dimensionality reduction
+
     if method == 'pca':
         reducer = PCA(n_components=n_components)
     elif method == 'tsne':
-        reducer = TSNE(n_components=n_components, random_state=0)
+        reducer = TSNE(n_components=n_components, random_state=0, perplexity=5)
     else:
         raise ValueError("Invalid method. Choose 'pca' or 'tsne'.")
-    
-    reduced_features = reducer.fit_transform(latent_features_np)
 
+    reduced_features = reducer.fit_transform(latent_features_np)
+    center_of_plot = np.mean(reduced_features, axis=0)
     unique_labels = np.unique(labels_np)
     current_centers = []
     movement_loss = 0.0
@@ -481,12 +682,10 @@ def calculate_mv_loss_2d(latent_features, labels, previous_centers, method='pca'
         class_features = reduced_features[labels_np == label]
         cluster_center = class_features.mean(axis=0)
         current_centers.append(cluster_center)
-    
-    for current, previous in zip(current_centers, previous_centers):
-        movement_loss += np.linalg.norm(current - previous)
-    
+        movement_loss += np.linalg.norm(cluster_center - center_of_plot)
+
     movement_loss /= len(current_centers)
-    
+
     return movement_loss, current_centers
 
 def update_status_labels(epoch, batch, loss, accuracy):
@@ -977,6 +1176,12 @@ try:
 
     beta_lr = ttk.Entry(control_panel, textvariable=beta)
     beta_lr.pack(padx=5, pady=5)
+
+    gamma_lr_label = ttk.Label(control_panel, text="Gamma")
+    gamma_lr_label.pack(pady=5)
+
+    gamma_lr = ttk.Entry(control_panel, textvariable=beta)
+    gamma_lr.pack(padx=5, pady=5)
 
     notebook = ttk.Notebook(main_frame)
     notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)

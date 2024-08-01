@@ -157,7 +157,7 @@ def reinitialize_model():
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 num_layers = 1
-model = SimpleCNN_CIFAR100().to(device)
+model = CNN_CIFAR100().to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -245,9 +245,69 @@ def save_report(epoch, loss, accuracy, alpha, beta, gamma, layer_selected):
     #image_path = os.path.join(report_dir, f"scatter_epoch_{epoch}.png")
     #scatter_fig.savefig(image_path)
 
+
+def calculate_2d_coordinates(latent_features, method='tsne', n_components=2):
+    if method == 'tsne':
+        tsne = TSNE(n_components=n_components, random_state=0)
+        coordinates = tsne.fit_transform(latent_features.detach().cpu().numpy())
+    elif method == 'pca':
+        pca = PCA(n_components=n_components)
+        coordinates = pca.fit_transform(latent_features.detach().cpu().numpy())
+    else:
+        raise ValueError("Invalid method. Choose 'tsne' or 'pca'.")
+    return torch.tensor(coordinates, device=latent_features.device)
+
+def calculate_class_weights(latent_features, labels, beta, gamma,  method='tsne', previous_centers=None):
+    # Calculate 2D coordinates using t-SNE or PCA
+    coordinates = calculate_2d_coordinates(latent_features, method=method)
+    
+    unique_labels = labels.unique()
+    cluster_centers = {}
+    intra_cluster_distances = []
+    movement_penalties = []
+
+    for label in unique_labels:
+        class_features = coordinates[labels == label]
+        cluster_center = class_features.mean(dim=0)
+        cluster_centers[label.item()] = cluster_center
+        
+        # Calculate intra-cluster distance (condensation)
+        distances = torch.norm(class_features - cluster_center, dim=1)
+        intra_cluster_distance = distances.mean().item()
+        intra_cluster_distances.append(intra_cluster_distance)
+        
+        # Calculate movement penalty if previous centers are provided
+        if previous_centers is not None and label.item() in previous_centers:
+            previous_center = previous_centers[label.item()]
+            movement_penalty = torch.norm(cluster_center - previous_center).item()
+            movement_penalties.append(movement_penalty)
+        else:
+            movement_penalties.append(0)
+
+    # Compute the overall center for inter-cluster distance calculation
+    overall_center = torch.mean(torch.stack(list(cluster_centers.values())), dim=0)
+    
+    # Calculate inter-cluster distance (separation)
+    inter_cluster_distances = [torch.norm(center - overall_center).item() for center in cluster_centers]
+    
+    # Combine intra-cluster, inter-cluster distances and movement penalty
+    class_weights = [(1 - beta) * intra + beta * ((1-gamma)*inter + gamma * move)
+                     for intra, inter, move in zip(intra_cluster_distances, inter_cluster_distances, movement_penalties)]
+    
+    return torch.tensor(class_weights, device=latent_features.device), cluster_centers
+
+def custom_loss(outputs, labels, class_weights, alpha):
+    weights = class_weights[labels]  # Get the weight for each sample based on its label
+    base_loss = F.cross_entropy(outputs, labels, reduction='none')  # Compute base cross-entropy loss
+    weighted_loss = base_loss * weights  # Apply weights to the base loss
+    combined_loss = alpha * base_loss + (1 - alpha) * weighted_loss  # Combine base loss and weighted loss
+    return combined_loss.mean()  # Return the mean combined loss
+
+
 def train_model():
     global training, current_epoch, current_batch
-    freq = 200
+    freq = 100
+    previous_centers = {}
     inter_dl = inter_distance_loss_var.get()
     intra_dl = intra_distance_loss_var.get()
     mv_loss = movement_loss_var.get()
@@ -274,9 +334,17 @@ def train_model():
             outputs, latent_features, _ = model(inputs)
             predictions = outputs.argmax(dim=1)
             loss = criterion(outputs, labels)
+            #if i % freq == 0:
+            #    loss = calculate_loss(loss, alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss, latent_features, labels)
             if i % freq == 0:
-                loss = calculate_loss(loss, alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss, latent_features, labels)
-            loss.backward()
+                alpha_lr_value = float(alpha_lr.get())
+                beta_lr_value = float(beta_lr.get())
+                gamma_lr_value = float(gamma_lr.get())
+
+                class_weights, cluster_centers = calculate_class_weights(latent_features, labels, beta_lr_value, gamma_lr_value,'tsne', previous_centers)
+                previous_centers = cluster_centers
+                loss = custom_loss(outputs, labels, class_weights, alpha_lr_value)
+            loss.backward(retain_graph=True)
             optimizer.step()
             running_loss += loss.item()
 
@@ -494,27 +562,35 @@ class InteractivePlot:
     def plot_scatter(self):
         try:
             fig, ax = plt.subplots(figsize=(11, 8))
-            #cmap = ListedColormap(plt.cm.tab10.colors)
-            cmap = ListedColormap(plt.cm.nipy_spectral(np.linspace(0, 1, 100))) # Updated method to access colormap
+            cmap = ListedColormap(plt.cm.tab20.colors)
+            #cmap = ListedColormap(plt.cm.nipy_spectral(np.linspace(0, 1, 100))) # Updated method to access colormap
 
-            correct = self.predicted_labels == self.labels
-            incorrect = self.predicted_labels != self.labels
+            selected_classes = np.random.choice(range(100), 20, replace=False)
+            mask = np.isin(self.labels, selected_classes)
+            reduced_features = self.reduced_features[mask]
+            labels = self.labels[mask]
+            predicted_labels = self.predicted_labels[mask]
+            
+            correct = predicted_labels == labels
+            incorrect = predicted_labels != labels
 
-            scatter_correct = plt.scatter(self.reduced_features[correct, 0], self.reduced_features[correct, 1], c=self.labels[correct], cmap='tab10', alpha=0.6)
+            scatter_correct = plt.scatter(reduced_features[correct, 0], reduced_features[correct, 1], c=labels[correct], cmap='tab20', alpha=0.6)
 
-            cluster_center_colors = [cmap(label) for label in range(len(self.cluster_centers))]
+            cluster_center_colors = [cmap(label) for label in range(20)]
             for center, color in zip(self.cluster_centers, cluster_center_colors):
                 self.cluster_center_scatter = ax.scatter(center[0], center[1], c=[color], marker='x', s=100, label='Cluster Centers', alpha=0.8)
 
-            scatter_incorrect = plt.scatter(self.reduced_features[incorrect, 0], self.reduced_features[incorrect, 1], c=self.labels[incorrect], cmap='tab10', alpha=0.8, edgecolor='black', linewidth=2.0)
+            scatter_incorrect = plt.scatter(reduced_features[incorrect, 0], reduced_features[incorrect, 1], c=labels[incorrect], cmap='tab20', alpha=0.8, edgecolor='black', linewidth=2.0)
             #colorbar = plt.colorbar(scatter_correct, ticks=range(100))
             #colorbar.set_label('Classes')
             #colorbar.set_ticks(range(100))
             #colorbar.set_ticklabels(range(100))
-            colorbar = plt.colorbar(scatter_correct, ax=ax)
-            colorbar.set_label('Classes')
-            colorbar.set_ticks(np.linspace(0, 1, 10))  # Setting 10 major ticks
-            colorbar.set_ticklabels(range(0, 100, 10))  # Labels for major ticks
+            #colorbar = plt.colorbar(scatter_correct, ax=ax)
+            #colorbar.set_label('Classes')
+            #colorbar.set_ticks(np.linspace(0, 1, 10))  # Setting 10 major ticks
+            #colorbar.set_ticklabels(range(0, 100, 10))  # Labels for major ticks
+
+            plt.colorbar()
 
             def on_click1(event):
                 if event.inaxes is not None:
