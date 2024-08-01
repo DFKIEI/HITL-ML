@@ -910,7 +910,7 @@ try:
     control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
     ttk.Label(control_panel, text="Number of Epochs:").pack(pady=5)
-    epoch_slider = tk.Scale(control_panel, from_=1, to=20, orient=tk.HORIZONTAL, command=update_epochs)
+    epoch_slider = tk.Scale(control_panel, from_=1, to=50, orient=tk.HORIZONTAL, command=update_epochs)
     epoch_slider.set(num_epochs)
     epoch_slider.pack(padx=5, pady=5)
 

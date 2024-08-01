@@ -1,0 +1,2 @@
+Epoch,Loss,Accuracy,Alpha,Beta,Layer Selected
+3,0.9768397843837738,0.6510044642857142,0.01,0.99,1

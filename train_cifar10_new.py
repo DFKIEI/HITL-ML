@@ -1088,7 +1088,7 @@ try:
     control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
     ttk.Label(control_panel, text="Number of Epochs:").pack(pady=5)
-    epoch_slider = tk.Scale(control_panel, from_=1, to=20, orient=tk.HORIZONTAL, command=update_epochs)
+    epoch_slider = tk.Scale(control_panel, from_=1, to=50, orient=tk.HORIZONTAL, command=update_epochs)
     epoch_slider.set(num_epochs)
     epoch_slider.pack(padx=5, pady=5)
 
@@ -1148,6 +1148,7 @@ try:
     loss_option = tk.StringVar(value="no_loss")
     alpha = tk.DoubleVar(value=0.5)
     beta = tk.DoubleVar(value=0.5)
+    gamma = tk.DoubleVar(value=0.5)
 
     inter_distance_loss_var = tk.IntVar(value=1)
     intra_distance_loss_var = tk.IntVar(value=1)
@@ -1180,7 +1181,7 @@ try:
     gamma_lr_label = ttk.Label(control_panel, text="Gamma")
     gamma_lr_label.pack(pady=5)
 
-    gamma_lr = ttk.Entry(control_panel, textvariable=beta)
+    gamma_lr = ttk.Entry(control_panel, textvariable=gamma)
     gamma_lr.pack(padx=5, pady=5)
 
     notebook = ttk.Notebook(main_frame)
