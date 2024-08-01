@@ -294,7 +294,7 @@ def custom_loss(outputs, labels, class_weights, alpha):
 
 def train_model():
     global training, current_epoch, current_batch
-    freq=200
+    freq=100
     inter_dl = inter_distance_loss_var.get()
     intra_dl = intra_distance_loss_var.get()
     mv_loss = movement_loss_var.get()
@@ -304,6 +304,7 @@ def train_model():
     gamma_lr_value = float(gamma_lr.get())
 
     previous_centers={}
+    test_accuracy=0
     
     for epoch in range(current_epoch, num_epochs):
         current_epoch=epoch
@@ -350,8 +351,8 @@ def train_model():
             if i % 200 == 199:
                 avg_loss = running_loss / 200
                 accuracy = correct_predictions / total_predictions
-                print(f"[Epoch {current_epoch + 1}, Batch {current_batch + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.3f}")
-                update_status_labels(current_epoch + 1, current_batch + 1, avg_loss, accuracy)
+                print(f"[Epoch {current_epoch + 1}, Batch {current_batch + 1}] Loss: {avg_loss:.3f}, Accuracy: {test_accuracy:.3f}%")
+                update_status_labels(current_epoch + 1, current_batch + 1, avg_loss, test_accuracy)
                 running_loss = 0.0
         if training:
             root.after(0, display_visualization)
@@ -366,6 +367,9 @@ def train_model():
             #plot_data = (epoch + 1, avg_loss, accuracy, alpha_lr_value, beta_lr_value, gamma_lr_value, selected_layer, fig)
             #plot_queue.put(plot_data)
             save_report(epoch, avg_loss, accuracy, alpha_lr_value, beta_lr_value, gamma_lr_value, selected_layer)
+            test_accuracy = evaluate_model(testloader)
+            print(f"Test Accuracy after Epoch {epoch + 1}: {test_accuracy:.2f}%")
+            update_status_labels(epoch + 1, i + 1, avg_loss, test_accuracy)
         except Exception as e:
             print(f"Error in creating scatter plot: {e}")
         #finally:
@@ -375,6 +379,19 @@ def train_model():
     current_batch = 0
     training = False
     training_button_text.set("Start Training")
+
+def evaluate_model(dataloader):
+    model.eval()
+    correct_predictions = 0
+    total_predictions = 0
+    with torch.no_grad():
+        for inputs, labels in dataloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model.predict(inputs)
+            correct_predictions += (outputs == labels).sum().item()
+            total_predictions += labels.size(0)
+    accuracy = 100 * correct_predictions / total_predictions
+    return accuracy
 
 def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, latent_features, labels, previous_centers=None):
     additional_loss = 0.0
@@ -564,7 +581,7 @@ class InteractivePlot:
     def plot_scatter(self):
         global selected_index, current_epoch, current_batch
         try:
-            fig, ax = plt.subplots(figsize=(11, 8))
+            fig, ax = plt.subplots(figsize=(20, 15))
             #cmap = ListedColormap(plt.cm.tab20.colors)
             num_classes = len(np.unique(self.labels))
             cmap = ListedColormap(plt.cm.tab20.colors)

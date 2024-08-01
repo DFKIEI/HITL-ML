@@ -297,6 +297,7 @@ def train_model():
     intra_losses=[]
     inter_losses=[]
     mv_losses=[]
+    test_accuracy=0
 
     for epoch in range(current_epoch, num_epochs):
         if not training:
@@ -392,16 +393,19 @@ def train_model():
 
             if i % 200 == 199:
                 avg_loss = running_loss / 200
-                accuracy = correct_predictions / total_predictions
-                print(f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.3f}")
-                update_status_labels(epoch + 1, i + 1, avg_loss, accuracy)
+                #accuracy = correct_predictions / total_predictions
+                print(f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {test_accuracy:.3f}%")
+                update_status_labels(epoch + 1, i + 1, avg_loss, test_accuracy)
                 running_loss = 0.0
         if training:
             root.after(0, display_visualization)
         if not training:
             current_epoch = epoch
 
-        save_report(epoch, avg_loss, accuracy, alpha_lr_value, beta_lr_value, selected_layer)
+        save_report(epoch, avg_loss, test_accuracy, alpha_lr_value, beta_lr_value, selected_layer)
+        test_accuracy = evaluate_model(testloader)
+        print(f"Test Accuracy after Epoch {epoch + 1}: {test_accuracy:.2f}%")
+        update_status_labels(epoch + 1, i + 1, avg_loss, test_accuracy)
 
         #previous_centers = current_centers
 
@@ -409,6 +413,19 @@ def train_model():
     current_batch = 0
     training = False
     training_button_text.set("Start Training")
+
+def evaluate_model(dataloader):
+    model.eval()
+    correct_predictions = 0
+    total_predictions = 0
+    with torch.no_grad():
+        for inputs, labels in dataloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model.predict(inputs)
+            correct_predictions += (outputs == labels).sum().item()
+            total_predictions += labels.size(0)
+    accuracy = 100 * correct_predictions / total_predictions
+    return accuracy
 
 def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, latent_features, labels, previous_centers=None):
     additional_loss = 0.0
@@ -813,7 +830,7 @@ class InteractivePlot:
 
     def plot_scatter(self):
         try:
-            fig, ax = plt.subplots(figsize=(15, 12))
+            fig, ax = plt.subplots(figsize=(20, 15))
             cmap = ListedColormap(plt.cm.tab10.colors)
 
             correct = self.predicted_labels == self.labels

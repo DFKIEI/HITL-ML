@@ -314,6 +314,7 @@ def train_model():
     alpha_lr_value = float(alpha_lr.get())
     beta_lr_value = float(beta_lr.get())
     gamma_lr_value = float(gamma_lr.get())
+    test_accuracy=0
     
     for epoch in range(current_epoch, num_epochs):
         if not training:
@@ -355,8 +356,8 @@ def train_model():
             if i % 200 == 199:
                 avg_loss = running_loss / 200
                 accuracy = correct_predictions / total_predictions
-                print(f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.3f}")
-                update_status_labels(epoch + 1, i + 1, avg_loss, accuracy)
+                print(f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {test_accuracy:.3f}%")
+                update_status_labels(epoch + 1, i + 1, avg_loss, test_accuracy)
                 running_loss = 0.0
         if training:
             root.after(0, display_visualization)
@@ -371,6 +372,9 @@ def train_model():
         #    plot_data = (epoch + 1, avg_loss, accuracy, alpha_lr_value, beta_lr_value, gamma_lr_value, selected_layer, fig)
         #    plot_queue.put(plot_data)
         save_report(epoch, avg_loss, accuracy, alpha_lr_value, beta_lr_value, gamma_lr_value, selected_layer)
+        test_accuracy = evaluate_model(testloader)
+        print(f"Test Accuracy after Epoch {epoch + 1}: {test_accuracy:.2f}%")
+        update_status_labels(epoch + 1, i + 1, avg_loss, test_accuracy)
         #except Exception as e:
         #    print(f"Error in creating scatter plot: {e}")
         #finally:
@@ -380,6 +384,19 @@ def train_model():
     current_batch = 0
     training = False
     training_button_text.set("Start Training")
+
+def evaluate_model(dataloader):
+    model.eval()
+    correct_predictions = 0
+    total_predictions = 0
+    with torch.no_grad():
+        for inputs, labels in dataloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model.predict(inputs)
+            correct_predictions += (outputs == labels).sum().item()
+            total_predictions += labels.size(0)
+    accuracy = 100 * correct_predictions / total_predictions
+    return accuracy
 
 def calculate_loss(base_loss, alpha, beta, gamma, inter_dl, intra_dl, mv_loss, latent_features, labels):
     additional_loss = 0.0
@@ -561,7 +578,7 @@ class InteractivePlot:
 
     def plot_scatter(self):
         try:
-            fig, ax = plt.subplots(figsize=(11, 8))
+            fig, ax = plt.subplots(figsize=(20, 15))
             cmap = ListedColormap(plt.cm.tab20.colors)
             #cmap = ListedColormap(plt.cm.nipy_spectral(np.linspace(0, 1, 100))) # Updated method to access colormap
 
