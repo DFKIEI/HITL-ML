@@ -244,7 +244,7 @@ def calculate_2d_coordinates(latent_features, method='tsne', n_components=2):
         raise ValueError("Invalid method. Choose 'tsne' or 'pca'.")
     return torch.tensor(coordinates, device=latent_features.device)
 
-def calculate_class_weights(latent_features, labels, beta, gamma,  method='tsne', previous_centers=None):
+def calculate_class_weights(latent_features, labels, beta, gamma,  method='tsne', previous_centers=None, outlier_threshold=1.5):
     # Calculate 2D coordinates using t-SNE or PCA
     coordinates = calculate_2d_coordinates(latent_features, method=method)
     
@@ -255,12 +255,29 @@ def calculate_class_weights(latent_features, labels, beta, gamma,  method='tsne'
 
     for label in unique_labels:
         class_features = coordinates[labels == label]
-        cluster_center = class_features.mean(dim=0)
-        cluster_centers[label.item()] = cluster_center
+
+        # Calculate initial cluster center
+        initial_cluster_center = class_features.mean(dim=0)
         
-        # Calculate intra-cluster distance (condensation)
-        distances = torch.norm(class_features - cluster_center, dim=1)
-        intra_cluster_distance = distances.mean().item()
+        # Calculate distances from the initial cluster center
+        distances = torch.norm(class_features - initial_cluster_center, dim=1)
+        
+        # Identify non-outliers based on the interquartile range (IQR)
+        Q1 = torch.quantile(distances, 0.25)
+        Q3 = torch.quantile(distances, 0.75)
+        IQR = Q3 - Q1
+        lower_threshold = Q1 - outlier_threshold * IQR
+        upper_threshold = Q3 + outlier_threshold * IQR
+
+        # Exclude outliers
+        non_outliers = (distances >= lower_threshold) & (distances <= upper_threshold)
+        refined_class_features = class_features[non_outliers]
+        refined_distances = distances[non_outliers]
+        
+        cluster_center = refined_class_features.mean(dim=0)
+        intra_cluster_distance = refined_distances.mean().item()
+        
+        cluster_centers[label.item()] = cluster_center
         intra_cluster_distances.append(intra_cluster_distance)
         
         # Calculate movement penalty if previous centers are provided
@@ -275,7 +292,7 @@ def calculate_class_weights(latent_features, labels, beta, gamma,  method='tsne'
     overall_center = torch.mean(torch.stack(list(cluster_centers.values())), dim=0)
     
     # Calculate inter-cluster distance (separation)
-    inter_cluster_distances = [torch.norm(center - overall_center).item() for center in cluster_centers]
+    inter_cluster_distances = [torch.norm(center - overall_center).item() for center in cluster_centers.values()]
     
     # Combine intra-cluster, inter-cluster distances and movement penalty
     class_weights = [(1 - beta) * intra + beta * ((1-gamma)*inter + gamma * move)
@@ -329,7 +346,8 @@ def train_model():
             loss = criterion(outputs, labels)
 
             if i % freq == 0:
-                class_weights, cluster_centers = calculate_class_weights(latent_features, labels, beta_lr_value, gamma_lr_value,'tsne', previous_centers)
+                class_weights, cluster_centers = calculate_class_weights(latent_features, labels, beta_lr_value, gamma_lr_value,'tsne', previous_centers,
+                outlier_threshold=0.5)
                 previous_centers = cluster_centers
                 loss = custom_loss(outputs, labels, class_weights, alpha_lr_value)
                 #loss, previous_centers = calculate_loss(loss,alpha_lr_value, beta_lr_value, gamma_lr_value, inter_dl, intra_dl, mv_loss,latent_features, labels, previous_centers)
