@@ -47,6 +47,9 @@ class UI:
         self.stop_training = threading.Event()
         self.current_plot_type = 'scatter'
 
+        self.dragging = None
+        self.offset = None
+
         self.plot = None
 
         self.create_ui()
@@ -199,17 +202,57 @@ class UI:
     def display_scatter_plot(self, data, tab):
         fig, ax = plt.subplots(figsize=(20, 15))
         cmap = plt.cm.get_cmap('tab20', data['num_classes'])
-        scatter = ax.scatter(data['features'][:, 0], data['features'][:, 1],
-                             c=data['labels'], cmap=cmap, alpha=0.6, s=10)
+
+        correct = data['predicted_labels'] == data['labels']
+        incorrect = data['predicted_labels'] != data['labels']
+
+        scatter_correct = ax.scatter(data['features'][correct, 0], data['features'][correct, 1], 
+                                        c=data['labels'][correct], cmap=cmap, alpha=0.6, s=10)
+
+        scatter_incorrect = ax.scatter(data['features'][incorrect, 0], data['features'][incorrect, 1], 
+                                        c=data['labels'][incorrect], cmap=cmap, alpha=0.6, s=10, 
+                                        edgecolor='black', linewidth=2)
+
+        
+        self.center_artists = []
         for i, center in enumerate(data['centers']):
-            ax.scatter(center[0], center[1], c=[cmap(i)], marker='x', s=100, linewidths=2)
-        cbar = plt.colorbar(scatter, ax=ax)
+            center_artist = ax.scatter(center[0], center[1], c=[cmap(i)], 
+                                            marker='x', s=100, linewidths=2, picker=5)
+            self.center_artists.append(center_artist)
+            
+        cbar = plt.colorbar(scatter_correct, ax=ax)
         cbar.set_label('Classes')
         cbar.set_ticks(range(data['num_classes']))
         cbar.set_ticklabels(range(data['num_classes']))
         plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}')
         plt.xlabel('t-SNE feature 1')
         plt.ylabel('t-SNE feature 2')
+
+        def on_press(event):
+            if event.inaxes is None:
+                return
+            for i, artist in enumerate(self.center_artists):
+                if artist.contains(event)[0]:
+                    self.dragging = i
+                    self.offset = (data['centers'][i][0] - event.xdata,
+                               data['centers'][i][1] - event.ydata)
+                    break
+
+        def on_release(event):
+            self.dragging = None
+
+        def on_motion(event):
+            if self.dragging is None or event.inaxes is None:
+                return
+            new_center = (event.xdata + self.offset[0], event.ydata + self.offset[1])
+            data['centers'][self.dragging] = new_center
+            self.center_artists[self.dragging].set_offsets(new_center)
+            fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect('button_press_event', on_press)
+        fig.canvas.mpl_connect('button_release_event', on_release)
+        fig.canvas.mpl_connect('motion_notify_event', on_motion)
+
         self.display_plot(fig, tab)
 
     def display_radar_plot(self, data, tab):
