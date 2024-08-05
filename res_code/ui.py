@@ -1,0 +1,270 @@
+import tkinter as tk
+from tkinter import ttk, scrolledtext
+import traceback
+import numpy as np
+from visualization import InteractivePlot
+from training import train_model, evaluate_model
+import threading
+import queue
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+import pandas as pd
+
+class CustomEvent(threading.Event):
+    def __init__(self):
+        super().__init__()
+        self._is_set = False
+
+    def set(self):
+        self._is_set = True
+        super().set()
+
+    def clear(self):
+        self._is_set = False
+        super().clear()
+
+    def is_set(self):
+        return self._is_set
+
+class UI:
+    def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type):
+        self.root = root
+        self.model = model
+        self.optimizer = optimizer
+        self.trainloader = trainloader
+        self.valloader = valloader
+        self.testloader = testloader
+        self.device = device
+        self.dataset_name = dataset_name
+        self.model_name = model_name
+        self.loss_type = loss_type
+
+        self.visualization_queue = queue.Queue()
+        self.training_thread = None
+        self.pause_event = CustomEvent()
+        self.stop_training = threading.Event()
+        self.current_plot_type = 'scatter'
+
+        self.plot = None
+
+        self.create_ui()
+
+    def create_ui(self):
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.control_panel = ttk.LabelFrame(main_frame, text="Control Panel")
+        self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+
+        self.create_info_labels()
+        self.create_training_controls()
+        self.create_visualization_controls()
+
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        self.scatter_tab = ttk.Frame(self.notebook)
+        self.radar_tab = ttk.Frame(self.notebook)
+        self.parallel_tab = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.scatter_tab, text="Scatter Plot")
+        self.notebook.add(self.radar_tab, text="Radar Chart")
+        self.notebook.add(self.parallel_tab, text="Parallel Coordinates")
+
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_change)
+
+        self.root.after(100, self.process_visualization_queue)
+        self.update_visualization()
+
+    def create_info_labels(self):
+        ttk.Label(self.control_panel, text=f"Dataset: {self.dataset_name}").pack(pady=5)
+        ttk.Label(self.control_panel, text=f"Model: {self.model_name}").pack(pady=5)
+        ttk.Label(self.control_panel, text=f"Loss: {self.loss_type}").pack(pady=5)
+
+    def create_training_controls(self):
+        ttk.Label(self.control_panel, text="Number of Epochs:").pack(pady=5)
+        self.epoch_var = tk.IntVar(value=5)
+        epoch_slider = tk.Scale(self.control_panel, from_=1, to=50, orient=tk.HORIZONTAL, variable=self.epoch_var)
+        epoch_slider.pack(padx=5, pady=5)
+
+        self.alpha_var = tk.DoubleVar(value=0.5)
+        self.beta_var = tk.DoubleVar(value=0.5)
+        self.gamma_var = tk.DoubleVar(value=0.5)
+
+        for var, label in zip([self.alpha_var, self.beta_var, self.gamma_var], ["Alpha:", "Beta:", "Gamma:"]):
+            ttk.Label(self.control_panel, text=label).pack(pady=5)
+            ttk.Entry(self.control_panel, textvariable=var).pack(padx=5, pady=5)
+
+        ttk.Label(self.control_panel, text="Evaluation Frequency (batches):").pack(pady=5)
+        self.freq_var = tk.IntVar(value=100)
+        ttk.Entry(self.control_panel, textvariable=self.freq_var).pack(padx=5, pady=5)
+
+        self.status_var = tk.StringVar(value="Not started")
+        ttk.Label(self.control_panel, textvariable=self.status_var).pack(pady=5)
+
+        self.log_text = scrolledtext.ScrolledText(self.control_panel, height=5)
+        self.log_text.pack(pady=5)
+
+        self.training_button = ttk.Button(self.control_panel, text="Start Training", command=self.toggle_training)
+        self.training_button.pack(pady=5)
+
+        ttk.Button(self.control_panel, text="Stop Training", command=self.stop_training.set).pack(pady=5)
+
+    def create_visualization_controls(self):
+        ttk.Label(self.control_panel, text="Select Classes to Visualize:").pack(pady=5)
+        self.selected_classes_var = tk.StringVar()
+        ttk.Label(self.control_panel, textvariable=self.selected_classes_var).pack(pady=5)
+        ttk.Button(self.control_panel, text="Select Classes", command=self.show_class_selection).pack(pady=5)
+
+    def toggle_training(self):
+        if self.training_thread is None or not self.training_thread.is_alive():
+            self.pause_event.clear()
+            self.stop_training.clear()
+            self.training_thread = threading.Thread(target=self.run_training)
+            self.training_thread.start()
+            self.training_button.config(text="Pause Training")
+            self.status_var.set("Training...")
+        else:
+            if self.pause_event.is_set():
+                self.pause_event.clear()
+                self.training_button.config(text="Pause Training")
+                self.status_var.set("Training...")
+            else:
+                self.pause_event.set()
+                self.training_button.config(text="Resume Training")
+                self.status_var.set("Paused")
+
+    def run_training(self):
+        train_model(self.model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
+                    self.epoch_var.get(), self.freq_var.get(), self.alpha_var.get(), 
+                    self.beta_var.get(), self.gamma_var.get(), f"reports/{self.dataset_name}",
+                    self.loss_type,
+                    log_callback=self.update_log,
+                    pause_event=self.pause_event,
+                    stop_training=self.stop_training,
+                    epoch_end_callback=self.on_epoch_end)
+
+    def on_epoch_end(self):
+        self.update_visualization()
+        self.training_button.config(text="Resume Training")
+        self.status_var.set("Paused after epoch")
+        self.update_log("Training paused after epoch. Press 'Resume Training' to continue.")
+        self.pause_event.set()  # Ensure the pause event is set after each epoch
+
+
+    def update_log(self, message):
+        self.log_text.insert(tk.END, message + "\n")
+        self.log_text.see(tk.END)
+
+    def show_class_selection(self):
+        num_classes = len(np.unique(self.trainloader.dataset.targets))
+        classes = list(range(num_classes))
+        dropdown = MultiSelectDropdown(self.root, classes)
+        self.root.wait_window(dropdown)
+        self.selected_classes_var.set(", ".join(map(str, dropdown.selected_options)))
+
+    def get_selected_classes(self):
+        return [int(cls) for cls in self.selected_classes_var.get().split(", ") if cls]
+
+    def update_visualization(self):
+        selected_classes = self.get_selected_classes()
+        if self.plot is None:
+            self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type, 
+                                        self.get_selected_classes(), self.dataset_name)
+        plot_data = self.plot.get_plot_data()
+        self.visualization_queue.put((plot_data, self.current_plot_type))
+
+    def on_tab_change(self, event):
+        selected_tab = self.notebook.index(self.notebook.select())
+        self.current_plot_type = ['scatter', 'radar', 'parallel'][selected_tab]
+        self.update_visualization()
+
+    def process_visualization_queue(self):
+        try:
+            while True:
+                plot_data, plot_type = self.visualization_queue.get_nowait()
+                if plot_type == 'scatter':
+                    self.display_scatter_plot(plot_data, self.scatter_tab)
+                elif plot_type == 'radar':
+                    self.display_radar_plot(plot_data, self.radar_tab)
+                elif plot_type == 'parallel':
+                    self.display_parallel_plot(plot_data, self.parallel_tab)
+        except queue.Empty:
+            pass
+        finally:
+            self.root.after(100, self.process_visualization_queue)
+
+    def display_scatter_plot(self, data, tab):
+        fig, ax = plt.subplots(figsize=(20, 15))
+        cmap = plt.cm.get_cmap('tab20', data['num_classes'])
+        scatter = ax.scatter(data['features'][:, 0], data['features'][:, 1],
+                             c=data['labels'], cmap=cmap, alpha=0.6, s=10)
+        for i, center in enumerate(data['centers']):
+            ax.scatter(center[0], center[1], c=[cmap(i)], marker='x', s=100, linewidths=2)
+        cbar = plt.colorbar(scatter, ax=ax)
+        cbar.set_label('Classes')
+        cbar.set_ticks(range(data['num_classes']))
+        cbar.set_ticklabels(range(data['num_classes']))
+        plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}')
+        plt.xlabel('t-SNE feature 1')
+        plt.ylabel('t-SNE feature 2')
+        self.display_plot(fig, tab)
+
+    def display_radar_plot(self, data, tab):
+        fig, ax = plt.subplots(figsize=(12, 8), subplot_kw=dict(polar=True))
+        angles = np.linspace(0, 2 * np.pi, len(data['feature_names']), endpoint=False).tolist()
+        data_plot = np.concatenate((data['data_mean'], [data['data_mean'][0]]))
+        angles += angles[:1]
+        ax.plot(angles, data_plot, linewidth=2, linestyle='solid')
+        ax.fill(angles, data_plot, alpha=0.25)
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(data['feature_names'])
+        plt.title(f'Radar Chart of Important Features - {data["dataset_name"]}')
+        self.display_plot(fig, tab)
+
+    def display_parallel_plot(self, data, tab):
+        fig, ax = plt.subplots(figsize=(12, 8))
+        df = pd.DataFrame(data['features'])
+        df.columns = [f'Feature {i}' for i in range(data['num_features'])]
+        df['label'] = data['labels']
+        pd.plotting.parallel_coordinates(df, 'label', colormap='tab10', ax=ax)
+        ax.legend_.remove()
+        plt.title(f'Parallel Coordinates Plot - {data["dataset_name"]}')
+        plt.ylabel('Normalized feature values')
+        self.display_plot(fig, tab)
+
+    def display_plot(self, fig, tab):
+        for widget in tab.winfo_children():
+            widget.destroy()
+        canvas = FigureCanvasTkAgg(fig, master=tab)
+        canvas.draw()
+        toolbar = NavigationToolbar2Tk(canvas, tab)
+        toolbar.update()
+        canvas_widget = canvas.get_tk_widget()
+        canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+class MultiSelectDropdown(tk.Toplevel):
+    def __init__(self, parent, options, title="Select Classes"):
+        super().__init__(parent)
+        self.title(title)
+        self.selected_options = []
+
+        self.check_vars = []
+        for option in options:
+            var = tk.BooleanVar()
+            chk = tk.Checkbutton(self, text=option, variable=var)
+            chk.pack(anchor=tk.W)
+            self.check_vars.append((var, option))
+
+        btn = tk.Button(self, text="OK", command=self.on_ok)
+        btn.pack()
+
+    def on_ok(self):
+        self.selected_options = [option for var, option in self.check_vars if var.get()]
+        self.destroy()
+
+def create_ui(root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type):
+    return UI(root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type)
