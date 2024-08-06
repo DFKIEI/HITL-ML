@@ -40,29 +40,94 @@ class CNN_PAMAP2(nn.Module):
         r, _ = self.forward(x)
         return r.argmax(dim=-1)
 
-class SimpleNN(nn.Module):
-    def __init__(self, in_size, out_size):
-        super(SimpleNN, self).__init__()
-        self.fc1 = nn.Linear(in_size, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, out_size)
+class CNN_MNIST(nn.Module):
+    def __init__(self, in_channels=1, num_classes=10):
+        super(CNN_MNIST, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=5, padding=2)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=5, padding=2)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.dropout = nn.Dropout(0.5)
+        self.fc1 = nn.Linear(64 * 7 * 7, 1024)
+        self.fc2 = nn.Linear(1024, num_classes)
 
     def forward(self, x):
-        x = F.relu(self.fc1(x))
-        latent_features = F.relu(self.fc2(x))
-        x = self.fc3(latent_features)
-        return x, latent_features, [x, latent_features]
+        x = torch.relu(self.pool(self.conv1(x)))
+        x = torch.relu(self.pool(self.conv2(x)))
+        x = torch.flatten(x, 1)  # flatten all dimensions except batch
+        latent_features = torch.relu(self.fc1(x))
+        x = self.dropout(latent_features)
+        output = self.fc2(x)
+        return output, latent_features
 
     @torch.no_grad()
     def predict(self, x):
         self.eval()
-        r, _, _ = self.forward(x)
-        return r.argmax(dim=-1)
+        output, _ = self.forward(x)
+        return output.argmax(dim=-1)
+
+class CNN_CIFAR10(nn.Module):
+    def __init__(self, in_channels=3, num_classes=10):
+        super(CNN_CIFAR10, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.dropout1 = nn.Dropout(0.25)
+        self.fc1 = nn.Linear(64 * 8 * 8, 512)
+        self.dropout2 = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(512, num_classes)
+
+    def forward(self, x):
+        x = torch.relu(self.pool(self.conv1(x)))
+        x = torch.relu(self.pool(self.conv2(x)))
+        x = torch.flatten(x, 1)
+        latent_features = torch.relu(self.fc1(x))
+        x = self.dropout1(latent_features)
+        output = self.fc2(x)
+        return output, latent_features
+
+    @torch.no_grad()
+    def predict(self, x):
+        self.eval()
+        output, _ = self.forward(x)
+        return output.argmax(dim=-1)
+
+class CNN_CIFAR100(nn.Module):
+    def __init__(self, in_channels=3, num_classes=100):
+        super(CNN_CIFAR100, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.dropout1 = nn.Dropout(0.25)
+        self.fc1 = nn.Linear(128 * 4 * 4, 1024)
+        self.dropout2 = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(1024, num_classes)
+
+    def forward(self, x):
+        x = torch.relu(self.pool(self.conv1(x)))
+        x = torch.relu(self.pool(self.conv2(x)))
+        x = torch.relu(self.pool(self.conv3(x)))
+        x = torch.flatten(x, 1)
+        latent_features = torch.relu(self.fc1(x))
+        x = self.dropout1(latent_features)
+        output = self.fc2(x)
+        return output, latent_features
+
+    @torch.no_grad()
+    def predict(self, x):
+        self.eval()
+        output, _ = self.forward(x)
+        return output.argmax(dim=-1)
+
 
 def get_model(model_name, input_shape, num_classes):
     if model_name == 'CNN_PAMAP2':
         return CNN_PAMAP2(input_shape[0], num_classes)
-    elif model_name == 'SimpleNN':
-        return SimpleNN(input_shape[0], num_classes)
+    elif model_name == 'CNN_MNIST':
+        return CNN_MNIST(input_shape[0], num_classes)
+    if model_name == 'CNN_CIFAR10':
+        return CNN_CIFAR10(input_shape[0], num_classes)
+    elif model_name == 'CNN_CIFAR100':
+        return CNN_CIFAR100(input_shape[0], num_classes)
     else:
         raise ValueError(f"Unknown model: {model_name}")

@@ -220,7 +220,10 @@ class UI:
         fig, ax = plt.subplots(figsize=(20, 15))
         unique_labels = np.unique(data['labels'])
         num_classes = len(unique_labels)
-        cmap = plt.cm.get_cmap('tab20', num_classes)
+        if num_classes>10:
+            cmap = plt.cm.get_cmap('tab20', num_classes)
+        else:
+            cmap = plt.cm.get_cmap('tab10', num_classes)
 
         # Store original features for correct and incorrect separately to update only relevant points
         self.original_correct_features = data['features'][data['predicted_labels'] == data['labels']]
@@ -307,7 +310,12 @@ class UI:
         angles = np.concatenate((angles, [angles[0]]))
     
         # Use a colormap that can distinguish classes
-        cmap = plt.cm.get_cmap('tab20', len(data['selected_classes']))
+        #cmap = plt.cm.get_cmap('tab20', len(data['selected_classes']))
+        num_classes = len(data['selected_classes'])
+        if num_classes>10:
+            cmap = plt.cm.get_cmap('tab20', num_classes)
+        else:
+            cmap = plt.cm.get_cmap('tab10', num_classes)
     
         for i, class_label in enumerate(data['selected_classes']):
             class_data = data['class_data'][class_label]
@@ -331,7 +339,12 @@ class UI:
         fig, ax = plt.subplots(figsize=(15, 10))
     
         # Use a colormap that can distinguish classes
-        cmap = plt.cm.get_cmap('tab20', len(data['selected_classes']))
+        #cmap = plt.cm.get_cmap('tab20', len(data['selected_classes']))
+        num_classes = len(data['selected_classes'])
+        if num_classes>10:
+            cmap = plt.cm.get_cmap('tab20', num_classes)
+        else:
+            cmap = plt.cm.get_cmap('tab10', num_classes)
     
         legend_handles = []
     

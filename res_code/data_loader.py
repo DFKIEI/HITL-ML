@@ -8,6 +8,10 @@ def load_dataset(dataset_name, batch_size=32):
         return load_pamap2(batch_size)
     elif dataset_name == 'MNIST':
         return load_mnist(batch_size)
+    elif dataset_name == 'CIFAR10':
+        return load_cifar10(batch_size)
+    elif dataset_name == 'CIFAR100':
+        return load_cifar100
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
@@ -57,8 +61,8 @@ def extract_labels(dataset):
 def load_mnist(batch_size=32):
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
     
-    train_dataset = datasets.MNIST('data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST('data', train=False, transform=transform)
+    train_dataset = datasets.MNIST('dataset', train=True, download=True, transform=transform)
+    test_dataset = datasets.MNIST('dataset', train=False, transform=transform)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
@@ -68,3 +72,64 @@ def load_mnist(batch_size=32):
     input_shape = (1, 28, 28)  # (channels, height, width)
 
     return train_loader, val_loader, test_loader, num_classes, input_shape
+
+def load_cifar100(batch_size = 32):
+    transform_train = transforms.Compose([
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomCrop(32, padding=4),
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+ 
+    transform_val_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+ 
+    # Load the datasets with the appropriate transformations applied
+    train_dataset = datasets.CIFAR100(root='dataset', train=True, download=True, transform=transform_train)
+    val_dataset = datasets.CIFAR100(root='dataset', train=False, download=True, transform=transform_val_test)
+    test_dataset = datasets.CIFAR100(root='dataset', train=False, download=True, transform=transform_val_test)
+
+    # Create data loaders for training, validation, and testing
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+
+    num_classes = 100  # CIFAR-100 has 100 classes
+    input_shape = (3, 32, 32)  # CIFAR-100 images are 32x32 pixels with 3 color channels
+
+    return train_loader, val_loader, test_loader, num_classes, input_shape
+
+
+def load_cifar10(batch_size=32):
+    # Define transformations for the training data
+    transform_train = transforms.Compose([
+        transforms.RandomHorizontalFlip(),  # randomly flip image horizontally
+        transforms.RandomCrop(32, padding=4),  # random crop with padding
+        transforms.ToTensor(),  # convert the image to a tensor
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))  # normalize with mean and std for CIFAR-10
+    ])
+
+    # Define transformations for the validation and test data
+    transform_val_test = transforms.Compose([
+        transforms.ToTensor(),  # convert the image to a tensor
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))  # normalize with mean and std for CIFAR-10
+    ])
+
+    # Load the training dataset with the specified transformations
+    train_dataset = datasets.CIFAR10(root='dataset', train=True, download=True, transform=transform_train)
+    # Load the testing dataset for validation and testing
+    test_dataset = datasets.CIFAR10(root='dataset', train=False, download=True, transform=transform_val_test)
+
+    # Create a DataLoader for training
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    # Create a DataLoader for validation/testing
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+
+    # CIFAR-10 has 10 classes
+    num_classes = 10  
+    # CIFAR-10 images are 32x32 pixels with 3 color channels
+    input_shape = (3, 32, 32)  
+
+    return train_loader, test_loader, num_classes, input_shape
