@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
+from tkinter.constants import NO
 import traceback
 import numpy as np
 from visualization import InteractivePlot
@@ -47,6 +48,8 @@ class UI:
         self.stop_training = threading.Event()
         self.current_plot_type = 'scatter'
 
+        self.num_features = None
+
         self.dragging = None
         self.offset = None
 
@@ -81,6 +84,15 @@ class UI:
         self.root.after(100, self.process_visualization_queue)
         self.update_visualization()
 
+    def get_classes(dataloader):
+        classes = set()
+        try:
+            for _, labels in dataloader:
+                classes.update(labels.numpy())
+        except Exception as e:
+            print(f"Error getting classes: {e}")
+        return sorted(list(classes))
+
     def create_info_labels(self):
         ttk.Label(self.control_panel, text=f"Dataset: {self.dataset_name}").pack(pady=5)
         ttk.Label(self.control_panel, text=f"Model: {self.model_name}").pack(pady=5)
@@ -103,6 +115,10 @@ class UI:
         ttk.Label(self.control_panel, text="Evaluation Frequency (batches):").pack(pady=5)
         self.freq_var = tk.IntVar(value=100)
         ttk.Entry(self.control_panel, textvariable=self.freq_var).pack(padx=5, pady=5)
+
+        ttk.Label(self.control_panel, text="Number of features for plotting high dim:").pack(pady=5)
+        self.num_features = tk.IntVar(value=10)
+        ttk.Entry(self.control_panel, textvariable=self.num_features).pack(padx=5, pady=5)
 
         self.status_var = tk.StringVar(value="Not started")
         ttk.Label(self.control_panel, textvariable=self.status_var).pack(pady=5)
@@ -162,7 +178,7 @@ class UI:
         self.log_text.see(tk.END)
 
     def show_class_selection(self):
-        num_classes = len(np.unique(self.trainloader.dataset.targets))
+        num_classes = len(np.unique(self.trainloader.dataset.labels))
         classes = list(range(num_classes))
         dropdown = MultiSelectDropdown(self.root, classes)
         self.root.wait_window(dropdown)
@@ -175,8 +191,9 @@ class UI:
         selected_classes = self.get_selected_classes()
         if self.plot is None:
             self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type, 
-                                        self.get_selected_classes(), self.dataset_name)
-        plot_data = self.plot.get_plot_data()
+                                        selected_classes, self.dataset_name, self.num_features.get())          
+        self.plot.set_selected_classes(selected_classes)
+        plot_data = self.plot.get_plot_data(self.current_plot_type)
         self.visualization_queue.put((plot_data, self.current_plot_type))
 
     def on_tab_change(self, event):
@@ -256,14 +273,33 @@ class UI:
         self.display_plot(fig, tab)
 
     def display_radar_plot(self, data, tab):
+        if not data['feature_names'] or len(data['data_mean']) == 0:
+            print("No data available for radar plot")
+            return
+
+        # Remove any NaN or infinite values
+        valid_indices = np.isfinite(data['data_mean'])
+        feature_names = np.array(data['feature_names'])[valid_indices]
+        data_mean = np.array(data['data_mean'])[valid_indices]
+
+        if len(feature_names) == 0:
+            print("No valid data for radar plot after removing NaN/inf values")
+            return
+
         fig, ax = plt.subplots(figsize=(12, 8), subplot_kw=dict(polar=True))
-        angles = np.linspace(0, 2 * np.pi, len(data['feature_names']), endpoint=False).tolist()
-        data_plot = np.concatenate((data['data_mean'], [data['data_mean'][0]]))
-        angles += angles[:1]
-        ax.plot(angles, data_plot, linewidth=2, linestyle='solid')
-        ax.fill(angles, data_plot, alpha=0.25)
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(data['feature_names'])
+    
+        angles = np.linspace(0, 2 * np.pi, len(feature_names), endpoint=False)
+    
+        # Close the plot by appending the first value to the end
+        values = np.concatenate((data_mean, [data_mean[0]]))
+        angles = np.concatenate((angles, [angles[0]]))
+    
+        ax.plot(angles, values, 'o-', linewidth=2)
+        ax.fill(angles, values, alpha=0.25)
+        ax.set_thetagrids(angles[:-1] * 180/np.pi, feature_names)
+    
+        ax.set_ylim(0, np.max(data_mean) * 1.1)  # Set a reasonable y-limit
+    
         plt.title(f'Radar Chart of Important Features - {data["dataset_name"]}')
         self.display_plot(fig, tab)
 

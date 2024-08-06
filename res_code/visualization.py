@@ -8,12 +8,13 @@ import tkinter as tk
 import torch
 
 class InteractivePlot:
-    def __init__(self, model, dataloader, plot_type, selected_classes, dataset_name):
+    def __init__(self, model, dataloader, plot_type, selected_classes, dataset_name, imp_features_number):
         self.model = model
         self.dataloader = dataloader
         self.plot_type = plot_type
         self.selected_classes = selected_classes
         self.dataset_name = dataset_name
+        self.imp_features = imp_features_number
         self.prepare_data()
 
     def prepare_data(self):
@@ -27,12 +28,15 @@ class InteractivePlot:
         self.num_classes = len(np.unique(self.labels))
         self.cluster_centers = self.calculate_cluster_centers()
 
-    def get_plot_data(self):
-        if self.plot_type == 'scatter':
+    def set_selected_classes(self, selected_classes):
+        self.selected_classes = selected_classes
+
+    def get_plot_data(self, plot_type):
+        if plot_type == 'scatter':
             return self.get_scatter_data()
-        elif self.plot_type == 'radar':
+        elif plot_type == 'radar':
             return self.get_radar_data()
-        elif self.plot_type == 'parallel':
+        elif plot_type == 'parallel':
             return self.get_parallel_data()
 
     def get_scatter_data(self):
@@ -53,10 +57,21 @@ class InteractivePlot:
     def get_radar_data(self):
         selected_indices = np.isin(self.labels, self.selected_classes)
         selected_features = self.pca_features[selected_indices]
-        num_features = min(10, selected_features.shape[1])
+
+        if len(selected_features) == 0:
+            print("No features selected for radar plot")
+            return {'feature_names': [], 'data_mean': [], 'dataset_name': self.dataset_name}
+
+
+        num_features = min(self.imp_features, selected_features.shape[1])
         important_indices = np.argsort(self.feature_importance)[-num_features:]
         feature_names = [f"Feature {i}" for i in important_indices]
         data_mean = np.mean(selected_features[:, important_indices], axis=0)
+
+        # Check for NaN or inf values
+        if np.any(np.isnan(data_mean)) or np.any(np.isinf(data_mean)):
+            print("Warning: NaN or inf values in data_mean")
+
         return {
             'feature_names': feature_names,
             'data_mean': data_mean,
@@ -67,7 +82,7 @@ class InteractivePlot:
         selected_indices = np.isin(self.labels, self.selected_classes)
         selected_features = self.pca_features[selected_indices]
         selected_labels = self.labels[selected_indices]
-        num_features = min(10, selected_features.shape[1])
+        num_features = min(self.imp_features, selected_features.shape[1])
         important_indices = np.argsort(self.feature_importance)[-num_features:]
         return {
             'features': selected_features[:, important_indices],
