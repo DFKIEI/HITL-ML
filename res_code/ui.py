@@ -218,29 +218,30 @@ class UI:
 
     def display_scatter_plot(self, data, tab):
         fig, ax = plt.subplots(figsize=(20, 15))
-        cmap = plt.cm.get_cmap('tab20', data['num_classes'])
+        unique_labels = np.unique(data['labels'])
+        num_classes = len(unique_labels)
+        cmap = plt.cm.get_cmap('tab20', num_classes)
 
-        correct = data['predicted_labels'] == data['labels']
-        incorrect = data['predicted_labels'] != data['labels']
+        # Store original features for correct and incorrect separately to update only relevant points
+        self.original_correct_features = data['features'][data['predicted_labels'] == data['labels']]
+        self.original_incorrect_features = data['features'][data['predicted_labels'] != data['labels']]
 
-        scatter_correct = ax.scatter(data['features'][correct, 0], data['features'][correct, 1], 
-                                        c=data['labels'][correct], cmap=cmap, alpha=0.6, s=10)
+        scatter_correct = ax.scatter(self.original_correct_features[:, 0], self.original_correct_features[:, 1], 
+                                 c=data['labels'][data['predicted_labels'] == data['labels']], cmap=cmap, alpha=0.6, s=50)
+        scatter_incorrect = ax.scatter(self.original_incorrect_features[:, 0], self.original_incorrect_features[:, 1], 
+                                   c=data['labels'][data['predicted_labels'] != data['labels']], cmap=cmap, alpha=0.8, s=50, 
+                                   edgecolor='black', linewidth=2.0)
 
-        scatter_incorrect = ax.scatter(data['features'][incorrect, 0], data['features'][incorrect, 1], 
-                                        c=data['labels'][incorrect], cmap=cmap, alpha=0.6, s=10, 
-                                        edgecolor='black', linewidth=2)
-
-        
         self.center_artists = []
-        for i, center in enumerate(data['centers']):
-            center_artist = ax.scatter(center[0], center[1], c=[cmap(i)], 
-                                            marker='x', s=100, linewidths=2, picker=5)
+        for i, label in enumerate(unique_labels):
+            center = data['centers'][i]
+            center_artist = ax.scatter(center[0], center[1], color=cmap(i), 
+                                   marker='x', s=100, linewidths=2, picker=5)
             self.center_artists.append(center_artist)
-            
-        cbar = plt.colorbar(scatter_correct, ax=ax)
+
+        cbar = plt.colorbar(scatter_correct, ax=ax, ticks=range(num_classes))
         cbar.set_label('Classes')
-        cbar.set_ticks(range(data['num_classes']))
-        cbar.set_ticklabels(range(data['num_classes']))
+        cbar.set_ticklabels(unique_labels)
         plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}')
         plt.xlabel('t-SNE feature 1')
         plt.ylabel('t-SNE feature 2')
@@ -252,7 +253,7 @@ class UI:
                 if artist.contains(event)[0]:
                     self.dragging = i
                     self.offset = (data['centers'][i][0] - event.xdata,
-                               data['centers'][i][1] - event.ydata)
+                           data['centers'][i][1] - event.ydata)
                     break
 
         def on_release(event):
@@ -264,6 +265,16 @@ class UI:
             new_center = (event.xdata + self.offset[0], event.ydata + self.offset[1])
             data['centers'][self.dragging] = new_center
             self.center_artists[self.dragging].set_offsets(new_center)
+
+            # Move all points of the same class
+            mask = data['labels'] == unique_labels[self.dragging]
+            delta = np.array(new_center) - np.array(data['centers'][self.dragging])
+            data['features'][mask] += delta
+
+            # Update points in scatter objects
+            scatter_correct.set_offsets(data['features'][data['predicted_labels'] == data['labels']])
+            scatter_incorrect.set_offsets(data['features'][data['predicted_labels'] != data['labels']])
+
             fig.canvas.draw_idle()
 
         fig.canvas.mpl_connect('button_press_event', on_press)
@@ -271,6 +282,7 @@ class UI:
         fig.canvas.mpl_connect('motion_notify_event', on_motion)
 
         self.display_plot(fig, tab)
+
 
     def display_radar_plot(self, data, tab):
         if not data['feature_names'] or len(data['data_mean']) == 0:
@@ -286,7 +298,7 @@ class UI:
             print("No valid data for radar plot after removing NaN/inf values")
             return
 
-        fig, ax = plt.subplots(figsize=(12, 8), subplot_kw=dict(polar=True))
+        fig, ax = plt.subplots(figsize=(15, 10), subplot_kw=dict(polar=True))
     
         angles = np.linspace(0, 2 * np.pi, len(feature_names), endpoint=False)
     
@@ -294,24 +306,55 @@ class UI:
         values = np.concatenate((data_mean, [data_mean[0]]))
         angles = np.concatenate((angles, [angles[0]]))
     
-        ax.plot(angles, values, 'o-', linewidth=2)
-        ax.fill(angles, values, alpha=0.25)
-        ax.set_thetagrids(angles[:-1] * 180/np.pi, feature_names)
+        # Use a colormap that can distinguish classes
+        cmap = plt.cm.get_cmap('tab20', len(data['selected_classes']))
     
+        for i, class_label in enumerate(data['selected_classes']):
+            class_data = data['class_data'][class_label]
+            if len(class_data) > 0:  # Only plot if there's data for this class
+                color = cmap(i)
+                ax.plot(angles, np.concatenate((class_data, [class_data[0]])), 'o-', linewidth=2, color=color, label=f'Class {class_label}')
+                ax.fill(angles, np.concatenate((class_data, [class_data[0]])), alpha=0.1, color=color)
+    
+    
+        ax.set_thetagrids(angles[:-1] * 180/np.pi, feature_names)
+
         ax.set_ylim(0, np.max(data_mean) * 1.1)  # Set a reasonable y-limit
     
         plt.title(f'Radar Chart of Important Features - {data["dataset_name"]}')
+        plt.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
+        plt.tight_layout()
         self.display_plot(fig, tab)
 
+
     def display_parallel_plot(self, data, tab):
-        fig, ax = plt.subplots(figsize=(12, 8))
-        df = pd.DataFrame(data['features'])
-        df.columns = [f'Feature {i}' for i in range(data['num_features'])]
-        df['label'] = data['labels']
-        pd.plotting.parallel_coordinates(df, 'label', colormap='tab10', ax=ax)
-        ax.legend_.remove()
-        plt.title(f'Parallel Coordinates Plot - {data["dataset_name"]}')
-        plt.ylabel('Normalized feature values')
+        fig, ax = plt.subplots(figsize=(15, 10))
+    
+        # Use a colormap that can distinguish classes
+        cmap = plt.cm.get_cmap('tab20', len(data['selected_classes']))
+    
+        legend_handles = []
+    
+        for i, class_label in enumerate(data['selected_classes']):
+            class_data = data['class_data'][class_label]
+            if len(class_data) > 0:  # Only plot if there's data for this class
+                color = cmap(i)
+                for row in class_data:
+                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=0.3)
+            
+                # Create a line for the legend
+                legend_line = plt.Line2D([0], [0], color=color, lw=2, label=f'Class {class_label}')
+                legend_handles.append(legend_line)
+    
+        ax.set_xticks(range(len(data['feature_names'])))
+        ax.set_xticklabels(data['feature_names'], rotation=45, ha='right')
+        ax.set_ylabel('Normalized feature values')
+        ax.set_title(f'Parallel Coordinates Plot - {data["dataset_name"]}')
+    
+        # Add legend with custom handles
+        ax.legend(handles=legend_handles, loc='center left', bbox_to_anchor=(1.1, 0.5))
+    
+        plt.tight_layout()
         self.display_plot(fig, tab)
 
     def display_plot(self, fig, tab):

@@ -40,7 +40,7 @@ class InteractivePlot:
             return self.get_parallel_data()
 
     def get_scatter_data(self):
-        sample_size = min(200, len(self.reduced_features))
+        sample_size = min(50, len(self.reduced_features))
         indices = np.random.choice(len(self.reduced_features), sample_size, replace=False)
         sampled_features = self.reduced_features[indices]
         sampled_labels = self.labels[indices]
@@ -54,41 +54,78 @@ class InteractivePlot:
             'predicted_labels': sampled_predictions
         }
 
+
     def get_radar_data(self):
         selected_indices = np.isin(self.labels, self.selected_classes)
         selected_features = self.pca_features[selected_indices]
-
+        selected_labels = self.labels[selected_indices]
+    
         if len(selected_features) == 0:
             print("No features selected for radar plot")
-            return {'feature_names': [], 'data_mean': [], 'dataset_name': self.dataset_name}
+            return {'feature_names': [], 'data_mean': [], 'dataset_name': self.dataset_name, 'selected_classes': [], 'class_data': {}}
 
+        # Limit to 200 samples
+        if len(selected_features) > 50:
+            indices = np.random.choice(len(selected_features), 50, replace=False)
+            selected_features = selected_features[indices]
+            selected_labels = selected_labels[indices]
 
         num_features = min(self.imp_features, selected_features.shape[1])
         important_indices = np.argsort(self.feature_importance)[-num_features:]
         feature_names = [f"Feature {i}" for i in important_indices]
+    
         data_mean = np.mean(selected_features[:, important_indices], axis=0)
-
-        # Check for NaN or inf values
-        if np.any(np.isnan(data_mean)) or np.any(np.isinf(data_mean)):
-            print("Warning: NaN or inf values in data_mean")
-
+    
+        class_data = {}
+        for class_label in self.selected_classes:
+            class_indices = selected_labels == class_label
+            if np.any(class_indices):
+                class_data[class_label] = np.mean(selected_features[class_indices][:, important_indices], axis=0)
+            else:
+                print(f"No data points found for class {class_label}")
+                class_data[class_label] = np.zeros_like(data_mean)
+    
         return {
             'feature_names': feature_names,
             'data_mean': data_mean,
-            'dataset_name': self.dataset_name
+            'dataset_name': self.dataset_name,
+            'selected_classes': self.selected_classes,
+            'class_data': class_data
         }
 
     def get_parallel_data(self):
         selected_indices = np.isin(self.labels, self.selected_classes)
         selected_features = self.pca_features[selected_indices]
         selected_labels = self.labels[selected_indices]
+    
+        if len(selected_features) == 0:
+            print("No features selected for parallel coordinates plot")
+            return {'feature_names': [], 'dataset_name': self.dataset_name, 'selected_classes': [], 'class_data': {}}
+
+        # Limit to 200 samples
+        if len(selected_features) > 50:
+            indices = np.random.choice(len(selected_features), 50, replace=False)
+            selected_features = selected_features[indices]
+            selected_labels = selected_labels[indices]
+
         num_features = min(self.imp_features, selected_features.shape[1])
         important_indices = np.argsort(self.feature_importance)[-num_features:]
+        feature_names = [f"Feature {i}" for i in important_indices]
+    
+        class_data = {}
+        for class_label in self.selected_classes:
+            class_indices = selected_labels == class_label
+            if np.any(class_indices):
+                class_data[class_label] = selected_features[class_indices][:, important_indices]
+            else:
+                print(f"No data points found for class {class_label}")
+                class_data[class_label] = np.array([]).reshape(0, len(important_indices))
+    
         return {
-            'features': selected_features[:, important_indices],
-            'labels': selected_labels,
-            'num_features': num_features,
-            'dataset_name': self.dataset_name
+            'feature_names': feature_names,
+            'dataset_name': self.dataset_name,
+            'selected_classes': self.selected_classes,
+            'class_data': class_data
         }
 
     
