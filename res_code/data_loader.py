@@ -11,7 +11,7 @@ def load_dataset(dataset_name, batch_size=32):
     elif dataset_name == 'CIFAR10':
         return load_cifar10(batch_size)
     elif dataset_name == 'CIFAR100':
-        return load_cifar100
+        return load_cifar100(batch_size)
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
