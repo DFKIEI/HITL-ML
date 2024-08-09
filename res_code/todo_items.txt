@@ -1,0 +1,16 @@
+TODO 06.08.24:
+1. Feedback the model , outputs, labels, predictions to ui and do plotting.
+And if any changes feedback to the model.
+2. Why is val accuracy messed up?
+3. Same for other plots and add interactivity
+4. Fix cluster movement in scatter plot
+5. Adapt for other classes — test, to fix also
+6. Add comments
+7. Fix the samples to plot - 100 random at beginning and then track the same samples throughout.(balanced between classes) ——- IMP
+8. Calculate cluster center with the plotted points. ——- IMP
+9. Fix radar plot like parallel - one sample goes through all features
+10. Fix parallel co ordinates dimensions axis plot
+11. Plot does not change with refresh
+12. Learning rate and batch size in cmd line arguments
+13. Debug the training.py - why 2356? Print shape of inputs and labels
+14. Add other loss
