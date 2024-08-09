@@ -82,7 +82,7 @@ class UI:
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_change)
 
         self.root.after(100, self.process_visualization_queue)
-        self.update_visualization()
+        #self.update_visualization()
 
     def get_classes(dataloader):
         classes = set()
@@ -191,7 +191,8 @@ class UI:
         selected_classes = self.get_selected_classes()
         if self.plot is None:
             self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type, 
-                                        selected_classes, self.dataset_name, self.num_features.get())          
+                                        selected_classes, self.dataset_name, self.num_features.get())    
+        self.plot.prepare_data()      
         self.plot.set_selected_classes(selected_classes)
         plot_data = self.plot.get_plot_data(self.current_plot_type)
         self.visualization_queue.put((plot_data, self.current_plot_type))

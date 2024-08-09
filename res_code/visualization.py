@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.core.numeric import indices
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import pandas as pd
@@ -15,18 +16,54 @@ class InteractivePlot:
         self.selected_classes = selected_classes
         self.dataset_name = dataset_name
         self.imp_features = imp_features_number
-        self.prepare_data()
+        self.samples_to_track = self.select_balanced_samples()  # Store indices of samples to track
+        #self.prepare_data()
+        #self.prepare_plot_data()
+
+    def select_balanced_samples(self):
+        labels = []
+        for _, label in self.dataloader.dataset:  #can improve code here. use dataset.labels to directly get unique labels
+            labels.append(label.item() if hasattr(label, 'item') else label)
+
+        labels = np.array(labels)
+        unique_labels = np.unique(labels)
+        num_samples_per_class = 10 #// len(unique_labels)
+        selected_indices = []
+
+        for label in unique_labels:
+            indices = np.where(labels == label)[0]
+            selected_indices.extend(np.random.choice(indices, num_samples_per_class, replace=False))
+
+        return selected_indices
 
     def prepare_data(self):
-        self.latent_features, self.labels, self.predicted_labels = self.extract_latent_features()
-        n_components = min(50, self.latent_features.shape[0], self.latent_features.shape[1])
-        self.pca = PCA(n_components=n_components)
-        self.pca_features = self.pca.fit_transform(self.latent_features)
+        # Assuming all latent features and labels are gathered from the whole dataset
+        all_latent_features, all_labels, all_predicted_labels = self.extract_latent_features()
+
+        # Apply PCA to the entire dataset
+        self.pca = PCA(n_components=min(20, all_latent_features.shape[1]))
+        self.pca_features = self.pca.fit_transform(all_latent_features)
+
+        # Select features and labels for the tracked samples
+        self.selected_features = self.pca_features[self.samples_to_track]
+        self.selected_labels = all_labels[self.samples_to_track]  # Ensure this matches the tracked features
+
+        # Apply t-SNE to all the features instead of selected features
         self.tsne = TSNE(n_components=2, random_state=0)
-        self.reduced_features = self.tsne.fit_transform(self.pca_features)
+        #self.reduced_features = self.apply_tsne(self.selected_features, len(self.selected_features))     #
+        self.tsne_features = self.tsne.fit_transform(self.pca_features)
+
+        # Select features and labels for the tracked samples
+        self.selected_features = self.tsne_features[self.samples_to_track] #do indexing after t-sne
+        self.selected_labels = all_labels[self.samples_to_track]  # Ensure this matches the tracked features
+
+        self.selected_predicted_labels = all_predicted_labels[self.samples_to_track]
+
+        # Compute feature importance and cluster centers as usual
         self.feature_importance = self.compute_feature_importance()
-        self.num_classes = len(np.unique(self.labels))
+        self.num_classes = len(np.unique(self.selected_labels))
         self.cluster_centers = self.calculate_cluster_centers()
+
 
     def set_selected_classes(self, selected_classes):
         self.selected_classes = selected_classes
@@ -40,11 +77,10 @@ class InteractivePlot:
             return self.get_parallel_data()
 
     def get_scatter_data(self):
-        sample_size = min(50, len(self.reduced_features))
-        indices = np.random.choice(len(self.reduced_features), sample_size, replace=False)
-        sampled_features = self.reduced_features[indices]
-        sampled_labels = self.labels[indices]
-        sampled_predictions = self.predicted_labels[indices]
+
+        sampled_features = self.selected_features
+        sampled_labels = self.selected_labels 
+        sampled_predictions = self.selected_predicted_labels
         return {
             'features': sampled_features,
             'labels': sampled_labels,
@@ -66,7 +102,8 @@ class InteractivePlot:
 
         # Limit to 200 samples
         if len(selected_features) > 50:
-            indices = np.random.choice(len(selected_features), 50, replace=False)
+            indices = self.samples_to_track
+            #indices = np.random.choice(len(selected_features), 50, replace=False)
             selected_features = selected_features[indices]
             selected_labels = selected_labels[indices]
 
@@ -104,7 +141,8 @@ class InteractivePlot:
 
         # Limit to 200 samples
         if len(selected_features) > 50:
-            indices = np.random.choice(len(selected_features), 50, replace=False)
+            indices = self.samples_to_track
+            #indices = np.random.choice(len(selected_features), 50, replace=False)
             selected_features = selected_features[indices]
             selected_labels = selected_labels[indices]
 
@@ -138,14 +176,20 @@ class InteractivePlot:
 
     def calculate_cluster_centers(self):
         cluster_centers = []
+        
         for label in range(self.num_classes):
-            class_features = self.reduced_features[self.labels == label]
+            mask = self.selected_labels == label
+            class_features = self.selected_features[mask]
+
             if len(class_features) > 0:
                 center = np.mean(class_features, axis=0)
             else:
                 center = np.zeros(2)  # Default center if no points for this class
+
             cluster_centers.append(center)
+    
         return np.array(cluster_centers)
+
 
     
     def extract_latent_features(self):

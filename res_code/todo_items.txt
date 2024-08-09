@@ -14,3 +14,5 @@ And if any changes feedback to the model.
 12. Learning rate and batch size in cmd line arguments
 13. Debug the training.py - why 2356? Print shape of inputs and labels
 14. Add other loss
+15. Fix plot interactivity - IMP
+16. Improve performance of plotting - PCA and TSNE approach
