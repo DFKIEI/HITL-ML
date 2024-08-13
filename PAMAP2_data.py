@@ -60,8 +60,8 @@ class PAMAP2(Dataset):
         """ PAMAP2 Dataset object. Data collected at 100Hz. Sensor positions: wrist on dominant arm, chest, ankle on dominant side"""
         headers = PAMAP2.headers()
         dataset_splits = {
-            'train': [1, 2, 4, 5, 6, ],
-            'val': [8, ],
+            'train': [1, 2, 4, 5, 8, ],
+            'val': [6, ],
             'test': [3, 7],
             'unseen_test': [3, 7],
             'full': [1, 2, 3, 4, 5, 6, 7, 8, ]}
