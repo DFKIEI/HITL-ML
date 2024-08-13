@@ -163,7 +163,13 @@ class UI:
                     log_callback=self.update_log,
                     pause_event=self.pause_event,
                     stop_training=self.stop_training,
-                    epoch_end_callback=self.on_epoch_end)
+                    epoch_end_callback=self.on_epoch_end,
+                    get_current_centers=self.get_current_centers)
+
+    def get_current_centers(self):
+        if self.plot is not None:
+            return self.plot.get_current_centers()
+        return None
 
     def on_epoch_end(self):
         self.update_visualization()
@@ -221,7 +227,7 @@ class UI:
         fig, ax = plt.subplots(figsize=(20, 15))
         unique_labels = np.unique(data['labels'])
         num_classes = len(unique_labels)
-        if num_classes>10:
+        if num_classes > 10:
             cmap = plt.cm.get_cmap('tab20', num_classes)
         else:
             cmap = plt.cm.get_cmap('tab10', num_classes)
@@ -231,16 +237,16 @@ class UI:
         self.original_incorrect_features = data['features'][data['predicted_labels'] != data['labels']]
 
         scatter_correct = ax.scatter(self.original_correct_features[:, 0], self.original_correct_features[:, 1], 
-                                 c=data['labels'][data['predicted_labels'] == data['labels']], cmap=cmap, alpha=0.6, s=50)
+                                     c=data['labels'][data['predicted_labels'] == data['labels']], cmap=cmap, alpha=0.6, s=50)
         scatter_incorrect = ax.scatter(self.original_incorrect_features[:, 0], self.original_incorrect_features[:, 1], 
-                                   c=data['labels'][data['predicted_labels'] != data['labels']], cmap=cmap, alpha=0.8, s=50, 
-                                   edgecolor='black', linewidth=2.0)
+                                       c=data['labels'][data['predicted_labels'] != data['labels']], cmap=cmap, alpha=0.8, s=50, 
+                                       edgecolor='black', linewidth=2.0)
 
         self.center_artists = []
         for i, label in enumerate(unique_labels):
             center = data['centers'][i]
             center_artist = ax.scatter(center[0], center[1], color=cmap(i), 
-                                   marker='x', s=100, linewidths=2, picker=5)
+                                       marker='x', s=100, linewidths=2, picker=5)
             self.center_artists.append(center_artist)
 
         cbar = plt.colorbar(scatter_correct, ax=ax, ticks=range(num_classes))
@@ -257,7 +263,7 @@ class UI:
                 if artist.contains(event)[0]:
                     self.dragging = i
                     self.offset = (data['centers'][i][0] - event.xdata,
-                           data['centers'][i][1] - event.ydata)
+                                   data['centers'][i][1] - event.ydata)
                     break
 
         def on_release(event):
@@ -266,18 +272,27 @@ class UI:
         def on_motion(event):
             if self.dragging is None or event.inaxes is None:
                 return
-            new_center = (event.xdata + self.offset[0], event.ydata + self.offset[1])
+            old_center = np.array(data['centers'][self.dragging])
+            new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
+            delta = new_center - old_center
+
+            # Update the center position
             data['centers'][self.dragging] = new_center
             self.center_artists[self.dragging].set_offsets(new_center)
 
             # Move all points of the same class
             mask = data['labels'] == unique_labels[self.dragging]
-            delta = np.array(new_center) - np.array(data['centers'][self.dragging])
             data['features'][mask] += delta
 
             # Update points in scatter objects
-            scatter_correct.set_offsets(data['features'][data['predicted_labels'] == data['labels']])
-            scatter_incorrect.set_offsets(data['features'][data['predicted_labels'] != data['labels']])
+            correct_mask = data['predicted_labels'] == data['labels']
+            incorrect_mask = data['predicted_labels'] != data['labels']
+            
+            scatter_correct.set_offsets(data['features'][correct_mask])
+            scatter_incorrect.set_offsets(data['features'][incorrect_mask])
+
+            self.plot.update_center(self.dragging, new_center)
+            self.current_centers = self.plot.get_current_centers()
 
             fig.canvas.draw_idle()
 

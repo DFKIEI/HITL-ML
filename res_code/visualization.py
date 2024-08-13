@@ -7,6 +7,10 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import matplotlib.pyplot as plt
 import tkinter as tk
 import torch
+#from MulticoreTSNE import MulticoreTSNE as TSNE
+from sklearn.preprocessing import StandardScaler
+from sklearn.utils import shuffle
+from scipy.spatial.distance import cosine
 
 class InteractivePlot:
     def __init__(self, model, dataloader, plot_type, selected_classes, dataset_name, imp_features_number):
@@ -16,9 +20,14 @@ class InteractivePlot:
         self.selected_classes = selected_classes
         self.dataset_name = dataset_name
         self.imp_features = imp_features_number
+        self.previous_pca_features = None
+        self.similarity_threshold = 0.99
+        self.previous_tsne_features = None
         self.samples_to_track = self.select_balanced_samples()  # Store indices of samples to track
         #self.prepare_data()
         #self.prepare_plot_data()
+
+
 
     def select_balanced_samples(self):
         labels = []
@@ -36,24 +45,63 @@ class InteractivePlot:
 
         return selected_indices
 
+    def features_similar(self, features1, features2):
+        if features1 is None or features2 is None:
+            return False
+        if features1.shape != features2.shape:
+            return False
+        
+        # Compare the first few principal components
+        n_components_to_compare = min(10, features1.shape[1])
+        similarity = 1 - cosine(features1[:, :n_components_to_compare].flatten(), 
+                                features2[:, :n_components_to_compare].flatten())
+        return similarity > self.similarity_threshold
+
     def prepare_data(self):
         # Assuming all latent features and labels are gathered from the whole dataset
         all_latent_features, all_labels, all_predicted_labels = self.extract_latent_features()
 
+        # Standardize the features
+        scaler = StandardScaler()
+        scaled_features = scaler.fit_transform(all_latent_features)
+
         self.labels = all_labels
 
         # Apply PCA to the entire dataset
-        self.pca = PCA(n_components=min(50, all_latent_features.shape[1]))
-        self.pca_features = self.pca.fit_transform(all_latent_features)
+        self.pca = PCA(n_components=min(30, scaled_features.shape[1]))
+        current_pca_features = self.pca.fit_transform(scaled_features)
+
+        # Check if PCA features are similar
+        if self.features_similar(current_pca_features, self.previous_pca_features):
+            print("PCA features similar. Using cached t-SNE results.")
+            self.pca_features = current_pca_features  # Use current PCA features
+            self.tsne_features = self.previous_tsne_features  # But keep previous t-SNE
+            return
+        else:
+            print("PCA features changed significantly. Recomputing t-SNE.")
+            self.pca_features = current_pca_features
 
         # Select features and labels for the tracked samples
         self.selected_features = self.pca_features[self.samples_to_track]
         self.selected_labels = all_labels[self.samples_to_track]  # Ensure this matches the tracked features
 
         # Apply t-SNE to all the features instead of selected features
-        self.tsne = TSNE(n_components=2, random_state=0)
+        # Use TSNE with optimized parameters
+        self.tsne = TSNE(
+            n_components=2,
+            perplexity=30,
+            n_iter=250,
+            method='barnes_hut',
+            angle=0.8,
+            init='pca',
+            random_state=42
+        )
         #self.reduced_features = self.apply_tsne(self.selected_features, len(self.selected_features))     #
         self.tsne_features = self.tsne.fit_transform(self.pca_features)
+
+        # Cache the results
+        self.previous_pca_features = self.pca_features
+        self.previous_tsne_features = self.tsne_features
 
         # Select features and labels for the tracked samples
         self.selected_features = self.tsne_features[self.samples_to_track] #do indexing after t-sne
@@ -66,6 +114,13 @@ class InteractivePlot:
         self.num_classes = len(np.unique(self.selected_labels))
         self.cluster_centers = self.calculate_cluster_centers()
 
+
+    def update_center(self, class_index, new_center):
+        if self.cluster_centers is not None and class_index < len(self.cluster_centers):
+            self.cluster_centers[class_index] = new_center
+            
+    def get_current_centers(self):
+        return self.cluster_centers
 
     def set_selected_classes(self, selected_classes):
         self.selected_classes = selected_classes
