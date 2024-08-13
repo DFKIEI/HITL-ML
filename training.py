@@ -18,10 +18,13 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, get_current_centers=None):
     model.train()
     # to address class imbalance
-    class_counts = np.bincount(trainloader.dataset.y_data)
-    class_weights = 1. / torch.tensor(class_counts, dtype=torch.float)
-    class_weights = class_weights.to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    # class_counts = np.bincount(trainloader.dataset.y_data)
+    # class_weights = 1. / torch.tensor(class_counts, dtype=torch.float)
+    # class_weights = class_weights.to(device)
+    # criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+    criterion = nn.CrossEntropyLoss()
+    
     # learning rate scheduler
     scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5)
     previous_centers = None
