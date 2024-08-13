@@ -98,11 +98,11 @@ def get_parallel_data(self):
         return {'feature_names': [], 'dataset_name': self.dataset_name, 'selected_classes': [], 'class_data': {}}
 
     # Limit to 200 samples
-    if len(selected_features) > 50:
-        indices = np.intersect1d(self.samples_to_track, np.arange(len(selected_features)))
-        #indices = np.random.choice(len(selected_features), 50, replace=False)
-        selected_features = selected_features[indices]
-        selected_labels = selected_labels[indices]
+    # if len(selected_features) > 50:
+    #     indices = np.intersect1d(self.samples_to_track, np.arange(len(selected_features)))
+    #     #indices = np.random.choice(len(selected_features), 50, replace=False)
+    #     selected_features = selected_features[indices]
+    #     selected_labels = selected_labels[indices]
 
     num_features = min(self.imp_features, selected_features.shape[1])
     important_indices = np.argsort(self.feature_importance)[-num_features:]
