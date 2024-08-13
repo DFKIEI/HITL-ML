@@ -3,9 +3,9 @@ TODO 06.08.24:
 5. Adapt for other classes — test, to fix also
 7. Fix the samples to plot - 100 random at beginning and then track the same samples throughout.(balanced between classes) ——- IMP
 8. Calculate cluster center with the plotted points. ——- IMP
-9. Fix radar plot like parallel - one sample goes through all features
-10. Fix parallel co ordinates dimensions axis plot
-11. Plot does not change with refresh
+9. Fix radar plot like parallel - one sample goes through all features -- done
+10. Fix parallel co ordinates dimensions axis plot -- done
+11. Plot does not change with refresh -- done
 12. Learning rate and batch size in cmd line arguments
 13. Debug the training.py - why 2356? Print shape of inputs and labels
 14. Add other loss

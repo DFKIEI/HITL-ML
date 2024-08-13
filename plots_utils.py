@@ -46,9 +46,8 @@ def get_scatter_data(self):
 
 # WRONG SAMPLE SELECT, TBD
 def get_radar_data(self):
-    selected_indices = np.isin(self.labels, self.selected_classes)
-    selected_features = self.pca_features[selected_indices]
-    selected_labels = self.labels[selected_indices]
+    selected_features = self.selected_features
+    selected_labels = self.selected_labels
 
     if len(selected_features) == 0:
         print("No features selected for radar plot")
@@ -56,25 +55,31 @@ def get_radar_data(self):
 
     # Limit to 200 samples
     if len(selected_features) > 50:
-        indices = self.samples_to_track
-        #indices = np.random.choice(len(selected_features), 50, replace=False)
+        indices = np.intersect1d(self.samples_to_track, np.arange(len(selected_features)))
         selected_features = selected_features[indices]
         selected_labels = selected_labels[indices]
 
+    # Ensure that the number of features is within the PCA output dimensions
     num_features = min(self.imp_features, selected_features.shape[1])
     important_indices = np.argsort(self.feature_importance)[-num_features:]
+
+    # Filter out any indices that exceed the number of PCA components
+    important_indices = important_indices[important_indices < selected_features.shape[1]]
     feature_names = [f"Feature {i}" for i in important_indices]
 
+    # Calculate data_mean for the radar plot (mean of all selected features across all samples)
     data_mean = np.mean(selected_features[:, important_indices], axis=0)
 
     class_data = {}
     for class_label in self.selected_classes:
         class_indices = selected_labels == class_label
         if np.any(class_indices):
-            class_data[class_label] = np.mean(selected_features[class_indices][:, important_indices], axis=0)
+            # Average each feature across all samples in the class
+            class_features = selected_features[class_indices][:, important_indices]
+            class_data[class_label] = np.mean(class_features, axis=0)
         else:
             print(f"No data points found for class {class_label}")
-            class_data[class_label] = np.zeros_like(data_mean)
+            class_data[class_label] = np.zeros(len(important_indices))
 
     return {
         'feature_names': feature_names,
@@ -86,23 +91,23 @@ def get_radar_data(self):
 
 # WRONG SAMPLE SELECT, TBD
 def get_parallel_data(self):
-    selected_indices = np.isin(self.labels, self.selected_classes)
-    selected_features = self.pca_features[selected_indices]
-    selected_labels = self.labels[selected_indices]
-
+    selected_features = self.selected_features
+    selected_labels = self.selected_labels
     if len(selected_features) == 0:
         print("No features selected for parallel coordinates plot")
         return {'feature_names': [], 'dataset_name': self.dataset_name, 'selected_classes': [], 'class_data': {}}
 
     # Limit to 200 samples
     if len(selected_features) > 50:
-        indices = self.samples_to_track
+        indices = np.intersect1d(self.samples_to_track, np.arange(len(selected_features)))
         #indices = np.random.choice(len(selected_features), 50, replace=False)
         selected_features = selected_features[indices]
         selected_labels = selected_labels[indices]
 
     num_features = min(self.imp_features, selected_features.shape[1])
     important_indices = np.argsort(self.feature_importance)[-num_features:]
+    # Filter out any indices that exceed the number of PCA components
+    important_indices = important_indices[important_indices < selected_features.shape[1]]
     feature_names = [f"Feature {i}" for i in important_indices]
 
     class_data = {}

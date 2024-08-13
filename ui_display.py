@@ -51,18 +51,27 @@ def display_scatter_plot(self, data, tab):
     def on_motion(event):
         if self.dragging is None or event.inaxes is None:
             return
-        new_center = (event.xdata + self.offset[0], event.ydata + self.offset[1])
+        old_center = np.array(data['centers'][self.dragging])
+        new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
+        delta = new_center - old_center
+
+        # Update the center position
         data['centers'][self.dragging] = new_center
         self.center_artists[self.dragging].set_offsets(new_center)
 
         # Move all points of the same class
         mask = data['labels'] == unique_labels[self.dragging]
-        delta = np.array(new_center) - np.array(data['centers'][self.dragging])
         data['features'][mask] += delta
 
         # Update points in scatter objects
-        scatter_correct.set_offsets(data['features'][data['predicted_labels'] == data['labels']])
-        scatter_incorrect.set_offsets(data['features'][data['predicted_labels'] != data['labels']])
+        correct_mask = data['predicted_labels'] == data['labels']
+        incorrect_mask = data['predicted_labels'] != data['labels']
+        
+        scatter_correct.set_offsets(data['features'][correct_mask])
+        scatter_incorrect.set_offsets(data['features'][incorrect_mask])
+
+        self.plot.update_center(self.dragging, new_center)
+        self.current_centers = self.plot.get_current_centers()
 
         fig.canvas.draw_idle()
 
@@ -74,50 +83,33 @@ def display_scatter_plot(self, data, tab):
 
 
 def display_radar_plot(self, data, tab):
-    if not data['feature_names'] or len(data['data_mean']) == 0:
-        print("No data available for radar plot")
-        return
+    fig, ax = plt.subplots(figsize=(12, 8), subplot_kw=dict(polar=True))
 
-    # Remove any NaN or infinite values
-    valid_indices = np.isfinite(data['data_mean'])
-    feature_names = np.array(data['feature_names'])[valid_indices]
-    data_mean = np.array(data['data_mean'])[valid_indices]
+    # Make sure we have data for all features
+    num_vars = len(data['feature_names'])
+    angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
 
-    if len(feature_names) == 0:
-        print("No valid data for radar plot after removing NaN/inf values")
-        return
+    # Complete the loop
+    angles += angles[:1]
 
-    fig, ax = plt.subplots(figsize=(15, 10), subplot_kw=dict(polar=True))
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
 
-    angles = np.linspace(0, 2 * np.pi, len(feature_names), endpoint=False)
+    # Plot each class
+    for class_label, class_values in data['class_data'].items():
+        # Ensure the class_values also closes the loop
+        values = np.concatenate([class_values, [class_values[0]]])
 
-    # Close the plot by appending the first value to the end
-    values = np.concatenate((data_mean, [data_mean[0]]))
-    angles = np.concatenate((angles, [angles[0]]))
+        ax.plot(angles, values, label=f"Class {class_label}")
+        ax.fill(angles, values, alpha=0.25)
 
-    # Use a colormap that can distinguish classes
-    #cmap = plt.cm.get_cmap('tab20', len(data['selected_classes']))
-    num_classes = len(data['selected_classes'])
-    if num_classes>10:
-        cmap = plt.cm.get_cmap('tab20', num_classes)
-    else:
-        cmap = plt.cm.get_cmap('tab10', num_classes)
-
-    for i, class_label in enumerate(data['selected_classes']):
-        class_data = data['class_data'][class_label]
-        if len(class_data) > 0:  # Only plot if there's data for this class
-            color = cmap(i)
-            ax.plot(angles, np.concatenate((class_data, [class_data[0]])), 'o-', linewidth=2, color=color, label=f'Class {class_label}')
-            ax.fill(angles, np.concatenate((class_data, [class_data[0]])), alpha=0.1, color=color)
-
-
-    ax.set_thetagrids(angles[:-1] * 180/np.pi, feature_names)
-
-    ax.set_ylim(0, np.max(data_mean) * 1.1)  # Set a reasonable y-limit
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(data['feature_names'])
 
     plt.title(f'Radar Chart of Important Features - {data["dataset_name"]}')
-    plt.legend(loc='center left', bbox_to_anchor=(1.1, 0.5))
-    plt.tight_layout()
+    ax.legend(loc='upper right', bbox_to_anchor=(1.1, 1.1))
+
+    # Display the plot on the provided tab
     display_plot(self, fig, tab)
 
 
@@ -125,9 +117,8 @@ def display_parallel_plot(self, data, tab):
     fig, ax = plt.subplots(figsize=(15, 10))
 
     # Use a colormap that can distinguish classes
-    #cmap = plt.cm.get_cmap('tab20', len(data['selected_classes']))
     num_classes = len(data['selected_classes'])
-    if num_classes>10:
+    if num_classes > 10:
         cmap = plt.cm.get_cmap('tab20', num_classes)
     else:
         cmap = plt.cm.get_cmap('tab10', num_classes)
@@ -140,20 +131,26 @@ def display_parallel_plot(self, data, tab):
             color = cmap(i)
             for row in class_data:
                 ax.plot(range(len(data['feature_names'])), row, color=color, alpha=0.3)
-        
+
             # Create a line for the legend
             legend_line = plt.Line2D([0], [0], color=color, lw=2, label=f'Class {class_label}')
             legend_handles.append(legend_line)
 
+    # Ensure that all features are displayed
     ax.set_xticks(range(len(data['feature_names'])))
     ax.set_xticklabels(data['feature_names'], rotation=45, ha='right')
+
+    # Adding vertical gridlines
+    ax.xaxis.grid(True)  # This enables the vertical gridlines
     ax.set_ylabel('Normalized feature values')
     ax.set_title(f'Parallel Coordinates Plot - {data["dataset_name"]}')
 
     # Add legend with custom handles
-    ax.legend(handles=legend_handles, loc='center left', bbox_to_anchor=(1.1, 0.5))
+    ax.legend(handles=legend_handles, loc='center left', bbox_to_anchor=(1.05, 0.5))
 
-    plt.tight_layout()
+    # Adjust layout to prevent cutting off labels and legends
+    plt.tight_layout(rect=[0, 0, 0.85, 1])
+
     display_plot(self, fig, tab)
 
 def display_plot(self, fig, tab):

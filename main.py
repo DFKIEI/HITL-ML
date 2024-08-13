@@ -11,7 +11,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train and visualize neural networks')
     parser.add_argument('--dataset', type=str, default='PAMAP2', help='Dataset to use')
     parser.add_argument('--model', type=str, default='CNN_PAMAP2', help='Model architecture to use')
-    parser.add_argument('--loss', type=str, default='cross_entropy', choices=['cross_entropy', 'custom'], help='Loss function to use')
+    parser.add_argument('--loss', type=str, default='cross_entropy', choices=['cross_entropy', 'custom','external'], help='Loss function to use')
     parser.add_argument('--batch', type=int, default=128, help='Batch Size')
     args = parser.parse_args()
 
