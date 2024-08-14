@@ -90,8 +90,8 @@ class UI:
 
     def run_training(self):
         train_model(self.model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
-                    self.epoch_var.get(), self.freq_var.get(), self.alpha_var.get(), 
-                    self.beta_var.get(), self.gamma_var.get(), f"reports/{self.dataset_name}",
+                    self.epoch_var.get(), self.freq_var.get(), self.alpha_var, 
+                    self.beta_var, self.gamma_var, f"reports/{self.dataset_name}",
                     self.loss_type,
                     log_callback=self.update_log,
                     pause_event=self.pause_event,

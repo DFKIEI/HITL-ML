@@ -13,7 +13,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from training_utils import calculate_class_weights
 from losses import custom_loss
 
-def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, alpha_lr_value, beta_lr_value, gamma_lr_value, report_dir, loss_type,
+def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, alpha_var, beta_var, gamma_var, report_dir, loss_type,
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, get_current_centers=None):
     model.train()
     # to address class imbalance
@@ -48,13 +48,13 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
             if (i+1) % freq == 0:
                 if loss_type=='custom':
-                    class_weights, cluster_centers = calculate_class_weights(latent_features, labels, beta_lr_value, gamma_lr_value, 'tsne', previous_centers, outlier_threshold=0.5)
+                    class_weights, cluster_centers = calculate_class_weights(latent_features, labels, beta_var.get(), gamma_var.get(), 'tsne', previous_centers, outlier_threshold=0.5)
                     previous_centers = cluster_centers
-                    loss = custom_loss(outputs, labels, class_weights, alpha_lr_value)
+                    loss = custom_loss(outputs, labels, class_weights, alpha_var.get())
 
                 elif loss_type=='external':
                     current_centers = get_current_centers() if get_current_centers else None
-                    loss, previous_centers = external_loss(loss, alpha_lr_value, beta_lr_value, gamma_lr_value, latent_features, labels, current_centers)
+                    loss, previous_centers = external_loss(loss, alpha_var.get(), beta_var.get(), gamma_var.get(), latent_features, labels, current_centers)
 
             loss.backward()
             optimizer.step()
