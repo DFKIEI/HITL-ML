@@ -87,7 +87,7 @@ class InteractivePlot:
 
         # Compute feature importance and cluster centers as usual
         print("Calculate Feature Importance and Cluster Center")
-        self.feature_importance = compute_feature_importance(self)
+        self.feature_importance = compute_feature_importance(self, self.imp_features)
         self.num_classes = len(np.unique(self.selected_labels))
         self.cluster_centers = calculate_cluster_centers(self)
 
