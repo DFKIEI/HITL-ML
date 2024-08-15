@@ -5,6 +5,7 @@ import numpy as np
 import threading
 import queue
 import matplotlib
+from torch.utils import data
 matplotlib.use('TkAgg')
 
 
@@ -111,7 +112,21 @@ class UI:
         self.log_text.see(tk.END)
 
     def show_class_selection(self):
-        num_classes = len(np.unique(self.trainloader.dataset.labels))
+        dataset = self.trainloader.dataset
+
+        if hasattr(dataset, 'dataset'): ###For CIFAR10,100
+            dataset = dataset.dataset
+    
+        if hasattr(dataset, 'targets'):
+            labels = dataset.targets
+        elif hasattr(dataset, 'labels'):
+            labels = dataset.labels
+        elif hasattr(dataset, 'classes'):
+            labels = range(len(dataset.classes))
+        else:
+            raise AttributeError("Dataset has no recognizable label attribute")
+    
+        num_classes = len(dataset.classes) if hasattr(dataset, 'classes') else len(np.unique(labels))
         classes = list(range(num_classes))
         dropdown = MultiSelectDropdown(self.root, classes)
         self.root.wait_window(dropdown)

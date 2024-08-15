@@ -119,11 +119,13 @@ def load_cifar10(batch_size=32):
 
     # Load the training dataset with the specified transformations
     train_dataset = datasets.CIFAR10(root='dataset', train=True, download=True, transform=transform_train)
+    val_dataset = datasets.CIFAR10(root='dataset', train=False, download=True, transform=transform_val_test)
     # Load the testing dataset for validation and testing
     test_dataset = datasets.CIFAR10(root='dataset', train=False, download=True, transform=transform_val_test)
 
     # Create a DataLoader for training
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
     # Create a DataLoader for validation/testing
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
@@ -132,4 +134,4 @@ def load_cifar10(batch_size=32):
     # CIFAR-10 images are 32x32 pixels with 3 color channels
     input_shape = (3, 32, 32)  
 
-    return train_loader, test_loader, num_classes, input_shape
+    return train_loader, val_loader, test_loader, num_classes, input_shape

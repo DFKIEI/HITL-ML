@@ -1,14 +1,14 @@
 TODO 06.08.24:
 2. Why is val accuracy messed up?
-5. Adapt for other classes — test, to fix also
+5. Adapt for other datasets — test
 7. Fix the samples to plot - 100 random at beginning and then track the same samples throughout.(balanced between classes) ——- IMP -- done
 8. Calculate cluster center with the plotted points. ——- IMP -- done
 9. Fix radar plot like parallel - one sample goes through all features -- done
 10. Fix parallel co ordinates dimensions axis plot -- done
-11. Plot does not change with refresh -- done
+11. Plot does not change with refresh -- 
 12. Learning rate and batch size in cmd line arguments -- done
 13. Debug the training.py - why 2356? Print shape of inputs and labels
-14. Add other loss -- done
+14. Add other loss -- done, test
 15. Fix plot interactivity(cluster movement) - IMP -- done
 16. Improve performance of plotting - PCA and TSNE approach
-17. make the alpha, beta, gamma modifiable during training
+17. make the alpha, beta, gamma modifiable during training -- done
