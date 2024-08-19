@@ -63,7 +63,7 @@ class InteractivePlot:
         self.pca_features = self.pca.fit_transform(self.selected_features)
 
         print("Apply MDS")
-        self.mds = MDS(n_components=2, random_state=0, normalized_stress='auto')
+        self.mds = MDS(n_components=2, random_state=42, n_init=1, n_jobs=1, metric=True, normalized_stress='auto')
         # self.tsne = TSNE(
         #     n_components=2,
         #     perplexity=30,
@@ -77,7 +77,7 @@ class InteractivePlot:
         # Cache the results
        
 
-        self.selected_features = self.mds.fit_transform(self.pca_features)
+        self.selected_features = self.mds.fit_transform(self.selected_features)
 
         self.previous_pca_features = self.pca_features
         self.previous_tsne_features = self.selected_features

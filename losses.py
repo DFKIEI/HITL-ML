@@ -9,6 +9,9 @@ def custom_loss(outputs, labels, class_weights, alpha):
     return combined_loss.mean()  # Return the mean combined loss
 
 def external_loss(base_loss, alpha, beta, gamma, latent_features, labels, previous_centers=None):
+    print(f'Alpha: {alpha}')
+    print(f'Beta: {beta}')
+    print(f'Gamma: {gamma}')
     additional_loss = 0.0
     new_centers = []
 
@@ -69,6 +72,7 @@ def calculate_distance_loss_between(latent_features, labels):
         # Combine the two components with a balancing factor
         #balancing_factor = 0.1  # Adjust this factor to balance within and between distances
         #total_distance_loss = beta_lr_value * distance_loss_within + (1-beta_lr_value) * distance_loss_between
+        print(distance_loss_between)
         
         return distance_loss_between
     
