@@ -14,14 +14,14 @@ TODO 06.08.24:
 17. make the alpha, beta, gamma modifiable during training -- done
 
 
-Layer slection of model (with array), for training and validation/visualization
-pause after n epochs
-Fix the wrong datapoints color
-Force the rerender of radar and parallel if classes change
-selcting in scatter and highlight in radar and parallel plot
-check the feature importance
+Layer slection of model (with array), for training and validation/visualization --
+pause after n epochs --
+Fix the wrong datapoints color --
+Force the rerender of radar and parallel if classes change --
+selcting in scatter and highlight in radar and parallel plot --
+check the feature importance -- while preparing the data
 
 Put tool in executable
 Tool Name
 Save the loggings and the images of the plots, track the alpha beta...
-Fix the axis tiles and legends, add the real label to legend
+Fix the axis tiles and legends, add the real label to legend --

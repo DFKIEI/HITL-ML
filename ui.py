@@ -12,7 +12,7 @@ matplotlib.use('TkAgg')
 from plots import InteractivePlot
 from training import train_model
 from ui_control import create_info_labels, create_training_controls, create_visualization_controls
-from ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot
+from ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
 
 class UI:
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type):
@@ -33,6 +33,10 @@ class UI:
         self.stop_training = threading.Event()
         self.current_plot_type = 'scatter'
 
+        self.selected_point_index = None
+
+        self.selected_layer = None
+
         self.num_features = None
 
         self.dragging = None
@@ -48,8 +52,25 @@ class UI:
         main_frame = tk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=padding_value, pady=padding_value)
 
-        self.control_panel = ttk.LabelFrame(main_frame)
-        self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=padding_value, pady=padding_value)
+        #self.control_panel = ttk.LabelFrame(main_frame)
+        #self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=padding_value, pady=padding_value)
+
+        # Create a canvas with scrollbar for the control panel
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        self.control_panel = ttk.Frame(canvas)
+
+        # Configure the canvas
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Add the control panel to the canvas
+        canvas.create_window((0, 0), window=self.control_panel, anchor="nw")
+
+        # Configure the control panel to expand to the canvas width
+        self.control_panel.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
 
         create_info_labels(self)
         create_training_controls(self)
@@ -75,6 +96,7 @@ class UI:
         if self.training_thread is None or not self.training_thread.is_alive():
             self.pause_event.clear()
             self.stop_training.clear()
+            pause_after_n_epochs = self.pause_epochs_var.get()
             self.training_thread = threading.Thread(target=self.run_training)
             self.training_thread.start()
             self.training_button.config(text="Pause Training")
@@ -97,14 +119,16 @@ class UI:
                     log_callback=self.update_log,
                     pause_event=self.pause_event,
                     stop_training=self.stop_training,
-                    epoch_end_callback=self.on_epoch_end)
+                    epoch_end_callback=self.on_epoch_end,
+                    pause_after_n_epochs=self.pause_epochs_var.get(),
+                    selected_layer=self.selected_layer)
 
     def on_epoch_end(self):
+        self.pause_event.set()
         self.update_visualization()
         self.training_button.config(text="Resume Training")
-        self.status_var.set("Paused after epoch")
-        self.update_log("Training paused after epoch. Press 'Resume Training' to continue.")
-        self.pause_event.set()  # Ensure the pause event is set after each epoch
+        self.status_var.set("Paused after N epochs")
+        self.update_log("Training paused after N epochs. Press 'Resume Training' to continue.")
 
 
     def update_log(self, message):
@@ -114,40 +138,62 @@ class UI:
     def show_class_selection(self):
         dataset = self.trainloader.dataset
 
-        if hasattr(dataset, 'dataset'): ###For CIFAR10,100
-            dataset = dataset.dataset
+        #if hasattr(dataset, 'dataset'): ###For CIFAR10,100
+        #    dataset = dataset.dataset
     
-        if hasattr(dataset, 'targets'):
-            labels = dataset.targets
-        elif hasattr(dataset, 'labels'):
-            labels = dataset.labels
-        elif hasattr(dataset, 'classes'):
-            labels = range(len(dataset.classes))
-        else:
-            raise AttributeError("Dataset has no recognizable label attribute")
+        #if hasattr(dataset, 'targets'):
+        #    labels = dataset.targets
+        #elif hasattr(dataset, 'labels'):
+        #    labels = dataset.labels
+        #elif hasattr(dataset, 'classes'):
+        #    labels = range(len(dataset.classes))
+        #else:
+        #    raise AttributeError("Dataset has no recognizable label attribute")
+
+        labels = get_label_names(dataset)
     
-        num_classes = len(dataset.classes) if hasattr(dataset, 'classes') else len(np.unique(labels))
-        classes = list(range(num_classes))
-        dropdown = MultiSelectDropdown(self.root, classes)
+        #num_classes = len(dataset.classes) if hasattr(dataset, 'classes') else len(np.unique(labels))
+        #classes = list(range(num_classes))
+        dropdown = MultiSelectDropdown(self.root, labels.values())
         self.root.wait_window(dropdown)
-        self.selected_classes_var.set(", ".join(map(str, dropdown.selected_options)))
+        #self.selected_classes_var.set(", ".join(map(str, dropdown.selected_options)))
+
+        new_selected_classes = dropdown.selected_options
+        if new_selected_classes != self.get_selected_classes():
+            self.selected_classes_var.set(", ".join(map(str, new_selected_classes)))
+            self.plot.selected_classes = new_selected_classes
+            self.update_visualization()
 
     def get_selected_classes(self):
-        return [int(cls) for cls in self.selected_classes_var.get().split(", ") if cls]
+        return (clss for clss in self.selected_classes_var.get().split(", ") if clss)
 
     def update_visualization(self):
-        selected_classes = self.get_selected_classes()
+        #selected_classes = self.get_selected_classes()
         if self.plot is None:
             self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type, 
-                                        selected_classes, self.dataset_name, self.num_features.get())    
+                                        self.dataset_name, self.num_features.get(),
+                                        selected_layer=self.selected_layer)    
         self.plot.prepare_data()      
-        self.plot.selected_classes = selected_classes
+        #self.plot.selected_classes = selected_classes
         plot_data = self.plot.get_plot_data(self.current_plot_type)
+        #plot_data['selected_point_index'] = self.selected_point_index
         self.visualization_queue.put((plot_data, self.current_plot_type))
 
     def on_tab_change(self, event):
         selected_tab = self.notebook.index(self.notebook.select())
         self.current_plot_type = ['scatter', 'radar', 'parallel'][selected_tab]
+        self.update_visualization()
+
+    def on_layer_change(self, event):
+        selected_layer = self.layer_var.get()
+        if selected_layer == "final":
+            self.selected_layer = None
+        else:
+            self.selected_layer = selected_layer
+        
+        if self.plot:
+            self.plot.set_selected_layer(self.selected_layer)
+        
         self.update_visualization()
 
     def process_visualization_queue(self):
@@ -164,6 +210,31 @@ class UI:
             pass
         finally:
             self.root.after(100, self.process_visualization_queue)
+
+    def highlight_point(self, ind):
+        print("Hello")
+        # Highlight in radar plot
+        if hasattr(self, 'radar_lines'):
+            for line in self.radar_lines:
+                line.set_alpha(0.1)
+            highlighted_class = self.plot.selected_labels[ind]
+            class_lines = [line for line in self.radar_lines if line.get_label() == f"Class {highlighted_class}"]
+            print("Class lines",class_lines)
+            for line in class_lines:
+                line.set_alpha(1.0)
+                line.set_linewidth(3)
+            self.radar_fig.canvas.draw()
+
+        # Highlight in parallel plot
+        if hasattr(self, 'parallel_lines'):
+            for line in self.parallel_lines:
+                line.set_alpha(0.1)
+            highlighted_class = self.plot.selected_labels[ind]
+            class_lines = [line for line in self.parallel_lines if line.get_label() == f"Class {highlighted_class}"]
+            for line in class_lines:
+                line.set_alpha(1.0)
+                line.set_linewidth(3)
+            self.parallel_fig.canvas.draw()
 
 class Pause(threading.Event):
     def __init__(self):

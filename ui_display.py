@@ -3,34 +3,75 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import numpy as np
 import tkinter as tk
 
+
+def get_label_names(dataset):
+    if hasattr(dataset, 'dataset'): ###For CIFAR10,100
+        dataset = dataset.dataset
+    
+    if hasattr(dataset, 'classes'):
+        return {i: name for i, name in enumerate(dataset.classes)}
+    elif hasattr(dataset, 'class_to_idx'):
+        return {v: k for k, v in dataset.class_to_idx.items()}
+    elif hasattr(dataset, 'ACTIONS_IDX'):  # For PAMAP2
+        return dataset.ACTIONS_IDX
+    else:
+        return {}  # Return an empty dict if no label names are found
+
+def create_sequential_mapping(actions_idx):
+    # Create a reverse mapping that maps sequential indices to the correct activities
+    sequential_mapping = {i: actions_idx[key] for i, key in enumerate(sorted(actions_idx.keys()))}
+    return sequential_mapping
+
 def display_scatter_plot(self, data, tab):
+
+    self.selected_point_index = None
+    self.selected_point_label = None
+
     fig, ax = plt.subplots(figsize=(20, 15))
     unique_labels = np.unique(data['labels'])
     num_classes = len(unique_labels)
-    if num_classes>10:
+
+    
+    # Get label names for the current dataset
+    dict_labels = get_label_names(self.plot.dataloader.dataset)
+    sequential_mapping = create_sequential_mapping(dict_labels)
+
+    # Map data['labels'] values to activity names using the sequential mapping
+    #mapped_labels = [sequential_mapping[label] for label in data['labels']]
+
+    # Filter sequential_mapping to include only the labels present in unique_labels
+    filtered_label_names = {i: sequential_mapping[i] for i in unique_labels}
+
+    # Number of unique classes in the current batch
+    #num_classes = len(sequential_mapping)
+
+    if num_classes > 10:
         cmap = plt.cm.get_cmap('tab20', num_classes)
     else:
         cmap = plt.cm.get_cmap('tab10', num_classes)
-    # Store original features for correct and incorrect separately to update only relevant points
-    self.original_correct_features = data['features'][data['predicted_labels'] == data['labels']]
-    self.original_incorrect_features = data['features'][data['predicted_labels'] != data['labels']]
 
-    scatter_correct = ax.scatter(self.original_correct_features[:, 0], self.original_correct_features[:, 1], 
-                                c=data['labels'][data['predicted_labels'] == data['labels']], cmap=cmap, alpha=0.6, s=50)
-    scatter_incorrect = ax.scatter(self.original_incorrect_features[:, 0], self.original_incorrect_features[:, 1], 
-                                c=data['labels'][data['predicted_labels'] != data['labels']], cmap=cmap, alpha=0.8, s=50, 
-                                edgecolor='black', linewidth=2.0)
+    
+    # Use the same coloring for both correct and incorrect classifications
+    scatter = ax.scatter(data['features'][:, 0], data['features'][:, 1], 
+                         c=data['labels'], cmap=cmap, alpha=0.6, s=50)
+
+    # Add black edge color to incorrectly classified points
+    incorrect_mask = data['predicted_labels'] != data['labels']
+    ax.scatter(data['features'][incorrect_mask, 0], data['features'][incorrect_mask, 1],
+               c=data['labels'][incorrect_mask], cmap=cmap, alpha=0.8, s=50,
+               edgecolor='black', linewidth=2.0)
 
     self.center_artists = []
     for i, label in enumerate(unique_labels):
         center = data['centers'][i]
         center_artist = ax.scatter(center[0], center[1], color=cmap(i), 
-                                marker='x', s=100, linewidths=2, picker=5)
+                                   marker='x', s=100, linewidths=2, picker=5)
         self.center_artists.append(center_artist)
 
-    cbar = plt.colorbar(scatter_correct, ax=ax, ticks=range(num_classes))
+    cbar = plt.colorbar(scatter, ax=ax, ticks=range(len(filtered_label_names)))
     cbar.set_label('Classes')
-    cbar.set_ticklabels(unique_labels)
+    cbar.set_ticklabels(filtered_label_names.values())
+    #cbar.set_ticklabels(unique_labels)
     plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}')
     plt.xlabel('t-SNE feature 1')
     plt.ylabel('t-SNE feature 2')
@@ -43,7 +84,14 @@ def display_scatter_plot(self, data, tab):
                 self.dragging = i
                 self.offset = (data['centers'][i][0] - event.xdata,
                         data['centers'][i][1] - event.ydata)
-                break
+                return
+
+        # If not dragging a center, check for point highlighting
+        cont, ind = scatter.contains(event)
+        if cont:
+            print("Identified", ind['ind'][0])
+            self.selected_point_index = ind['ind'][0]
+            self.selected_point_label = data['labels'][self.selected_point_index]
 
     def on_release(event):
         self.dragging = None
@@ -64,16 +112,17 @@ def display_scatter_plot(self, data, tab):
         data['features'][mask] += delta
 
         # Update points in scatter objects
-        correct_mask = data['predicted_labels'] == data['labels']
-        incorrect_mask = data['predicted_labels'] != data['labels']
+        scatter.set_offsets(data['features'])
         
-        scatter_correct.set_offsets(data['features'][correct_mask])
-        scatter_incorrect.set_offsets(data['features'][incorrect_mask])
+        # Update misclassified points
+        misclassified_scatter = ax.collections[1]  # The second scatter plot (for misclassified points)
+        misclassified_scatter.set_offsets(data['features'][incorrect_mask])
 
         self.plot.update_center(self.dragging, new_center)
         self.current_centers = self.plot.get_current_centers()
 
         fig.canvas.draw_idle()
+
 
     fig.canvas.mpl_connect('button_press_event', on_press)
     fig.canvas.mpl_connect('button_release_event', on_release)
@@ -84,6 +133,8 @@ def display_scatter_plot(self, data, tab):
 
 def display_radar_plot(self, data, tab):
     fig, ax = plt.subplots(figsize=(12, 8), subplot_kw=dict(polar=True))
+
+    dict_labels = get_label_names(self.plot.dataloader.dataset)
 
     # Make sure we have data for all features
     num_vars = len(data['feature_names'])
@@ -97,11 +148,16 @@ def display_radar_plot(self, data, tab):
 
     # Plot each class
     for class_label, class_values in data['class_data'].items():
+        
+        class_label_to_show = dict_labels[class_label]
         # Ensure the class_values also closes the loop
         values = np.concatenate([class_values, [class_values[0]]])
 
-        ax.plot(angles, values, label=f"Class {class_label}")
-        ax.fill(angles, values, alpha=0.25)
+        if self.selected_point_index is not None and self.selected_point_label == class_label:
+            ax.plot(angles, values, label=f"{class_label_to_show}", linewidth=2, alpha=1.0)
+            ax.fill(angles, values, alpha=0.25)
+        else:
+            ax.plot(angles, values, label=f"{class_label_to_show}", linewidth=1, alpha=0.2)
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(data['feature_names'])
@@ -109,12 +165,17 @@ def display_radar_plot(self, data, tab):
     plt.title(f'Radar Chart of Important Features - {data["dataset_name"]}')
     ax.legend(loc='upper right', bbox_to_anchor=(1.1, 1.1))
 
+    self.radar_lines = ax.lines[1:]  # Store lines for later highlighting
+    self.radar_fig = fig
+
     # Display the plot on the provided tab
     display_plot(self, fig, tab)
 
 
 def display_parallel_plot(self, data, tab):
     fig, ax = plt.subplots(figsize=(15, 10))
+
+    dict_labels = get_label_names(self.plot.dataloader.dataset)
 
     # Use a colormap that can distinguish classes
     num_classes = len(data['selected_classes'])
@@ -129,11 +190,16 @@ def display_parallel_plot(self, data, tab):
         class_data = data['class_data'][class_label]
         if len(class_data) > 0:  # Only plot if there's data for this class
             color = cmap(i)
-            for row in class_data:
-                ax.plot(range(len(data['feature_names'])), row, color=color, alpha=0.3)
+            for j, row in enumerate(class_data):
+                if self.selected_point_index is not None and self.selected_point_label == class_label:
+                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=1.0, linewidth=2)
+                else:
+                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=0.1)
 
+            
+            class_label_to_show = dict_labels[class_label]
             # Create a line for the legend
-            legend_line = plt.Line2D([0], [0], color=color, lw=2, label=f'Class {class_label}')
+            legend_line = plt.Line2D([0], [0], color=color, lw=2, label=f'{class_label_to_show}')
             legend_handles.append(legend_line)
 
     # Ensure that all features are displayed
@@ -150,6 +216,9 @@ def display_parallel_plot(self, data, tab):
 
     # Adjust layout to prevent cutting off labels and legends
     plt.tight_layout(rect=[0, 0, 0.85, 1])
+
+    self.parallel_lines = ax.lines  # Store lines for later highlighting
+    self.parallel_fig = fig
 
     display_plot(self, fig, tab)
 
