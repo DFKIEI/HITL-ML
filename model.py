@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class CNN_PAMAP2(nn.Module):
-    def __init__(self, in_size, out_size, **kwargs):
+    def __init__(self, in_size, num_classes, **kwargs):
         super(CNN_PAMAP2, self).__init__()
         hidden = 32, 64, 128, 1024
         kernel1, kernel2, kernel3 = 24, 16, 8
@@ -14,18 +14,36 @@ class CNN_PAMAP2(nn.Module):
         self.conv3 = nn.Conv1d(hidden[1], hidden[2], kernel_size=kernel3)
         self.dropout3 = nn.Dropout(dropout)
         self.global_max_pool = nn.AdaptiveMaxPool1d(output_size=1)
+        self.global_avg_pool = nn.AdaptiveAvgPool1d(output_size=1)  # Global Average Pooling for intermediate layers
+        self.num_classes = num_classes
 
         # Classifier head
         self.dense1 = nn.Linear(hidden[2], hidden[3])
-        self.dense2 = nn.Linear(hidden[3], out_size)
+        self.dense2 = nn.Linear(hidden[3], num_classes)
 
-    def forward(self, x):
+        self.projection1 = nn.Linear(hidden[0], num_classes)
+        self.projection2 = nn.Linear(hidden[1], num_classes)
+        self.projection3 = nn.Linear(hidden[2], num_classes)
+
+    def forward(self, x, layer=None):
         x = x.permute(0, 2, 1)
         x = torch.relu(self.conv1(x))
+        if layer=='conv1':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection1(x), x
         x = self.dropout1(x)
         x = torch.relu(self.conv2(x))
+        if layer=='conv2':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection2(x), x
         x = self.dropout2(x)
         x = torch.relu(self.conv3(x))
+        if layer=='conv3':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection3(x), x
         x = self.dropout3(x)
         x = torch.flatten(self.global_max_pool(x), start_dim=1)
 
@@ -48,10 +66,23 @@ class CNN_MNIST(nn.Module):
         self.dropout = nn.Dropout(0.5)
         self.fc1 = nn.Linear(64 * 7 * 7, 1024)
         self.fc2 = nn.Linear(1024, num_classes)
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(output_size=(1, 1))  # Global Average Pooling for intermediate layers
+        self.num_classes = num_classes
 
-    def forward(self, x):
+        self.projection1 = nn.Linear(32, num_classes)
+        self.projection2 = nn.Linear(64, num_classes)
+
+    def forward(self, x, layer=None):
         x = torch.relu(self.pool(self.conv1(x)))
+        if layer=='conv1':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection1(x), x
         x = torch.relu(self.pool(self.conv2(x)))
+        if layer=='conv2':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection2(x), x
         x = torch.flatten(x, 1)  # flatten all dimensions except batch
         latent_features = torch.relu(self.fc1(x))
         x = self.dropout(latent_features)
@@ -74,15 +105,29 @@ class CNN_CIFAR10(nn.Module):
         self.fc1 = nn.Linear(64 * 8 * 8, 512)
         self.dropout2 = nn.Dropout(0.5)
         self.fc2 = nn.Linear(512, num_classes)
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(output_size=(1, 1))  # Global Average Pooling for intermediate layers
+        self.num_classes = num_classes
 
-    def forward(self, x):
+        self.projection1 = nn.Linear(32, num_classes)
+        self.projection2 = nn.Linear(64, num_classes)
+
+    def forward(self, x, layer=None):
         x = torch.relu(self.pool(self.conv1(x)))
+        if layer=='conv1':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection1(x), x
         x = torch.relu(self.pool(self.conv2(x)))
+        if layer=='conv2':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection2(x), x
         x = torch.flatten(x, 1)
         latent_features = torch.relu(self.fc1(x))
         x = self.dropout1(latent_features)
         output = self.fc2(x)
         return output, latent_features
+
 
     @torch.no_grad()
     def predict(self, x):
@@ -101,11 +146,29 @@ class CNN_CIFAR100(nn.Module):
         self.fc1 = nn.Linear(128 * 4 * 4, 1024)
         self.dropout2 = nn.Dropout(0.5)
         self.fc2 = nn.Linear(1024, num_classes)
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(output_size=(1, 1))  # Global Average Pooling for intermediate layers
+        self.num_classes = num_classes
 
-    def forward(self, x):
+        self.projection1 = nn.Linear(32, num_classes)
+        self.projection2 = nn.Linear(64, num_classes)
+        self.projection2 = nn.Linear(128, num_classes)
+
+    def forward(self, x, layer=None):
         x = torch.relu(self.pool(self.conv1(x)))
+        if layer=='conv1':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection1(x), x
         x = torch.relu(self.pool(self.conv2(x)))
+        if layer=='conv2':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection2(x), x
         x = torch.relu(self.pool(self.conv3(x)))
+        if layer=='conv3':
+            x = self.global_avg_pool(x)
+            x = x.view(x.size(0), -1)
+            return self.projection3(x), x
         x = torch.flatten(x, 1)
         latent_features = torch.relu(self.fc1(x))
         x = self.dropout1(latent_features)

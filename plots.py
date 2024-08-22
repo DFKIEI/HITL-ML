@@ -9,19 +9,23 @@ from scipy.spatial.distance import cosine
 from plots_utils import extract_latent_features, compute_feature_importance, calculate_cluster_centers, get_scatter_data, get_radar_data, get_parallel_data
 
 class InteractivePlot:
-    def __init__(self, model, dataloader, plot_type, selected_classes, dataset_name, imp_features_number):
+    def __init__(self, model, dataloader, plot_type, dataset_name, imp_features_number, selected_layer = None):
         self.model = model
         self.dataloader = dataloader
         self.plot_type = plot_type
-        self.selected_classes = selected_classes
+        self.selected_classes = None
         self.dataset_name = dataset_name
         self.imp_features = imp_features_number
+        self.selected_layer = selected_layer
         self.previous_pca_features = None
         self.similarity_threshold = 0.99
         self.previous_tsne_features = None
         self.samples_to_track = self.select_balanced_samples()  # Store indices of samples to track
         #self.prepare_data()
         #self.prepare_plot_data()
+
+    def set_selected_layer(self, layer):
+        self.selected_layer = layer
 
     def select_balanced_samples(self):
         labels = []
@@ -58,6 +62,12 @@ class InteractivePlot:
         self.labels = all_labels
         
         self.selected_features = all_latent_features[self.samples_to_track]
+
+        # Handle 3D features from convolutional layers
+        if len(self.selected_features.shape) > 2:
+            # Flatten the features
+            self.selected_features = self.selected_features.reshape(self.selected_features.shape[0], -1)
+
         print("Apply PCA")
         self.pca = PCA(n_components=min(20, self.selected_features.shape[1]))
         self.pca_features = self.pca.fit_transform(self.selected_features)

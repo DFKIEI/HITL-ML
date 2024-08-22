@@ -14,7 +14,7 @@ from training_utils import calculate_class_weights
 from losses import custom_loss
 
 def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, alpha_var, beta_var, gamma_var, report_dir, loss_type,
-                log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, get_current_centers=None):
+                log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, get_current_centers=None, pause_after_n_epochs=None, selected_layer=None):
     model.train()
     # to address class imbalance
     # class_counts = np.bincount(trainloader.dataset.y_data)
@@ -36,13 +36,47 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         for i, (inputs, labels) in enumerate(trainloader):
             if stop_training and stop_training.is_set():
                 return
-            
+
             if pause_event and pause_event.is_set():
                 pause_event.wait()
             
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
-            outputs, latent_features = model(inputs)
+            if selected_layer:
+                outputs, latent_features = model(inputs, selected_layer)
+            else:
+                outputs, latent_features = model(inputs)
+
+            #print(f"Model output shape: {outputs.shape}")
+            #print(f"Latent features shape: {latent_features.shape}")
+            #print(f"Labels shape: {labels.shape}")
+            #print(f"Unique labels: {torch.unique(labels)}")
+            #print(f"Model output sample: {outputs[0][:10]}")  # Print first 10 elements of first sample
+
+            #if selected_layer is not None:
+                #print(f"selected_layer : {selected_layer}")
+                # For convolutional layers, we can't use CrossEntropyLoss
+                # Instead, we'll use MSE loss between the flattened features and one-hot encoded labels
+            #    one_hot_labels = torch.zeros(labels.size(0), model.num_classes, device=device)
+            #    one_hot_labels.scatter_(1, labels.unsqueeze(1), 1)
+            #    loss = nn.MSELoss()(outputs, one_hot_labels)
+            #else:
+            loss = criterion(outputs, labels)
+
+            if outputs.dim() > 2:
+                outputs = outputs.view(outputs.size(0), -1)
+                print(f"Reshaped output shape: {outputs.shape}")
+            
+            if outputs.size(1) != labels.max() + 1:
+                print(f"Warning: Number of classes in model output ({outputs.size(1)}) "
+                      f"doesn't match the number of classes in labels ({labels.max() + 1})")
+                if outputs.size(1) > labels.max() + 1:
+                    outputs = outputs[:, :labels.max() + 1]  # Truncate extra classes if any
+                else:
+                    raise ValueError("Model output has fewer classes than the labels")
+
+
+
             predictions = outputs.argmax(dim=1)
             loss = criterion(outputs, labels)
 
@@ -76,8 +110,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 total_predictions = 0
         
         # Validation after each epoch
-        val_accuracy = evaluate_model(model, valloader, device)
-        test_accuracy = evaluate_model(model, testloader, device)
+        val_accuracy = evaluate_model(model, valloader, device, selected_layer)
+        test_accuracy = evaluate_model(model, testloader, device, selected_layer)
         val_log_message = f"Epoch {epoch + 1} completed. Validation Accuracy: {val_accuracy:.2f}%"
         test_log_message = f"Epoch {epoch + 1} completed. Test Accuracy: {test_accuracy:.2f}%"
         print(val_log_message)
@@ -93,20 +127,23 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         # Save report
         #save_report(epoch, running_loss / len(trainloader), val_accuracy, "custom", report_dir)
         
-        if epoch_end_callback:
-            epoch_end_callback()
+        #if epoch_end_callback:
+        #    epoch_end_callback()
         
-        # Pause after each epoch and wait for user input
-        if pause_event:
-            pause_event.set()
-            log_message = "Epoch finished. Training paused. Press 'Resume Training' to continue."
-            print(log_message)
-            if log_callback:
-                log_callback(log_message)
-            while pause_event.is_set():
-                time.sleep(0.1)  # Sleep for a short time to avoid busy waiting
-                if stop_training and stop_training.is_set():
-                    return
+        # Pause after N epochs
+        if pause_after_n_epochs and (epoch + 1) % pause_after_n_epochs == 0:
+            if epoch_end_callback:
+                epoch_end_callback()
+            if pause_event:
+                pause_event.set()
+                log_message = f"Training paused after {epoch + 1} epochs. Press 'Resume Training' to continue."
+                print(log_message)
+                if log_callback:
+                    log_callback(log_message)
+                while pause_event.is_set():
+                    time.sleep(0.1)
+                    if stop_training and stop_training.is_set():
+                        return
 
     print('Finished Training')
 
@@ -125,15 +162,26 @@ def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir):
         writer = csv.writer(file)
         writer.writerow([epoch+1, train_loss, val_accuracy, loss_type])
 
-def evaluate_model(model, dataloader, device):
+def evaluate_model(model, dataloader, device, selected_layer):
     model.eval()
     correct_predictions = 0
     total_predictions = 0
     with torch.no_grad():
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model.predict(inputs)
-            correct_predictions += (outputs == labels).sum().item()
+            if selected_layer:
+                outputs, _ = model(inputs, layer=selected_layer)
+            else:
+                outputs, _ = model(inputs)
+
+            if outputs.dim() > 2:
+                outputs = outputs.view(outputs.size(0), -1)
+            
+            if outputs.size(1) != labels.max() + 1:
+                outputs = outputs[:, :labels.max() + 1]  # Truncate extra classes if any
+            
+            predictions = outputs.argmax(dim=1)
+            correct_predictions += (predictions == labels).sum().item()
             total_predictions += labels.size(0)
     accuracy = 100 * correct_predictions / total_predictions
     return accuracy
