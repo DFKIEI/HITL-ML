@@ -1,7 +1,8 @@
 import numpy as np
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset, random_split
 from torchvision import datasets, transforms
 from PAMAP2_data import PAMAP2
+import torch
 
 def load_dataset(dataset_name, batch_size=32):
     if dataset_name == 'PAMAP2':
@@ -15,7 +16,7 @@ def load_dataset(dataset_name, batch_size=32):
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
-def load_pamap2(batch_size=32, window_size=200, window_step=50, frequency=50):
+def load_pamap2(batch_size=32, window_size=200, window_step=50, frequency=50, split_ratio=0.8):
     columns = ['hand_acc_16g_x', 'hand_acc_16g_y', 'hand_acc_16g_z', 
                'hand_gyroscope_x', 'hand_gyroscope_y', 'hand_gyroscope_z', 
                'hand_magnometer_x', 'hand_magnometer_y', 'hand_magnometer_z', 
@@ -58,9 +59,9 @@ def extract_labels(dataset):
         labels.append(label)
     return np.array(labels)
 
-def load_mnist(batch_size=32):
+def load_mnist(batch_size=32, split_ratio=0.8):
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-    
+
     train_dataset = datasets.MNIST('dataset', train=True, download=True, transform=transform)
     test_dataset = datasets.MNIST('dataset', train=False, transform=transform)
 
@@ -73,65 +74,77 @@ def load_mnist(batch_size=32):
 
     return train_loader, val_loader, test_loader, num_classes, input_shape
 
-def load_cifar100(batch_size = 32):
-    transform_train = transforms.Compose([
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomCrop(32, padding=4),
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
- 
-    transform_val_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
- 
-    # Load the datasets with the appropriate transformations applied
-    train_dataset = datasets.CIFAR100(root='dataset', train=True, download=True, transform=transform_train)
-    val_dataset = datasets.CIFAR100(root='dataset', train=False, download=True, transform=transform_val_test)
-    test_dataset = datasets.CIFAR100(root='dataset', train=False, download=True, transform=transform_val_test)
-
-    # Create data loaders for training, validation, and testing
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-
-    num_classes = 100  # CIFAR-100 has 100 classes
-    input_shape = (3, 32, 32)  # CIFAR-100 images are 32x32 pixels with 3 color channels
-
-    return train_loader, val_loader, test_loader, num_classes, input_shape
-
-
-def load_cifar10(batch_size=32):
+def load_cifar100(batch_size=32, val_split=0.5):
     # Define transformations for the training data
     transform_train = transforms.Compose([
-        transforms.RandomHorizontalFlip(),  # randomly flip image horizontally
-        transforms.RandomCrop(32, padding=4),  # random crop with padding
-        transforms.ToTensor(),  # convert the image to a tensor
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))  # normalize with mean and std for CIFAR-10
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomCrop(32, padding=4),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
     ])
 
     # Define transformations for the validation and test data
     transform_val_test = transforms.Compose([
-        transforms.ToTensor(),  # convert the image to a tensor
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))  # normalize with mean and std for CIFAR-10
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762))
     ])
 
-    # Load the training dataset with the specified transformations
-    train_dataset = datasets.CIFAR10(root='dataset', train=True, download=True, transform=transform_train)
-    val_dataset = datasets.CIFAR10(root='dataset', train=False, download=True, transform=transform_val_test)
-    # Load the testing dataset for validation and testing
-    test_dataset = datasets.CIFAR10(root='dataset', train=False, download=True, transform=transform_val_test)
+    # Load the training dataset
+    train_dataset = datasets.CIFAR100(root='dataset', train=True, download=True, transform=transform_train)
 
-    # Create a DataLoader for training
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-    # Create a DataLoader for validation/testing
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    # Load the full test dataset (to split into validation and test)
+    full_test_dataset = datasets.CIFAR100(root='dataset', train=False, download=True, transform=transform_val_test)
+
+    # Split the test dataset into validation and test sets
+    val_size = int(len(full_test_dataset) * val_split)
+    test_size = len(full_test_dataset) - val_size
+    val_dataset, test_dataset = random_split(full_test_dataset, [val_size, test_size])
+
+    # Create DataLoaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+
+    # CIFAR-100 has 100 classes
+    num_classes = 100
+    input_shape = (3, 32, 32)
+
+    return train_loader, val_loader, test_loader, num_classes, input_shape
+
+
+def load_cifar10(batch_size=32, val_split=0.5):
+    # Define transformations for the training data
+    transform_train = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomCrop(32, padding=4),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
+    ])
+
+    # Define transformations for the validation and test data
+    transform_val_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
+    ])
+
+    # Load the training dataset
+    train_dataset = datasets.CIFAR10(root='dataset', train=True, download=True, transform=transform_train)
+
+    # Load the full test dataset (to split into validation and test)
+    full_test_dataset = datasets.CIFAR10(root='dataset', train=False, download=True, transform=transform_val_test)
+
+    # Split the test dataset into validation and test sets
+    val_size = int(len(full_test_dataset) * val_split)
+    test_size = len(full_test_dataset) - val_size
+    val_dataset, test_dataset = random_split(full_test_dataset, [val_size, test_size])
+
+    # Create DataLoaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
     # CIFAR-10 has 10 classes
-    num_classes = 10  
-    # CIFAR-10 images are 32x32 pixels with 3 color channels
-    input_shape = (3, 32, 32)  
+    num_classes = 10
+    input_shape = (3, 32, 32)
 
     return train_loader, val_loader, test_loader, num_classes, input_shape

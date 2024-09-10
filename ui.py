@@ -20,6 +20,8 @@ class UI:
         self.model = model
         self.optimizer = optimizer
         self.trainloader = trainloader
+        # self.trainloader_shuffled = trainloader_shuffled
+        # self.trainloader_class = trainloader_class
         self.valloader = valloader
         self.testloader = testloader
         self.device = device
@@ -121,7 +123,9 @@ class UI:
                     stop_training=self.stop_training,
                     epoch_end_callback=self.on_epoch_end,
                     pause_after_n_epochs=self.pause_epochs_var.get(),
-                    selected_layer=self.selected_layer)
+                    selected_layer=self.selected_layer,
+                    centers=True,
+                    plot = self.plot)
 
     def on_epoch_end(self):
         self.pause_event.set()

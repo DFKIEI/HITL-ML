@@ -6,6 +6,7 @@ import argparse
 from ui import UI
 from data_loader import load_dataset
 from model import get_model
+import os
 
 def main():
     parser = argparse.ArgumentParser(description='Train and visualize neural networks')
@@ -25,6 +26,7 @@ def main():
 
     # Load dataset
     trainloader, valloader, testloader, num_classes, input_shape = load_dataset(args.dataset, args.batch)
+    # trainloader_shuffled, trainloader_class, valloader, testloader, num_classes, input_shape = load_dataset(args.dataset, args.batch)
 
     # Initialize model
     model = get_model(args.model, input_shape, num_classes).to(device)
@@ -33,6 +35,7 @@ def main():
     # Create UI
     root = tk.Tk()
     UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss)
+    # UI(root, model, optimizer, trainloader_shuffled, trainloader_class, valloader, testloader, device, args.dataset, args.model, args.loss)
     root.mainloop()
 
 if __name__ == "__main__":
