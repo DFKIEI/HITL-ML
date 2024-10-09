@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--model', type=str, default='CNN_PAMAP2', help='Model architecture to use')
     parser.add_argument('--loss', type=str, default='cross_entropy', choices=['cross_entropy', 'custom','external'], help='Loss function to use')
     parser.add_argument('--batch', type=int, default=128, help='Batch Size')
+    parser.add_argument('--visualize', type=str, default='validation', help='Select dataset to visualize', choices=['train', 'validation', 'test'])
     args = parser.parse_args()
 
     # Set up device
@@ -29,12 +30,13 @@ def main():
     # trainloader_shuffled, trainloader_class, valloader, testloader, num_classes, input_shape = load_dataset(args.dataset, args.batch)
 
     # Initialize model
-    model = get_model(args.model, input_shape, num_classes).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5) # add l2 regularization
+    teacher_model = get_model(args.model, input_shape, num_classes).to(device)
+    student_model = get_model(args.model, input_shape, num_classes).to(device)
+    optimizer = optim.Adam(student_model.parameters(), lr=0.001, weight_decay=1e-5) # add l2 regularization
 
     # Create UI
     root = tk.Tk()
-    UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss)
+    UI(root, teacher_model, student_model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss, args.visualize)
     # UI(root, model, optimizer, trainloader_shuffled, trainloader_class, valloader, testloader, device, args.dataset, args.model, args.loss)
     root.mainloop()
 

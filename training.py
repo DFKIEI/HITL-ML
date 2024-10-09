@@ -1,3 +1,5 @@
+from numpy.random.mtrand import gamma
+from sklearn.metrics.pairwise import cosine_similarity
 import torch
 from torch import nn
 import numpy as np
@@ -9,20 +11,74 @@ from tqdm import tqdm
 import traceback
 import time
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from pytorch_metric_learning import losses
 from sklearn.manifold import MDS
 import torch.nn.functional as F
 import torch.optim as optim
 from sklearn.cluster import KMeans
 import math
 from sklearn.metrics import f1_score
+from sklearn.decomposition import PCA
 
 from training_utils import calculate_class_weights
 from losses import custom_loss, MagnetLoss
 
-def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, alpha_var, beta_var, gamma_var, report_dir, loss_type,
+def compute_pairwise_distances(cluster_centers):
+    """
+    Compute the pairwise distances between cluster centers.
+    """
+    pairwise_distances = torch.cdist(cluster_centers, cluster_centers, p=2)  # Euclidean distance
+    return pairwise_distances
+
+def distances_to_probabilities(distances):
+    """
+    Convert distances to probabilities using softmax on the negative distances.
+    """
+    probabilities = F.softmax(-distances, dim=1)  # Apply softmax to the negative distances
+    return probabilities
+
+def compute_kd_from_distances(student_distances, teacher_distances, temperature=3.0):
+    """
+    Compute KL Divergence between the pairwise distances (converted to probabilities)
+    of the student and teacher cluster centers.
+    """
+    # Convert distances to probability distributions
+    student_probabilities = distances_to_probabilities(student_distances / temperature)
+    teacher_probabilities = distances_to_probabilities(teacher_distances / temperature)
+    
+    # Compute KL Divergence between the student and teacher distance distributions
+    kd_loss = F.kl_div(F.log_softmax(student_probabilities, dim=1),
+                       F.softmax(teacher_probabilities, dim=1),
+                       reduction='batchmean') * (temperature ** 2)
+    
+    return kd_loss
+
+
+
+
+def compute_cluster_probabilities(features, n_clusters, device):
+    """
+    Compute cluster centers and probabilities for a given feature set.
+    - features: Latent feature representations.
+    - n_clusters: Number of clusters (usually equal to the number of unique classes).
+    """
+    # Apply KMeans clustering
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    kmeans.fit(features.detach().cpu().numpy())  # Cluster centers based on features
+    cluster_centers = torch.tensor(kmeans.cluster_centers_, device=device).float()
+
+    # Compute distances between features and cluster centers
+    distances = torch.cdist(features, cluster_centers, p=2)
+
+    # Convert distances to probabilities using softmax on negative distances
+    probabilities = F.softmax(-distances, dim=1)
+
+    return probabilities, cluster_centers
+
+
+def train_model(teacher_model, student_model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, alpha_var, beta_var, gamma_var, report_dir, loss_type,
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot= None):
-    model.train()
+    teacher_model.eval()
+    student_model.train()
     # to address class imbalance
     # class_counts = np.bincount(trainloader.dataset.y_data)
     # class_weights = 1. / torch.tensor(class_counts, dtype=torch.float)
@@ -30,6 +86,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
     # criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     # criterion = nn.CrossEntropyLoss()
+    magnet_loss = MagnetLoss(alpha=1.0).to(device)
     
     # learning rate scheduler
     scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5)
@@ -41,6 +98,9 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
     # contrastive_norm = losses.NormalizedSoftmaxLoss(temperature=0.05)
 
     mds = MDS(n_components=2, random_state=42, n_init=1, n_jobs=1, metric=True)
+    ce_criterion = nn.CrossEntropyLoss()
+    mse_loss = nn.MSELoss()
+    cosine_similarity = nn.CosineSimilarity(dim=1)
 
     # optimizers = []
 
@@ -48,13 +108,29 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
     # for i in range(len(trainloader_class)):
     #     optimizer = optim.Adam(model.parameters(), lr=0.0005)
     #     optimizers.append(optimizer)
-
-    print(f'Alpha: {alpha_var.get()}')
+    
     for epoch in range(num_epochs):
         running_loss = 0.0
         correct_predictions = 0
         total_predictions = 0
-        ce_criterion = nn.CrossEntropyLoss()
+
+        if plot:
+            plot.synchronize_state()
+            print(f"Movement occurred: {plot.movement_occurred}")
+
+        # Get the current high-dimensional points based on the 2D movements
+        moved_high_dim_points = plot.get_current_high_dim_points()
+
+        print(f"Epoch {epoch + 1}")
+        print(f"Moved high dim points shape: {moved_high_dim_points.shape}")
+        print(f"Max value in moved high dim points: {np.max(np.abs(moved_high_dim_points))}")
+        
+        # Check for NaN values
+        if np.isnan(moved_high_dim_points).any():
+            print("Warning: NaN values detected in moved_high_dim_points. Using original points.")
+            moved_high_dim_points = plot.get_original_high_dim_points()
+        
+        moved_high_dim_points = torch.tensor(moved_high_dim_points, dtype=torch.float32, device=device)
 
         for i, (inputs, labels) in enumerate(trainloader):
             if len(inputs) % 10 != 0: # Remove the last entry if odd length of batch ONLY FOR MAGNET LOSS RELEVANT
@@ -70,50 +146,116 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
-            if selected_layer:
-                outputs, latent_features = model(inputs, selected_layer)
-            else:
-                outputs, latent_features = model(inputs)
 
-            #print(f"Model output shape: {outputs.shape}")
-            #print(f"Latent features shape: {latent_features.shape}")
-            #print(f"Labels shape: {labels.shape}")
-            #print(f"Unique labels: {torch.unique(labels)}")
-            #print(f"Model output sample: {outputs[0][:10]}")  # Print first 10 elements of first sample
+            alpha_val = alpha_var.get()
+            beta_val = beta_var.get()
+            gamma_val = gamma_var.get()
+            #print(f"Alpha: {alpha_val}")
 
-            #if selected_layer is not None:
-                #print(f"selected_layer : {selected_layer}")
-                # For convolutional layers, we can't use CrossEntropyLoss
-                # Instead, we'll use MSE loss between the flattened features and one-hot encoded labels
-            #    one_hot_labels = torch.zeros(labels.size(0), model.num_classes, device=device)
-            #    one_hot_labels.scatter_(1, labels.unsqueeze(1), 1)
-            #    loss = nn.MSELoss()(outputs, one_hot_labels)
-            #else:
+
+            # Forward pass through the student model
+            student_outputs, student_features = student_model(inputs)
+
+            # Get the original and moved latent spaces
             
-
-            if outputs.dim() > 2:
-                outputs = outputs.view(outputs.size(0), -1)
-                print(f"Reshaped output shape: {outputs.shape}")
             
-            if outputs.size(1) != labels.max() + 1:
-                print(f"Warning: Number of classes in model output ({outputs.size(1)}) "
-                      f"doesn't match the number of classes in labels ({labels.max() + 1})")
-                if outputs.size(1) > labels.max() + 1:
-                    outputs = outputs[:, :labels.max() + 1]  # Truncate extra classes if any
-                else:
-                    raise ValueError("Model output has fewer classes than the labels")
+            # Forward pass through the teacher model (get latent features)
+            #with torch.no_grad():
+            #    teacher_outputs, teacher_features = teacher_model(inputs)
+
+            #moved_cluster_centers_original = plot.inverse_transform_centers()
+
+            # Compute the distance between the teacher's latent features and the moved cluster centers
+            #teacher_distances = torch.cdist(teacher_features, torch.tensor(moved_cluster_centers_original, dtype=torch.float32, device=device))
+            #student_distances = torch.cdist(student_features, torch.tensor(moved_cluster_centers_original, dtype=torch.float32, device=device))
+
+
+            # Compute cluster probabilities for both teacher and student features
+            #n_clusters = len(torch.unique(labels))  # Number of unique classes
+            #teacher_probabilities, teacher_cluster_centers = compute_cluster_probabilities(teacher_features, n_clusters, device)
+            #student_probabilities, student_cluster_centers = compute_cluster_probabilities(student_features, n_clusters, device)
+
+            # Compute pairwise distances between cluster centers
+            #teacher_distances = compute_pairwise_distances(teacher_cluster_centers)
+            #student_distances = compute_pairwise_distances(student_cluster_centers)
+
+            # Compute Cross-Entropy Loss for the student model
+            ce_loss = ce_criterion(student_outputs, labels)
+
+            # Find the nearest neighbors in the original high-dim space
+            original_high_dim_points = torch.tensor(plot.get_original_high_dim_points(), dtype=torch.float32, device=device)
+            distances = torch.cdist(student_features, original_high_dim_points)
+            _, indices = distances.min(dim=1)
+            
+            # Get the corresponding moved high-dim points
+            target_features = moved_high_dim_points[indices]
+
+            # Compute the MSE loss for user interaction
+            feature_loss = mse_loss(student_features, target_features)
+            if feature_loss is torch.tensor(float('nan'), device=device):
+                feature_loss = 0.0
+                alpha_val=0
+
+            # Magnet Loss
+            m = 10  # Number of clusters (adjust as needed)
+            d = math.ceil(len(inputs) / m)
+            magnet_loss_value, _ = magnet_loss(student_features, labels, m, d)
+
+
+            #Third loss with magnet loss based on modified feature space - to force move the data points within the cluster
+            #Implement the single data movement
+
+            #Visualize the validation dataset - add options to visualize train/validation dataset(argument)
+            
+            #Check distance metric loss functions to match with above
+
+            # Combine losses
+            #loss = (1 - alpha_var.get()) * ce_loss + alpha_var.get() * feature_loss
 
 
 
-            predictions = outputs.argmax(dim=1)
-            magnet_loss_func = MagnetLoss(alpha=1.0)
-            m = 10  # Number of clusters (assume unique class labels are the clusters)
-            d = math.ceil(len(inputs) / m) 
-            # print(m)
-            # print(d)
-            ms_loss, _ = magnet_loss_func(latent_features, labels, m, d)
-            ce_loss = ce_criterion(outputs, labels)
-            loss = alpha_var.get()* ms_loss+ (1-alpha_var.get())*ce_loss
+            # Combine losses
+            loss = (1 - alpha_val - beta_val - gamma_val) * ce_loss + \
+                   alpha_val * feature_loss + \
+                   beta_var.get() * magnet_loss_value + \
+                   gamma_var.get() * single_point_loss
+
+
+            #print(f"CE loss: {ce_loss.item()}, Feature loss: {feature_loss.item()}, Total loss: {loss.item()}")
+
+            # Compute KL Divergence based on distance between features and their clusters
+            # Compute KL Divergence between student and teacher probabilities [distance between features and their clusters]
+            #kd_loss_features_centers = F.kl_div(F.log_softmax(student_probabilities / 3.0, dim=1),
+            #                   F.softmax(teacher_probabilities / 3.0, dim=1),
+            #                   reduction='batchmean') * (3.0 ** 2)
+
+            # Compute KL Divergence based on pairwise cluster distances
+            #kd_loss_centers = compute_kd_from_distances(student_distances, teacher_distances)
+
+            #kd_mse_loss = mse_loss(teacher_features, student_features)
+            #kd_similarity_loss = 1 - cosine_similarity(student_features, teacher_features).mean() 
+
+            #cluster_loss = mse_loss(student_distances, teacher_distances)
+
+            #total_learning_loss = kd_mse_loss + cluster_loss
+
+            #cross entropy/mse with teacher outputs(whole latent space of the movement after interaction) and student outputs(untouched) - train for 80-100 epochs, number of interactions - 5
+            #between interaction - 5,10, epochs
+
+            #try with smaller models and other datasets
+
+            #alignment of clusters in beginning
+            #try with the cluster(training in the background)
+            #pause training button
+
+
+            # Combine CE loss and KD loss
+            #loss = alpha_var.get() * ce_loss + (1 - alpha_var.get()) * (0.5*kd_loss_centers + 0.5*kd_loss_features_centers)
+
+            #loss = ((1 - alpha_var.get()) * ce_loss) + (alpha_var.get() * kd_loss_centers)
+
+            #loss = ((1 - alpha_var.get()) * ce_loss) + (alpha_var.get() * total_learning_loss)
+
 
             # if (i+1) % freq == 0:
             #     if loss_type == 'custom':
@@ -130,6 +272,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             running_loss += loss.item()
 
             # Calculate accuracy
+            predictions = student_outputs.argmax(dim=1)
             correct_predictions += (predictions == labels).sum().item()
             total_predictions += labels.size(0)
 
@@ -145,8 +288,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 total_predictions = 0
         
         # Validation after each epoch
-        val_accuracy, val_f1 = evaluate_model(model, valloader, device, selected_layer)
-        test_accuracy, test_f1 = evaluate_model(model, testloader, device, selected_layer)
+        val_accuracy, val_f1 = evaluate_model(student_model, valloader, device, selected_layer)
+        test_accuracy, test_f1 = evaluate_model(student_model, testloader, device, selected_layer)
         val_log_message = f"Epoch {epoch + 1} completed. Validation Accuracy: {val_accuracy:.2f}%, F1_Score: {val_f1:.3f}"
         test_log_message = f"Epoch {epoch + 1} completed. Test Accuracy: {test_accuracy:.2f}%, F1_Score: {test_f1:.3f}"
         print(val_log_message)
@@ -191,7 +334,7 @@ def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir):
     if not os.path.exists(report_path):
         with open(report_path, mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type"])
+            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type"]) #add parameters, loss, part losses as well
     
     with open(report_path, mode='a', newline='') as file:
         writer = csv.writer(file)

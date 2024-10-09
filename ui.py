@@ -15,9 +15,10 @@ from ui_control import create_info_labels, create_training_controls, create_visu
 from ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
 
 class UI:
-    def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type):
+    def __init__(self, root, teacher_model, student_model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type, visualization):
         self.root = root
-        self.model = model
+        self.teacher_model = teacher_model
+        self.student_model = student_model
         self.optimizer = optimizer
         self.trainloader = trainloader
         # self.trainloader_shuffled = trainloader_shuffled
@@ -28,6 +29,7 @@ class UI:
         self.dataset_name = dataset_name
         self.model_name = model_name
         self.loss_type = loss_type
+        self.visualization = visualization
 
         self.visualization_queue = queue.Queue()
         self.training_thread = None
@@ -114,7 +116,7 @@ class UI:
                 self.status_var.set("Paused")
 
     def run_training(self):
-        train_model(self.model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
+        train_model(self.teacher_model, self.student_model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
                     self.epoch_var.get(), self.freq_var.get(), self.alpha_var, 
                     self.beta_var, self.gamma_var, f"reports/{self.dataset_name}",
                     self.loss_type,
@@ -129,6 +131,7 @@ class UI:
 
     def on_epoch_end(self):
         self.pause_event.set()
+        self.teacher_model = self.student_model ###???
         self.update_visualization()
         self.training_button.config(text="Resume Training")
         self.status_var.set("Paused after N epochs")
@@ -174,10 +177,24 @@ class UI:
     def update_visualization(self):
         #selected_classes = self.get_selected_classes()
         if self.plot is None:
-            self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type, 
+            if self.visualization =='train':
+                self.plot = InteractivePlot(self.teacher_model, self.trainloader, self.current_plot_type, 
+                                        self.dataset_name, self.num_features.get(),
+                                        selected_layer=self.selected_layer)  
+            elif self.visualization =='validation':
+                self.plot = InteractivePlot(self.teacher_model, self.valloader, self.current_plot_type, 
+                                        self.dataset_name, self.num_features.get(),
+                                        selected_layer=self.selected_layer)  
+            elif self.visualization =='test':
+                self.plot = InteractivePlot(self.teacher_model, self.testloader, self.current_plot_type, 
                                         self.dataset_name, self.num_features.get(),
                                         selected_layer=self.selected_layer)    
-        self.plot.prepare_data()      
+            self.plot.prepare_data()   
+        else:
+            # Update existing plot object
+            self.plot.model = self.teacher_model
+            self.plot.plot_type = self.current_plot_type
+            self.plot.selected_layer = self.selected_layer
         #self.plot.selected_classes = selected_classes
         plot_data = self.plot.get_plot_data(self.current_plot_type)
         #plot_data['selected_point_index'] = self.selected_point_index

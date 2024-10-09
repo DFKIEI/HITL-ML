@@ -61,6 +61,9 @@ def display_scatter_plot(self, data, tab):
                c=data['labels'][incorrect_mask], cmap=cmap, alpha=0.8, s=50,
                edgecolor='black', linewidth=2.0)
 
+    self.original_points = data['features'].copy()
+    self.moved_points = None
+
     self.center_artists = []
     for i, label in enumerate(unique_labels):
         center = data['centers'][i]
@@ -75,6 +78,9 @@ def display_scatter_plot(self, data, tab):
     plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}')
     plt.xlabel('t-SNE feature 1')
     plt.ylabel('t-SNE feature 2')
+
+    # Set the original_2d_points in the InteractivePlot instance
+    self.plot.update_original_2d_points(self.original_points)
 
     def on_press(event):
         if event.inaxes is None:
@@ -99,9 +105,18 @@ def display_scatter_plot(self, data, tab):
     def on_motion(event):
         if self.dragging is None or event.inaxes is None:
             return
+
+        
+        
+
         old_center = np.array(data['centers'][self.dragging])
         new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
         delta = new_center - old_center
+
+
+        print(f"Moving cluster {self.dragging}")
+        print(f"Old center: {old_center}, New center: {new_center}")
+        print(f"Delta: {delta}")
 
         # Update the center position
         data['centers'][self.dragging] = new_center
@@ -117,6 +132,17 @@ def display_scatter_plot(self, data, tab):
         # Update misclassified points
         misclassified_scatter = ax.collections[1]  # The second scatter plot (for misclassified points)
         misclassified_scatter.set_offsets(data['features'][incorrect_mask])
+
+        # Store the full moved latent space
+        self.moved_points = data['features'].copy()
+
+        print(f"Max movement in latent space: {np.max(np.abs(self.moved_points - self.original_points))}")
+        print(f"Min movement in latent space: {np.min(np.abs(self.moved_points - self.original_points))}")
+
+        self.plot.update_latent_space(self.moved_points)
+
+        # Add this line to update the moved_2d_points directly
+        self.plot.moved_2d_points = self.moved_points
 
         self.plot.update_center(self.dragging, new_center)
         self.current_centers = self.plot.get_current_centers()

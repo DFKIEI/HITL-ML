@@ -109,60 +109,42 @@ def calculate_distance_loss_only_interaction(latent_features, labels, previous_c
         return 0, cluster_centers
    
 
-
 class MagnetLoss(nn.Module):
-    """
-    Magnet loss technique presented in the paper:
-    'Metric Learning with Adaptive Density Discrimination' by Oren Rippel, Manohar Paluri, Piotr Dollar, Lubomir Bourdev.
-
-    Args:
-        alpha (float): The cluster separation gap hyperparameter.
-    """
     def __init__(self, alpha=1.0):
         super(MagnetLoss, self).__init__()
         self.alpha = alpha
 
     def forward(self, r, classes, m, d):
-        # Ensure tensors are on the same device
         device = r.device
         dtype = torch.int64 if device.type == 'mps' else torch.long
 
         self.r = r
         self.classes = classes.to(dtype=dtype)
         self.clusters = torch.arange(0, float(m)).repeat(d).to(dtype=dtype)
-        # print(self.clusters.shape)
         self.cluster_classes = self.classes[0:m*d:d]
         self.n_clusters = m
 
-        # Take cluster means within the batch
         cluster_examples = dynamic_partition(self.r, self.clusters, self.n_clusters)
-
         cluster_means = torch.stack([torch.mean(x, dim=0) for x in cluster_examples])
-
         sample_costs = compute_euclidean_distance(cluster_means, expand_dims(r, 1))
 
         clusters_tensor = self.clusters.to(dtype=torch.float32)
         n_clusters_tensor = torch.arange(0, self.n_clusters).to(dtype=torch.float32)
 
         intra_cluster_mask = comparison_mask(clusters_tensor, n_clusters_tensor).to(dtype=torch.float32)
-        # print(intra_cluster_mask.shape)
-        # print(sample_costs.shape)
         intra_cluster_costs = torch.sum(intra_cluster_mask.to(device) * sample_costs.to(device), dim=1)
         
         N = r.size(0)
         variance = torch.sum(intra_cluster_costs) / float(N - 1)
-
         var_normalizer = -1 / (2 * variance**2)
 
-        # Compute numerator
         numerator = torch.exp(var_normalizer * intra_cluster_costs - self.alpha)
 
         classes_tensor = self.classes.to(dtype=torch.float32)
         cluster_classes_tensor = self.cluster_classes.to(dtype=torch.float32)
 
-        # Compute denominator
         diff_class_mask = comparison_mask(classes_tensor, cluster_classes_tensor).to(dtype=torch.float32)
-        diff_class_mask = 1 - diff_class_mask # Logical not
+        diff_class_mask = 1 - diff_class_mask
 
         denom_sample_costs = torch.exp(var_normalizer * sample_costs)
         denominator = torch.sum(diff_class_mask * denom_sample_costs, dim=1)
@@ -175,22 +157,16 @@ class MagnetLoss(nn.Module):
         return total_loss, losses
 
 def expand_dims(var, dim=0):
-    """ Similar to numpy.expand_dims """
     sizes = list(var.size())
     sizes.insert(dim, 1)
     return var.view(*sizes)
 
 def comparison_mask(a_labels, b_labels):
-    """ Computes boolean mask for distance comparisons """
-    # print(a_labels.shape)
     return torch.eq(expand_dims(a_labels, 1), expand_dims(b_labels, 0))
 
 def dynamic_partition(X, partitions, n_clusters):
-    """ Partitions the data into the number of cluster bins """
     cluster_bin = torch.chunk(X, n_clusters)
     return cluster_bin
 
 def compute_euclidean_distance(x, y):
-    """ Computes pairwise squared Euclidean distance """
     return torch.sum((x - y)**2, dim=2)
-
