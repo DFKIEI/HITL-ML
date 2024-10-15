@@ -41,3 +41,20 @@ teacher_logits - centers? batch? ?   use as teacher centers
 
 
 knowledge distillation loss = teacher_logits and student_logits [distance between centers of teachers and students]
+
+
+-----------------------------------------------------------------------------------------------------------------------
+
+
+cross entropy vs our approach
+check loss metrics to reduce[isolated experiments]
+classic mse loss(teacher and student)
+reduced dimensions[loss calculation] - mse loss and cross entropy with high dimensions
+
+
+
+
+
+[cross entropy with high dim] vs [cross entropy with high dim and mse with low dimensions]
+weight values in reference to the loss values
+

@@ -6,7 +6,7 @@ import numpy as np
 import os
 import csv
 import datetime
-from losses import custom_loss, external_loss
+from losses import custom_loss, external_loss, magnitude_direction_loss
 from tqdm import tqdm
 import traceback
 import time
@@ -18,6 +18,8 @@ from sklearn.cluster import KMeans
 import math
 from sklearn.metrics import f1_score
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
 
 from training_utils import calculate_class_weights
 from losses import custom_loss, MagnetLoss
@@ -75,10 +77,9 @@ def compute_cluster_probabilities(features, n_clusters, device):
     return probabilities, cluster_centers
 
 
-def train_model(teacher_model, student_model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, alpha_var, beta_var, gamma_var, report_dir, loss_type,
+def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, alpha_var, beta_var, gamma_var, report_dir, loss_type,
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot= None):
-    teacher_model.eval()
-    student_model.train()
+    model.train()
     # to address class imbalance
     # class_counts = np.bincount(trainloader.dataset.y_data)
     # class_weights = 1. / torch.tensor(class_counts, dtype=torch.float)
@@ -113,6 +114,10 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
         running_loss = 0.0
         correct_predictions = 0
         total_predictions = 0
+        feature_running_loss = 0.0
+        magnet_running_loss = 0.0
+        magnet_moved_running_loss = 0.0
+        ce_running_loss = 0.0
 
         if plot:
             plot.synchronize_state()
@@ -154,7 +159,7 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
 
 
             # Forward pass through the student model
-            student_outputs, student_features = student_model(inputs)
+            student_outputs, student_features = model(inputs)
 
             # Get the original and moved latent spaces
             
@@ -191,7 +196,9 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
             target_features = moved_high_dim_points[indices]
 
             # Compute the MSE loss for user interaction
-            feature_loss = mse_loss(student_features, target_features)
+            #feature_loss = mse_loss(student_features, target_features)
+
+            feature_loss = magnitude_direction_loss(student_features, target_features)
             if feature_loss is torch.tensor(float('nan'), device=device):
                 feature_loss = 0.0
                 alpha_val=0
@@ -200,6 +207,9 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
             m = 10  # Number of clusters (adjust as needed)
             d = math.ceil(len(inputs) / m)
             magnet_loss_value, _ = magnet_loss(student_features, labels, m, d)
+
+            # Compute an additional magnet loss using the target (moved) features
+            magnet_loss_moved, _ = magnet_loss(target_features, labels, m, d)
 
 
             #Third loss with magnet loss based on modified feature space - to force move the data points within the cluster
@@ -217,8 +227,8 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
             # Combine losses
             loss = (1 - alpha_val - beta_val - gamma_val) * ce_loss + \
                    alpha_val * feature_loss + \
-                   beta_var.get() * magnet_loss_value + \
-                   gamma_var.get() * single_point_loss
+                   beta_val * magnet_loss_value + \
+                   gamma_val * magnet_loss_moved
 
 
             #print(f"CE loss: {ce_loss.item()}, Feature loss: {feature_loss.item()}, Total loss: {loss.item()}")
@@ -270,6 +280,10 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+            feature_running_loss += feature_loss.item()
+            magnet_running_loss += magnet_loss_value.item()
+            magnet_moved_running_loss += magnet_loss_moved.item()
+            ce_running_loss += ce_loss.item()
 
             # Calculate accuracy
             predictions = student_outputs.argmax(dim=1)
@@ -278,9 +292,14 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
 
             if (i + 1) % freq == 0:
                 avg_loss = running_loss / freq
+                ce_avg_loss = ce_running_loss / freq
+                fr_avg_loss = feature_running_loss / freq
+                magnet_avg_loss = magnet_running_loss / freq
+                magnet_move_avg_loss = magnet_moved_running_loss / freq
                 accuracy = 100. * correct_predictions / total_predictions
                 log_message = f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.2f}%"
                 print(log_message)
+                print(f'CE Loss : {ce_avg_loss}, Feature Loss : {fr_avg_loss}, Magnet loss : {magnet_avg_loss}, Magnet movement loss : {magnet_move_avg_loss}')
                 if log_callback:
                     log_callback(log_message)
                 running_loss = 0.0
@@ -288,8 +307,8 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
                 total_predictions = 0
         
         # Validation after each epoch
-        val_accuracy, val_f1 = evaluate_model(student_model, valloader, device, selected_layer)
-        test_accuracy, test_f1 = evaluate_model(student_model, testloader, device, selected_layer)
+        val_accuracy, val_f1 = evaluate_model(model, valloader, device, selected_layer)
+        test_accuracy, test_f1 = evaluate_model(model, testloader, device, selected_layer)
         val_log_message = f"Epoch {epoch + 1} completed. Validation Accuracy: {val_accuracy:.2f}%, F1_Score: {val_f1:.3f}"
         test_log_message = f"Epoch {epoch + 1} completed. Test Accuracy: {test_accuracy:.2f}%, F1_Score: {test_f1:.3f}"
         print(val_log_message)
@@ -303,10 +322,13 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
             log_callback(test_log_message)
         
         # Save report
-        #save_report(epoch, running_loss / len(trainloader), val_accuracy, "custom", report_dir)
+        save_report(epoch, running_loss / len(trainloader), val_accuracy, "custom", report_dir, alpha_val, beta_val, gamma_val, feature_running_loss, magnet_running_loss, magnet_moved_running_loss)
         
         #if epoch_end_callback:
         #    epoch_end_callback()
+
+
+        #visualize_clusters(student_model, trainloader, device, epoch)
         
         # Pause after N epochs
         if pause_after_n_epochs and (epoch + 1) % pause_after_n_epochs == 0:
@@ -325,7 +347,7 @@ def train_model(teacher_model, student_model, optimizer, trainloader, valloader,
 
     print('Finished Training')
 
-def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir):
+def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_val, beta_val, gamma_val, feature_running_loss, magnet_running_loss, magnet_moved_running_loss):
     if not os.path.exists(report_dir):
         os.makedirs(report_dir)
     
@@ -334,11 +356,37 @@ def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir):
     if not os.path.exists(report_path):
         with open(report_path, mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type"]) #add parameters, loss, part losses as well
+            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type", "Alpha", "Beta", "Gamma", "Feature Loss", "Magnet Loss", "Magnet movement loss"]) #add parameters, loss, part losses as well
     
     with open(report_path, mode='a', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow([epoch+1, train_loss, val_accuracy, loss_type])
+        writer.writerow([epoch+1, train_loss, val_accuracy, loss_type, alpha_val, beta_val, gamma_val, feature_running_loss, magnet_running_loss, magnet_moved_running_loss])
+
+def visualize_clusters(model, dataloader, device, epoch):
+    model.eval()
+    features = []
+    labels = []
+    with torch.no_grad():
+        for inputs, batch_labels in dataloader:
+            inputs = inputs.to(device)
+            _, batch_features = model(inputs)
+            features.append(batch_features.cpu())
+            labels.append(batch_labels)
+    
+    features = torch.cat(features, dim=0)
+    labels = torch.cat(labels, dim=0)
+    
+    # Apply t-SNE for dimensionality reduction
+    tsne = TSNE(n_components=2, random_state=42)
+    features_2d = tsne.fit_transform(features)
+    
+    # Plot the clusters
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(features_2d[:, 0], features_2d[:, 1], c=labels, cmap='viridis')
+    plt.colorbar(scatter)
+    plt.title(f'Cluster Visualization at Epoch {epoch}')
+    plt.savefig(f'cluster_visualization_epoch_{epoch}.png')
+    plt.close()
 
 def evaluate_model(model, dataloader, device, selected_layer=None):
     model.eval()

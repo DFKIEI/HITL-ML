@@ -114,7 +114,7 @@ class MagnetLoss(nn.Module):
         super(MagnetLoss, self).__init__()
         self.alpha = alpha
 
-    def forward(self, r, classes, m, d):
+    def forward(self, r, classes, m, d, target_features=None):
         device = r.device
         dtype = torch.int64 if device.type == 'mps' else torch.long
 
@@ -124,8 +124,14 @@ class MagnetLoss(nn.Module):
         self.cluster_classes = self.classes[0:m*d:d]
         self.n_clusters = m
 
-        cluster_examples = dynamic_partition(self.r, self.clusters, self.n_clusters)
+        # Use target_features if provided, otherwise use r
+        features_to_use = target_features if target_features is not None else r
+
+        # Take cluster means within the batch
+        cluster_examples = dynamic_partition(features_to_use, self.clusters, self.n_clusters)
         cluster_means = torch.stack([torch.mean(x, dim=0) for x in cluster_examples])
+
+        # Compute distances to cluster means
         sample_costs = compute_euclidean_distance(cluster_means, expand_dims(r, 1))
 
         clusters_tensor = self.clusters.to(dtype=torch.float32)
@@ -138,13 +144,15 @@ class MagnetLoss(nn.Module):
         variance = torch.sum(intra_cluster_costs) / float(N - 1)
         var_normalizer = -1 / (2 * variance**2)
 
+        # Compute numerator
         numerator = torch.exp(var_normalizer * intra_cluster_costs - self.alpha)
 
         classes_tensor = self.classes.to(dtype=torch.float32)
         cluster_classes_tensor = self.cluster_classes.to(dtype=torch.float32)
 
+        # Compute denominator
         diff_class_mask = comparison_mask(classes_tensor, cluster_classes_tensor).to(dtype=torch.float32)
-        diff_class_mask = 1 - diff_class_mask
+        diff_class_mask = 1 - diff_class_mask # Logical not
 
         denom_sample_costs = torch.exp(var_normalizer * sample_costs)
         denominator = torch.sum(diff_class_mask * denom_sample_costs, dim=1)
@@ -156,6 +164,7 @@ class MagnetLoss(nn.Module):
 
         return total_loss, losses
 
+# Helper functions (keep these as they were)
 def expand_dims(var, dim=0):
     sizes = list(var.size())
     sizes.insert(dim, 1)
@@ -170,3 +179,32 @@ def dynamic_partition(X, partitions, n_clusters):
 
 def compute_euclidean_distance(x, y):
     return torch.sum((x - y)**2, dim=2)
+    
+def magnitude_direction_loss(x, y, alpha=0.5):
+    """
+    Custom loss function that considers both magnitude and direction.
+    
+    Args:
+    x, y: The two sets of features to compare
+    alpha: Weight balancing factor between Euclidean distance and cosine similarity
+           alpha = 0 considers only direction, alpha = 1 considers only magnitude
+    
+    Returns:
+    Weighted sum of normalized Euclidean distance and cosine distance
+    """
+    # Euclidean distance for magnitude
+    euclidean_dist = F.mse_loss(x, y)
+    
+    # Cosine similarity for direction
+    cos_sim = F.cosine_similarity(x, y).mean()
+    cos_dist = 1 - cos_sim  # Convert to a distance
+    
+    # Normalize Euclidean distance to [0, 1] range
+    # We use the maximum possible Euclidean distance as a normalization factor
+    max_dist = torch.sqrt(torch.sum(torch.max(x, dim=0)[0]**2 + torch.max(y, dim=0)[0]**2))
+    norm_euclidean_dist = euclidean_dist / max_dist
+    
+    # Combine the two distances
+    combined_loss = alpha * norm_euclidean_dist + (1 - alpha) * cos_dist
+    
+    return combined_loss

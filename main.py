@@ -30,13 +30,14 @@ def main():
     # trainloader_shuffled, trainloader_class, valloader, testloader, num_classes, input_shape = load_dataset(args.dataset, args.batch)
 
     # Initialize model
-    teacher_model = get_model(args.model, input_shape, num_classes).to(device)
-    student_model = get_model(args.model, input_shape, num_classes).to(device)
-    optimizer = optim.Adam(student_model.parameters(), lr=0.001, weight_decay=1e-5) # add l2 regularization
+    #teacher_model = get_model(args.model, input_shape, num_classes).to(device)
+    #student_model = get_model(args.model, input_shape, num_classes).to(device)
+    model = get_model(args.model, input_shape, num_classes).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5) # add l2 regularization
 
     # Create UI
     root = tk.Tk()
-    UI(root, teacher_model, student_model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss, args.visualize)
+    UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss, args.visualize)
     # UI(root, model, optimizer, trainloader_shuffled, trainloader_class, valloader, testloader, device, args.dataset, args.model, args.loss)
     root.mainloop()
 
