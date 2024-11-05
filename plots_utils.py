@@ -12,9 +12,9 @@ def extract_latent_features(self):
         for inputs, labels in self.dataloader:
             inputs = inputs.to(next(self.model.parameters()).device)
             if self.selected_layer:
-                outputs, features = self.model(inputs, self.selected_layer)
+                outputs, _, features = self.model(inputs, self.selected_layer)
             else:
-                outputs, features = self.model(inputs)
+                outputs, _, features = self.model(inputs)
 
             predictions = outputs.argmax(dim=1)
 

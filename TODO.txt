@@ -48,7 +48,7 @@ knowledge distillation loss = teacher_logits and student_logits [distance betwee
 
 cross entropy vs our approach
 check loss metrics to reduce[isolated experiments]
-classic mse loss(teacher and student)
+classic mse loss(teacher and student) yes
 reduced dimensions[loss calculation] - mse loss and cross entropy with high dimensions
 
 

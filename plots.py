@@ -176,7 +176,10 @@ class InteractivePlot:
         return self.original_2d_points
 
     def get_moved_2d_points(self):
-        return self.moved_2d_points
+        if self.moved_2d_points is not None:
+            return self.moved_2d_points
+        else:
+            return self.original_2d_points
 
     def update_original_2d_points(self, original_2d_points):
         self.original_2d_points = original_2d_points

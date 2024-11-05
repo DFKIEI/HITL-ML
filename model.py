@@ -214,6 +214,8 @@ class SmallCNN_CIFAR10(nn.Module):
         # Fully Connected layers
         self.fc1 = nn.Linear(256 * 4 * 4, 512)
         self.fc2 = nn.Linear(512, num_classes)
+
+        self.projection_layer = nn.Linear(256*4*4,2)
         
         self.dropout4 = nn.Dropout(0.5)
         
@@ -235,13 +237,15 @@ class SmallCNN_CIFAR10(nn.Module):
         
         x = torch.flatten(x, 1)
         latent_features = x
+
+        projected_2d_features = self.projection_layer(latent_features)
         
         # Fully connected layers
         x = F.relu(self.fc1(x))
         x = self.dropout4(x)
         output = self.fc2(x)
         
-        return output, latent_features
+        return output, projected_2d_features, latent_features
 
     
     @torch.no_grad()
