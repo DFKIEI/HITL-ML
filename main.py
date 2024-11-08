@@ -33,6 +33,7 @@ def main():
     #teacher_model = get_model(args.model, input_shape, num_classes).to(device)
     #student_model = get_model(args.model, input_shape, num_classes).to(device)
     model = get_model(args.model, input_shape, num_classes).to(device)
+    torch.manual_seed(42)
     optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5) # add l2 regularization
 
     # Create UI

@@ -83,12 +83,12 @@ class InteractivePlot:
         self.original_high_dim_points = self.selected_features
 
         print("Apply PCA")
-        self.pca = PCA(n_components=min(20, self.selected_features.shape[1]))
+        self.pca = PCA(n_components=min(2, self.selected_features.shape[1]))
         self.pca_features = self.pca.fit_transform(self.selected_features)
 
-        print("Apply MDS")
-        self.mds = MDS(n_components=2, random_state=42, n_init=1, n_jobs=1, metric=True, normalized_stress='auto')
-        self.mds_features = self.mds.fit_transform(self.pca_features)
+        #print("Apply MDS")
+        #self.mds = MDS(n_components=2, random_state=42, n_init=1, n_jobs=1, metric=True, normalized_stress='auto')
+        #self.mds_features = self.mds.fit_transform(self.pca_features)
         # self.tsne = TSNE(
         #     n_components=2,
         #     perplexity=30,
@@ -102,11 +102,11 @@ class InteractivePlot:
         # Cache the results
        
 
-        self.selected_features = self.mds.fit_transform(self.selected_features)
+        self.selected_features = self.pca_features #self.mds.fit_transform(self.selected_features)
 
         # Store both PCA and MDS features
         self.previous_pca_features = self.pca_features
-        self.previous_mds_features = self.mds_features
+        #self.previous_mds_features = self.mds_features
 
         self.selected_labels = all_labels[self.samples_to_track]
         self.selected_predicted_labels = all_predicted_labels[self.samples_to_track]
@@ -177,9 +177,11 @@ class InteractivePlot:
 
     def get_moved_2d_points(self):
         if self.moved_2d_points is not None:
-            return self.moved_2d_points
+            mod_inputs = self.pca.inverse_transform(self.moved_2d_points)
+            return mod_inputs
         else:
-            return self.original_2d_points
+            mod_inputs = self.pca.inverse_transform(self.original_2d_points)
+            return mod_inputs
 
     def update_original_2d_points(self, original_2d_points):
         self.original_2d_points = original_2d_points

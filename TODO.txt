@@ -58,3 +58,18 @@ reduced dimensions[loss calculation] - mse loss and cross entropy with high dime
 [cross entropy with high dim] vs [cross entropy with high dim and mse with low dimensions]
 weight values in reference to the loss values
 
+
+
+
+-------------------------------------------------
+movement to all samples
+simplify core training
+lr and optimizer
+random seed fixed
+dim reduction - random state
+
+baseline - static
+
+
+linear projection for visualization - try
+pca only
