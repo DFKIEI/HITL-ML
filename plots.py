@@ -69,55 +69,21 @@ class InteractivePlot:
 
     def prepare_data(self):
         print("Extract Latent Features")
-        all_latent_features, all_labels, all_predicted_labels = extract_latent_features(self)
+        features_2d, latent_features, labels, predicted_labels = extract_latent_features(self)
 
-        self.labels = all_labels
-        
-        self.selected_features = all_latent_features[self.samples_to_track]
+        self.labels = labels
+        self.selected_features = features_2d[self.samples_to_track]  # Use 2D features directly
+        self.original_high_dim_points = latent_features[self.samples_to_track]
 
-        # Handle 3D features from convolutional layers
-        if len(self.selected_features.shape) > 2:
-            # Flatten the features
-            self.selected_features = self.selected_features.reshape(self.selected_features.shape[0], -1)
+        # Cache results
+        self.selected_labels = labels[self.samples_to_track]
+        self.selected_predicted_labels = predicted_labels[self.samples_to_track]
 
-        self.original_high_dim_points = self.selected_features
-
-        print("Apply PCA")
-        self.pca = PCA(n_components=min(2, self.selected_features.shape[1]))
-        self.pca_features = self.pca.fit_transform(self.selected_features)
-
-        #print("Apply MDS")
-        #self.mds = MDS(n_components=2, random_state=42, n_init=1, n_jobs=1, metric=True, normalized_stress='auto')
-        #self.mds_features = self.mds.fit_transform(self.pca_features)
-        # self.tsne = TSNE(
-        #     n_components=2,
-        #     perplexity=30,
-        #     n_iter=250,
-        #     method='barnes_hut',
-        #     angle=0.8,
-        #     init='pca',
-        #     random_state=42
-        # )
-
-        # Cache the results
-       
-
-        self.selected_features = self.pca_features #self.mds.fit_transform(self.selected_features)
-
-        # Store both PCA and MDS features
-        self.previous_pca_features = self.pca_features
-        #self.previous_mds_features = self.mds_features
-
-        self.selected_labels = all_labels[self.samples_to_track]
-        self.selected_predicted_labels = all_predicted_labels[self.samples_to_track]
-
-        # Compute feature importance and cluster centers as usual
+        # Compute feature importance and cluster centers
         print("Calculate Feature Importance and Cluster Center")
-        self.feature_importance = compute_feature_importance(self, self.imp_features)
         self.num_classes = len(np.unique(self.selected_labels))
         self.cluster_centers = calculate_cluster_centers(self)
-
-        
+    
         self.original_2d_points = self.selected_features
 
     def get_current_high_dim_points(self):
@@ -177,11 +143,9 @@ class InteractivePlot:
 
     def get_moved_2d_points(self):
         if self.moved_2d_points is not None:
-            mod_inputs = self.pca.inverse_transform(self.moved_2d_points)
-            return mod_inputs
+            return self.moved_2d_points
         else:
-            mod_inputs = self.pca.inverse_transform(self.original_2d_points)
-            return mod_inputs
+            return self.original_2d_points
 
     def update_original_2d_points(self, original_2d_points):
         self.original_2d_points = original_2d_points

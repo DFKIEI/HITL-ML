@@ -5,42 +5,35 @@ from ui_display import get_label_names
 def extract_latent_features(self):
     self.model.eval()
     all_features = []
+    all_2d_features = []
     all_labels = []
     all_predictions = []
 
     with torch.no_grad():
         for inputs, labels in self.dataloader:
             inputs = inputs.to(next(self.model.parameters()).device)
-            if self.selected_layer:
-                outputs, _, features = self.model(inputs, self.selected_layer)
-            else:
-                outputs, _, features = self.model(inputs)
+            outputs, features_2d, features = self.model(inputs)
 
             predictions = outputs.argmax(dim=1)
 
-            # Handle 3D features from convolutional layers
             if len(features.shape) > 2:
-                features = features.view(features.size(0), -1)  # Flatten to 2D
+                features = features.view(features.size(0), -1)
 
-        
             all_features.append(features.cpu().numpy())
+            all_2d_features.append(features_2d.cpu().numpy())
             all_labels.append(labels.numpy())
             all_predictions.append(predictions.cpu().numpy())
     
     latent_features = np.concatenate(all_features)
+    features_2d = np.concatenate(all_2d_features)
     labels = np.concatenate(all_labels)
     predicted_labels = np.concatenate(all_predictions)
     
-    # print(f"Unique true labels: {np.unique(labels)}")
-    # print(f"True label counts: {np.bincount(labels)}")
-    # print(f"Unique predicted labels: {np.unique(predicted_labels)}")
-    # print(f"Predicted label counts: {np.bincount(predicted_labels)}")
-    # Ensure all outputs are 1D arrays
     latent_features = latent_features.reshape(latent_features.shape[0], -1)
     labels = labels.ravel()
     predicted_labels = predicted_labels.ravel()
 
-    return latent_features, labels, predicted_labels
+    return features_2d, latent_features, labels, predicted_labels
 
 def get_scatter_data(self):
 
@@ -193,9 +186,13 @@ def calculate_cluster_centers(self):
         class_features = self.selected_features[mask]
 
         if len(class_features) > 0:
-            center = np.mean(class_features, axis=0)
+            if torch.is_tensor(class_features):
+                center = class_features.mean(dim=0)  # For torch tensors
+                center = center.cpu().numpy() if center.is_cuda else center.numpy()
+            else:
+                center = np.mean(class_features, axis=0)  # For numpy arrays
         else:
-            center = np.zeros(2)  # Default center if no points for this class
+            center = np.zeros(2)  # Default center
 
         cluster_centers.append(center)
 
