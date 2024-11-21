@@ -239,6 +239,7 @@ class SmallCNN_CIFAR10(nn.Module):
         latent_features = x
 
         projected_2d_features = self.projection_layer(latent_features)
+        print(f"Projected features range : {projected_2d_features.min().item()}, {projected_2d_features.max().item()}")
         
         # Fully connected layers
         x = F.relu(self.fc1(x))

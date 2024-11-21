@@ -19,8 +19,17 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 alpha_var, beta_var, gamma_var, report_dir, loss_type,
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, 
                 get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None):
-    model.train()
     ce_criterion = nn.CrossEntropyLoss()
+
+    for param in model.projection_layer.parameters():
+        param.requires_grad = False
+
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()), 
+        lr=0.001
+    )
+
+
 
     model.train()
 
