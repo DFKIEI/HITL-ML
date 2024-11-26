@@ -46,13 +46,24 @@ class InteractivePlot:
 
         labels = np.array(labels)
         unique_labels = np.unique(labels)
-        num_samples_per_class = 10 #// len(unique_labels)
         selected_indices = []
+        num_samples_per_class = 10 # can be user input
 
+        # Find minimum number of samples across all classes
+        min_samples = float('inf')
         for label in unique_labels:
             indices = np.where(labels == label)[0]
-            selected_indices.extend(np.random.choice(indices, num_samples_per_class, replace=False))
+            min_samples = min(min_samples, len(indices))
+        
+        # Use either the original num_samples_per_class or the minimum available samples
+        samples_to_take = min(num_samples_per_class, min_samples)
+        self.samples_per_class = samples_to_take
 
+        # Select samples for each class
+        for label in unique_labels:
+            indices = np.where(labels == label)[0]
+            selected_indices.extend(np.random.choice(indices, samples_to_take, replace=False))
+        
         return selected_indices
     
     def features_similar(self, features1, features2):

@@ -15,7 +15,7 @@ class CNN_PAMAP2(nn.Module):
         self.conv3 = nn.Conv1d(hidden[1], hidden[2], kernel_size=kernel3)
         self.dropout3 = nn.Dropout(dropout)
         self.global_max_pool = nn.AdaptiveMaxPool1d(output_size=1)
-        self.global_avg_pool = nn.AdaptiveAvgPool1d(output_size=1)  # Global Average Pooling for intermediate layers
+        self.global_avg_pool = nn.AdaptiveAvgPool1d(output_size=1)
         self.num_classes = num_classes
 
         # Classifier head
@@ -25,6 +25,20 @@ class CNN_PAMAP2(nn.Module):
         self.projection1 = nn.Linear(hidden[0], num_classes)
         self.projection2 = nn.Linear(hidden[1], num_classes)
         self.projection3 = nn.Linear(hidden[2], num_classes)
+
+        # Learnable scale parameter
+        self.scale = nn.Parameter(torch.ones(1) * 10.0)
+
+        # Modified projection layer
+        self.projection_layer = nn.Sequential(
+            nn.Linear(hidden[3], 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Linear(256, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Linear(64, 2)
+        )
 
     def forward(self, x, layer=None):
         x = x.permute(0, 2, 1)
@@ -40,8 +54,23 @@ class CNN_PAMAP2(nn.Module):
         x = torch.flatten(self.global_max_pool(x), start_dim=1)
 
         latent_features = torch.relu(self.dense1(x))
+        
+        # Get latent features statistics
+        latent_mean = torch.mean(latent_features)
+        latent_std = torch.std(latent_features)
+        
+        # Project and rescale to match latent statistics
+        projected_2d_features = self.projection_layer(latent_features)
+        
+        # Normalize projected features to same scale as latent
+        projected_mean = torch.mean(projected_2d_features)
+        projected_std = torch.std(projected_2d_features)
+        projected_2d_features = (projected_2d_features - projected_mean) / (projected_std + 1e-8)
+        projected_2d_features = projected_2d_features * latent_std + latent_mean
+        #print(f"Projected features min : {projected_2d_features.min().item()}, max : {projected_2d_features.max().item()}")
+        
         output = self.dense2(latent_features)
-        return output, latent_features
+        return output, projected_2d_features, latent_features
 
     @torch.no_grad()
     def predict(self, x):
@@ -215,6 +244,9 @@ class SmallCNN_CIFAR10(nn.Module):
         self.fc1 = nn.Linear(256 * 4 * 4, 512)
         self.fc2 = nn.Linear(512, num_classes)
 
+        # Learnable scale parameter
+        self.scale = nn.Parameter(torch.ones(1) * 10.0)
+
         self.projection_layer = nn.Linear(256*4*4,2)
         
         self.dropout4 = nn.Dropout(0.5)
@@ -238,9 +270,20 @@ class SmallCNN_CIFAR10(nn.Module):
         x = torch.flatten(x, 1)
         latent_features = x
 
-        projected_2d_features = self.projection_layer(latent_features)
-        print(f"Projected features range : {projected_2d_features.min().item()}, {projected_2d_features.max().item()}")
+        # Get latent features statistics
+        latent_mean = torch.mean(latent_features)
+        latent_std = torch.std(latent_features)
         
+        # Project and rescale to match latent statistics
+        projected_2d_features = self.projection_layer(latent_features)
+        
+        # Normalize projected features to same scale as latent
+        projected_mean = torch.mean(projected_2d_features)
+        projected_std = torch.std(projected_2d_features)
+        projected_2d_features = (projected_2d_features - projected_mean) / (projected_std + 1e-8)
+        projected_2d_features = projected_2d_features * latent_std + latent_mean
+        #print(f"Projected features min : {projected_2d_features.min().item()}, max : {projected_2d_features.max().item()}")
+
         # Fully connected layers
         x = F.relu(self.fc1(x))
         x = self.dropout4(x)

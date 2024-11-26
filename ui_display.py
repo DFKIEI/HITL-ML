@@ -96,9 +96,9 @@ def display_scatter_plot(self, data, tab):
             new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
             delta = new_center - old_center
 
-            print(f"Moving cluster {self.dragging}")
-            print(f"Old center: {old_center}, New center: {new_center}")
-            print(f"Delta: {delta}")
+            #print(f"Moving cluster {self.dragging}")
+            #print(f"Old center: {old_center}, New center: {new_center}")
+            #print(f"Delta: {delta}")
 
             data['centers'][self.dragging] = new_center
             self.center_artists[self.dragging].set_offsets(new_center)
@@ -121,16 +121,39 @@ def display_scatter_plot(self, data, tab):
             if incorrect_mask[self.dragging_point]:
                 ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
 
-            print(f"Moving point {self.dragging_point} to {new_pos}")
+            #print(f"Moving point {self.dragging_point} to {new_pos}")
 
         if self.dragging is not None or self.dragging_point is not None:
             self.plot.update_latent_space(self.moved_points)
             self.plot.moved_2d_points = self.moved_points
             fig.canvas.draw_idle()
 
+    def on_double_click(event):
+        if event.inaxes is None:
+            return
+        for i, artist in enumerate(self.center_artists):
+            if artist.contains(event)[0]:
+                center = data['centers'][i]
+                mask = data['labels'] == unique_labels[i]
+                
+                # Move all points of this class to the center
+                self.moved_points[mask] = np.tile(center, (np.sum(mask), 1))
+                
+                # Update scatter plot
+                scatter.set_offsets(self.moved_points)
+                if np.any(incorrect_mask[mask]):
+                    ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
+                
+                # Update the latent space
+                self.plot.update_latent_space(self.moved_points)
+                self.plot.moved_2d_points = self.moved_points
+                fig.canvas.draw_idle()
+                return
+
     fig.canvas.mpl_connect('button_press_event', on_press)
     fig.canvas.mpl_connect('button_release_event', on_release)
     fig.canvas.mpl_connect('motion_notify_event', on_motion)
+    fig.canvas.mpl_connect('button_press_event', lambda event: on_double_click(event) if event.dblclick else None)
 
     display_plot(self, fig, tab)
 

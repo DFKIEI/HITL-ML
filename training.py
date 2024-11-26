@@ -21,13 +21,13 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None):
     ce_criterion = nn.CrossEntropyLoss()
 
-    for param in model.projection_layer.parameters():
-        param.requires_grad = False
+    #for param in model.projection_layer.parameters():
+    #    param.requires_grad = False
 
-    optimizer = torch.optim.Adam(
-        filter(lambda p: p.requires_grad, model.parameters()), 
-        lr=0.001
-    )
+    #optimizer = torch.optim.Adam(
+    #    filter(lambda p: p.requires_grad, model.parameters()), 
+    #    lr=0.001
+    #)
 
 
 
@@ -41,11 +41,11 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             distances.append(dists)
         return torch.stack(distances)
 
-    def compute_ideal_structure(moved_points):
+    def compute_ideal_structure(moved_points, samples_per_class, num_classes):
         """Extract mean and spread of each class"""
         class_info = {}
-        num_classes = 10
-        points_per_class = 10
+        num_classes = num_classes
+        points_per_class = samples_per_class
         
         for c in range(num_classes):
             start_idx = c * points_per_class
@@ -127,7 +127,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         total_predictions = 0
 
         moved_2d_points = torch.tensor(plot.get_moved_2d_points(), dtype=torch.float32, device=device)
-        ideal_structure = compute_ideal_structure(moved_2d_points)
+        ideal_structure = compute_ideal_structure(moved_2d_points, plot.samples_per_class, plot.num_classes)
 
 
         def get_random_modified_batch(modified_data, batch_size=60):
@@ -159,8 +159,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             inputs, labels = inputs.to(device), labels.to(device)
 
             # Get a matching batch of user-modified data
-            mod_inputs = get_random_modified_batch(moved_2d_points,batch_size)
-            mod_inputs = mod_inputs.to(device)
+            #mod_inputs = get_random_modified_batch(moved_2d_points,batch_size)
+            #mod_inputs = mod_inputs.to(device)
 
             optimizer.zero_grad()
 
@@ -175,7 +175,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             interaction_loss = relative_distance_loss(
                 reduced_features, labels, ideal_structure) * 100.0
 
-            loss = (1-alpha_val)*ce_loss + alpha_val * interaction_loss
+            scale_reg = 0.1 * torch.abs(1.0 - model.scale)  # Regularize scale to stay close to 1
+            loss = (1-alpha_val)*ce_loss + alpha_val * interaction_loss + scale_reg
 
             #loss = ce_loss
             
