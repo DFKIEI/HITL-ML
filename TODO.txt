@@ -73,3 +73,16 @@ baseline - static
 
 linear projection for visualization - try
 pca only
+
+
+------
+store model after traditional trainging - pretraining
+experiments with freezing - checkbox for freezing/unfreezing
+
+freezing from beginning/start
+projection layer learning? -- freezed?
+
+learning for high dim
+
+1. freezing from beginning
+2. freezing after traditional training

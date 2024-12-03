@@ -6,6 +6,7 @@ import threading
 import queue
 import matplotlib
 from torch.utils import data
+import os
 matplotlib.use('TkAgg')
 
 
@@ -13,6 +14,7 @@ from plots import InteractivePlot
 from training import train_model
 from ui_control import create_info_labels, create_training_controls, create_visualization_controls
 from ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
+from training_utils import find_latest_checkpoint, load_checkpoint
 
 class UI:
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type, visualization):
@@ -31,6 +33,17 @@ class UI:
         self.model_name = model_name
         self.loss_type = loss_type
         self.visualization = visualization
+
+        # Load checkpoint first
+        checkpoint_dir = f"models/{self.dataset_name}"
+        if os.path.exists(checkpoint_dir):
+            latest_checkpoint = find_latest_checkpoint(checkpoint_dir)
+            if latest_checkpoint:
+                try:
+                    _, loss_info = load_checkpoint(self.model, self.optimizer, latest_checkpoint)
+                    print(f"Loaded checkpoint with Val Accuracy: {loss_info['val_accuracy']:.2f}%")
+                except Exception as e:
+                    print(f"Error loading checkpoint: {str(e)}")
 
         self.visualization_queue = queue.Queue()
         self.training_thread = None
@@ -128,7 +141,8 @@ class UI:
                     pause_after_n_epochs=self.pause_epochs_var.get(),
                     selected_layer=self.selected_layer,
                     centers=True,
-                    plot = self.plot)
+                    plot = self.plot,
+                    checkpoint_dir=f"models/{self.dataset_name}")
 
     def on_epoch_end(self):
         self.pause_event.set()

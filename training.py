@@ -12,17 +12,22 @@ from sklearn.metrics import f1_score
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import random
+from training_utils import save_checkpoint
+
+
 
 
 
 def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, 
                 alpha_var, beta_var, gamma_var, report_dir, loss_type,
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, 
-                get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None):
+                get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None,
+                checkpoint_dir=None):
+
     ce_criterion = nn.CrossEntropyLoss()
 
-    #for param in model.projection_layer.parameters():
-    #    param.requires_grad = False
+    for param in model.projection_layer.parameters():
+        param.requires_grad = False
 
     #optimizer = torch.optim.Adam(
     #    filter(lambda p: p.requires_grad, model.parameters()), 
@@ -32,14 +37,6 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
 
     model.train()
-
-    def compute_pairwise_distances(points_a, points_b):
-        """Manually compute pairwise distances"""
-        distances = []
-        for p1 in points_a:
-            dists = torch.norm(p1.unsqueeze(0) - points_b, dim=1)
-            distances.append(dists)
-        return torch.stack(distances)
 
     def compute_ideal_structure(moved_points, samples_per_class, num_classes):
         """Extract mean and spread of each class"""
@@ -129,19 +126,6 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         moved_2d_points = torch.tensor(plot.get_moved_2d_points(), dtype=torch.float32, device=device)
         ideal_structure = compute_ideal_structure(moved_2d_points, plot.samples_per_class, plot.num_classes)
 
-
-        def get_random_modified_batch(modified_data, batch_size=60):
-            # Ensure modified_data is a list and sample 60 points randomly
-            modified_data = list(modified_data)
-            actual_batch_size = min(len(modified_data), batch_size)
-            batch = random.sample(modified_data, batch_size)
-
-            # Assuming `batch` consists of tensors or lists of tensors, extract features
-            batch_inputs = [item for item in batch]  # Unpack batch items into a list of tensors
-
-            # Stack the tensors along a new dimension to create a batch
-            return torch.stack(batch_inputs)
-
         for i, (inputs, labels) in enumerate(trainloader):
             batch_size = inputs.size(0)
             if len(inputs) % 10 != 0:
@@ -173,7 +157,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
             # Apply structure to all points
             interaction_loss = relative_distance_loss(
-                reduced_features, labels, ideal_structure) * 100.0
+                reduced_features, labels, ideal_structure) #* 100.0
 
             scale_reg = 0.1 * torch.abs(1.0 - model.scale)  # Regularize scale to stay close to 1
             loss = (1-alpha_val)*ce_loss + alpha_val * interaction_loss + scale_reg
@@ -227,6 +211,17 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
         # Handle pause after N epochs
         if pause_after_n_epochs and (epoch + 1) % pause_after_n_epochs == 0:
+            if checkpoint_dir:
+                loss_info = {
+                    'running_loss': running_loss,
+                    'ce_loss': ce_running_loss,
+                    'interaction_loss': interaction_running_loss,
+                    'val_accuracy': val_accuracy,
+                    'test_accuracy': test_accuracy
+                }
+                save_checkpoint(model, optimizer, epoch + 1, checkpoint_dir, loss_info)
+                if log_callback:
+                    log_callback(f"Saved checkpoint at epoch {epoch + 1}")
             if epoch_end_callback:
                 epoch_end_callback()
             if pause_event:
@@ -241,35 +236,6 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                         return
 
     print('Finished Training')
-
-def visualize_adaptation(model, dataloader, target_points, projection_manager, device, epoch, save_dir): #not used
-    model.eval()
-    all_features = []
-    all_labels = []
-    
-    with torch.no_grad():
-        for inputs, labels in dataloader:
-            inputs = inputs.to(device)
-            _, features = model(inputs)
-            projected = projection_manager.project_to_2d(features)
-            all_features.append(projected.cpu().numpy())
-            all_labels.extend(labels.numpy())
-    
-    current_points = np.concatenate(all_features, axis=0)
-    target_points = target_points.cpu().numpy()
-    
-    plt.figure(figsize=(15, 5))
-    
-    plt.subplot(121)
-    plt.scatter(current_points[:, 0], current_points[:, 1], c=all_labels, alpha=0.6)
-    plt.title(f'Current Features (Epoch {epoch})')
-    
-    plt.subplot(122)
-    plt.scatter(target_points[:, 0], target_points[:, 1], c=all_labels, alpha=0.6)
-    plt.title('Target Features')
-    
-    plt.savefig(f'{save_dir}/adaptation_epoch_{epoch}.png')
-    plt.close()
 
 def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_val, beta_val, 
                 interaction_loss, ce_loss):
