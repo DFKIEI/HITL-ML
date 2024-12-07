@@ -63,7 +63,7 @@ def get_radar_data(self):
     # Filter dict_labels to get only the selected classes
     selected_class_indices = [index for index, name in dict_labels.items() if name in self.selected_classes]
 
-    selected_features = self.pca_features
+    selected_features = self.latent_features
     selected_labels = self.selected_labels
 
     print(f"Initial selected features shape: {selected_features.shape}")
@@ -82,38 +82,38 @@ def get_radar_data(self):
     print(f"After class filtering - Selected labels shape: {selected_labels.shape}")
 
     # Ensure that the number of features is within the PCA output dimensions
+     # Take the first num_features dimensions
     num_features = min(self.imp_features, selected_features.shape[1])
-    important_indices = np.argsort(self.feature_importance)[-num_features:]
+    feature_names = [f"Feature {i}" for i in range(num_features)]
+    
+    selected_features = selected_features[:, :num_features]  # Take first num_features dimensions
 
-    important_indices = important_indices[important_indices < selected_features.shape[1]]
-    feature_names = [f"Feature {i}" for i in important_indices]
 
     print(f"Number of important features: {len(feature_names)}")
 
-    data_mean = np.mean(selected_features[:, important_indices], axis=0)
+    data_mean = np.mean(selected_features, axis=0)
 
     class_data = {}
     for class_label in selected_class_indices:
         class_indices = selected_labels == class_label
         if np.any(class_indices):
-            class_features = selected_features[class_indices][:, important_indices]
+            class_features = selected_features[class_indices]
             class_data[class_label] = np.mean(class_features, axis=0).tolist()
             print(f"Class {class_label}: {np.sum(class_indices)} samples, feature vector shape: {len(class_data[class_label])}")
         else:
             print(f"No data points found for class {class_label}")
-            class_data[class_label] = [0] * len(important_indices)
+            class_data[class_label] = [0] * num_features
 
     result = {
         'feature_names': feature_names,
         'data_mean': data_mean,
         'dataset_name': self.dataset_name,
-        'selected_classes': list(selected_class_indices),  # Convert to list
+        'selected_classes': list(selected_class_indices),
         'class_data': class_data
     }
 
     print(f"Final data structure: {len(result['class_data'])} classes, {len(result['feature_names'])} features")
     return result
-
 
 def get_parallel_data(self):
     print("Starting get_parallel_data...")
@@ -127,7 +127,7 @@ def get_parallel_data(self):
     selected_class_indices = [index for index, name in dict_labels.items() if name in self.selected_classes]
 
 
-    selected_features = self.pca_features
+    selected_features = self.latent_features
     selected_labels = self.selected_labels
 
     print(f"Initial selected features shape: {selected_features.shape}")
@@ -145,27 +145,27 @@ def get_parallel_data(self):
     print(f"After class filtering - Selected features shape: {selected_features.shape}")
     print(f"After class filtering - Selected labels shape: {selected_labels.shape}")
 
+     # Take the first num_features dimensions
     num_features = min(self.imp_features, selected_features.shape[1])
-    important_indices = np.argsort(self.feature_importance)[-num_features:]
+    feature_names = [f"Feature {i}" for i in range(num_features)]
+    
+    selected_features = selected_features[:, :num_features]  # Take first num_features dimensions
 
-    important_indices = important_indices[important_indices < selected_features.shape[1]]
-    feature_names = [f"Feature {i}" for i in important_indices]
-
-    print(f"Number of important features: {len(feature_names)}")
+    print(f"Number of features: {len(feature_names)}")
 
     class_data = {}
     for class_label in selected_class_indices:
         class_indices = selected_labels == class_label
         if np.any(class_indices):
-            class_data[class_label] = selected_features[class_indices][:, important_indices]
+            class_data[class_label] = selected_features[class_indices]
         else:
             print(f"No data points found for class {class_label}")
-            class_data[class_label] = np.array([]).reshape(0, len(important_indices))
+            class_data[class_label] = np.array([]).reshape(0, num_features)
 
     return {
         'feature_names': feature_names,
         'dataset_name': self.dataset_name,
-        'selected_classes': list(selected_class_indices),  # Convert to list
+        'selected_classes': list(selected_class_indices),
         'class_data': class_data
     }
 

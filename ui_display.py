@@ -182,9 +182,9 @@ def display_radar_plot(self, data, tab):
 
         if self.selected_point_index is not None and self.selected_point_label == class_label:
             ax.plot(angles, values, label=f"{class_label_to_show}", linewidth=2, alpha=1.0)
-            ax.fill(angles, values, alpha=0.25)
+            ax.fill(angles, values, alpha=1.0)
         else:
-            ax.plot(angles, values, label=f"{class_label_to_show}", linewidth=1, alpha=0.2)
+            ax.plot(angles, values, label=f"{class_label_to_show}", linewidth=1, alpha=1.0)
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(data['feature_names'])
@@ -221,7 +221,7 @@ def display_parallel_plot(self, data, tab):
                 if self.selected_point_index is not None and self.selected_point_label == class_label:
                     ax.plot(range(len(data['feature_names'])), row, color=color, alpha=1.0, linewidth=2)
                 else:
-                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=0.1)
+                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=1.0)
 
             
             class_label_to_show = dict_labels[class_label]

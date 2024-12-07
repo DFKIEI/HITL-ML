@@ -82,8 +82,11 @@ class InteractivePlot:
         print("Extract Latent Features")
         features_2d, latent_features, labels, predicted_labels = extract_latent_features(self)
 
+        
+
         self.labels = labels
         self.selected_features = features_2d[self.samples_to_track]  # Use 2D features directly
+        self.latent_features = latent_features[self.samples_to_track]
         self.original_high_dim_points = latent_features[self.samples_to_track]
 
         # Cache results

@@ -19,7 +19,7 @@ from training_utils import save_checkpoint
 
 
 def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, 
-                alpha_var, beta_var, gamma_var, report_dir, loss_type,
+                alpha_var, report_dir, loss_type,
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, 
                 get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None,
                 checkpoint_dir=None):
@@ -207,7 +207,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             log_callback(test_log_message)
         
         save_report(epoch, running_loss / len(trainloader), val_accuracy, "custom", report_dir,
-                   alpha_val, beta_var.get(), interaction_running_loss, ce_running_loss)
+                   alpha_val, interaction_running_loss, ce_running_loss)
 
         # Handle pause after N epochs
         if pause_after_n_epochs and (epoch + 1) % pause_after_n_epochs == 0:
@@ -237,7 +237,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
     print('Finished Training')
 
-def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_val, beta_val, 
+def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_val, 
                 interaction_loss, ce_loss):
     if not os.path.exists(report_dir):
         os.makedirs(report_dir)
@@ -247,11 +247,11 @@ def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_va
     if not os.path.exists(report_path):
         with open(report_path, mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type", "Alpha", "Beta", "interaction Loss", "CE loss"]) #add parameters, loss, part losses as well
+            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type", "Alpha", "interaction Loss", "CE loss"]) #add parameters, loss, part losses as well
     
     with open(report_path, mode='a', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow([epoch+1, train_loss, val_accuracy, loss_type, alpha_val, beta_val, interaction_loss, ce_loss])
+        writer.writerow([epoch+1, train_loss, val_accuracy, loss_type, alpha_val, interaction_loss, ce_loss])
 
 def evaluate_model(model, dataloader, device, selected_layer=None):
     model.eval()

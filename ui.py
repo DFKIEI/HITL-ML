@@ -119,20 +119,29 @@ class UI:
             self.training_thread.start()
             self.training_button.config(text="Pause Training")
             self.status_var.set("Training...")
+            # Disable pause epochs slider when starting
+            self.pause_slider.configure(state='disabled')
+            self.alpha_entry.configure(state='disabled')
         else:
             if self.pause_event.is_set():
                 self.pause_event.clear()
                 self.training_button.config(text="Pause Training")
                 self.status_var.set("Training...")
+                # Disable pause epochs slider when resuming
+                self.pause_slider.configure(state='disabled')
+                self.alpha_entry.configure(state='disabled')
             else:
                 self.pause_event.set()
                 self.training_button.config(text="Resume Training")
                 self.status_var.set("Paused")
+                # Enable pause epochs slider when pausing
+                self.pause_slider.configure(state='enabled')
+                self.alpha_entry.configure(state='enabled')
 
     def run_training(self):
         train_model(self.model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
                     self.epoch_var.get(), self.freq_var.get(), self.alpha_var, 
-                    self.beta_var, self.gamma_var, f"reports/{self.dataset_name}",
+                    f"reports/{self.dataset_name}",
                     self.loss_type,
                     log_callback=self.update_log,
                     pause_event=self.pause_event,
@@ -151,6 +160,9 @@ class UI:
         self.training_button.config(text="Resume Training")
         self.status_var.set("Paused after N epochs")
         self.update_log("Training paused after N epochs. Press 'Resume Training' to continue.")
+        # Enable pause epochs slider when pausing
+        self.pause_slider.configure(state='enabled')
+        self.alpha_entry.configure(state='enabled')
 
 
     def update_log(self, message):

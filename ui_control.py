@@ -13,25 +13,27 @@ def create_training_controls(self):
     epoch_slider.pack(padx=3, pady=3)
 
     self.alpha_var = tk.DoubleVar(value=0.5)
-    self.beta_var = tk.DoubleVar(value=0.5)
-    self.gamma_var = tk.DoubleVar(value=0.5)
-
-    for var, label in zip([self.alpha_var, self.beta_var, self.gamma_var], ["Alpha:", "Beta:", "Gamma:"]):
-        ttk.Label(self.control_panel, text=label).pack(pady=3)
-        ttk.Entry(self.control_panel, textvariable=var).pack(padx=3, pady=3)
+    ttk.Label(self.control_panel, text="Alpha:").pack(pady=3)
+    self.alpha_entry = ttk.Entry(self.control_panel, textvariable=self.alpha_var)
+    self.alpha_entry.pack(padx=3, pady=3)
 
     ttk.Label(self.control_panel, text="Evaluation Frequency (batches):").pack(pady=3)
     self.freq_var = tk.IntVar(value=100)
-    ttk.Entry(self.control_panel, textvariable=self.freq_var).pack(padx=3, pady=3)
+    self.freq_entry = ttk.Entry(self.control_panel, textvariable=self.freq_var)
+    self.freq_entry.pack(padx=3, pady=3)
+    self.freq_entry.configure(state='disabled')
+
 
     ttk.Label(self.control_panel, text="Number of features for plotting high dim:").pack(pady=3)
     self.num_features = tk.IntVar(value=10)
-    ttk.Entry(self.control_panel, textvariable=self.num_features).pack(padx=3, pady=3)
+    self.features_entry = ttk.Entry(self.control_panel, textvariable=self.num_features)
+    self.features_entry.pack(padx=3, pady=3)
+    self.features_entry.configure(state='disabled')
 
     ttk.Label(self.control_panel, text="Pause after every N epochs:").pack(pady=3)
     self.pause_epochs_var = tk.IntVar(value=5)
-    pause_slider = tk.Scale(self.control_panel, from_=1, to=self.epoch_var.get(), orient=tk.HORIZONTAL, variable=self.pause_epochs_var)
-    pause_slider.pack(padx=3, pady=3)
+    self.pause_slider = tk.Scale(self.control_panel, from_=1, to=self.epoch_var.get(), orient=tk.HORIZONTAL, variable=self.pause_epochs_var)
+    self.pause_slider.pack(padx=3, pady=3)
 
 
     self.status_var = tk.StringVar(value="Not started")
@@ -54,15 +56,3 @@ def create_visualization_controls(self):
     ttk.Label(self.control_panel, text="Select Layer:").pack(pady=3)
     self.layer_var = tk.StringVar(value="final")
     
-    if self.model_name == 'CNN_PAMAP2':
-        layer_options = ["conv1", "conv2", "conv3", "final"]
-    elif self.model_name in ['CNN_MNIST', 'CNN_CIFAR10']:
-        layer_options = ["conv1", "conv2", "final"]
-    elif self.model_name == 'CNN_CIFAR100':
-        layer_options = ["conv1", "conv2", "conv3", "final"]
-    else:
-        layer_options = ["final"]
-
-    layer_dropdown = ttk.Combobox(self.control_panel, textvariable=self.layer_var, values=layer_options)
-    layer_dropdown.pack(pady=3)
-    layer_dropdown.bind("<<ComboboxSelected>>", self.on_layer_change)

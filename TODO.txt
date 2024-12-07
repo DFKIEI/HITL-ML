@@ -86,3 +86,23 @@ learning for high dim
 
 1. freezing from beginning
 2. freezing after traditional training
+
+----------------------------------------------------
+
+
+grey out not irrelevant ui tools and remove if not required / disable
+pause after n epochs - grey after training starts
+
+work on the other plots
+pause training
+
+selection of some of the arguments
+
+code cleanup and stability
+user interface
+project selection - database/model
+
+while puased - adjustable alpha
+
+
+-------------------------------------------------------
