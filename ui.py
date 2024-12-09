@@ -135,8 +135,8 @@ class UI:
                 self.training_button.config(text="Resume Training")
                 self.status_var.set("Paused")
                 # Enable pause epochs slider when pausing
-                self.pause_slider.configure(state='enabled')
-                self.alpha_entry.configure(state='enabled')
+                self.pause_slider.configure(state='active')
+                self.alpha_entry.configure(state='active')
 
     def run_training(self):
         train_model(self.model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
@@ -161,8 +161,8 @@ class UI:
         self.status_var.set("Paused after N epochs")
         self.update_log("Training paused after N epochs. Press 'Resume Training' to continue.")
         # Enable pause epochs slider when pausing
-        self.pause_slider.configure(state='enabled')
-        self.alpha_entry.configure(state='enabled')
+        self.pause_slider.configure(state='active')
+        self.alpha_entry.configure(state='active')
 
 
     def update_log(self, message):
