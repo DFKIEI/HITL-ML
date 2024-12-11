@@ -4,64 +4,136 @@ import numpy as np
 import os
 import csv
 import datetime
-from losses import custom_loss, external_loss
-from tqdm import tqdm
-import traceback
 import time
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from pytorch_metric_learning import losses
-from sklearn.manifold import MDS
 import torch.nn.functional as F
 import torch.optim as optim
 from sklearn.cluster import KMeans
-import math
 from sklearn.metrics import f1_score
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+import random
+from training_utils import save_checkpoint
 
-from training_utils import calculate_class_weights
-from losses import custom_loss, MagnetLoss
 
-def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, alpha_var, beta_var, gamma_var, report_dir, loss_type,
-                log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot= None):
+
+
+
+def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq, 
+                alpha_var, report_dir, loss_type,
+                log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None, 
+                get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None,
+                checkpoint_dir=None):
+
+    ce_criterion = nn.CrossEntropyLoss()
+
+    for param in model.projection_layer.parameters():
+        param.requires_grad = False
+
+    #optimizer = torch.optim.Adam(
+    #    filter(lambda p: p.requires_grad, model.parameters()), 
+    #    lr=0.001
+    #)
+
+
+
     model.train()
-    # to address class imbalance
-    # class_counts = np.bincount(trainloader.dataset.y_data)
-    # class_weights = 1. / torch.tensor(class_counts, dtype=torch.float)
-    # class_weights = class_weights.to(device)
-    # criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-    # criterion = nn.CrossEntropyLoss()
-    
-    # learning rate scheduler
-    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=5)
-    previous_centers = None
+    def compute_ideal_structure(moved_points, samples_per_class, num_classes):
+        """Extract mean and spread of each class"""
+        class_info = {}
+        num_classes = num_classes
+        points_per_class = samples_per_class
+        
+        for c in range(num_classes):
+            start_idx = c * points_per_class
+            end_idx = start_idx + points_per_class
+            class_points = moved_points[start_idx:end_idx]
+            
+            # Compute center and spread
+            center = class_points.mean(dim=0)
+            dists_to_center = torch.norm(class_points - center, dim=1)
+            spread = dists_to_center.mean()
+            
+            # Store statistics instead of full matrices
+            class_info[c] = {
+                'center': center,
+                'spread': spread,
+            }
+        
+        return class_info
 
-    # multi_similarity_loss_func = losses.MultiSimilarityLoss(alpha=3.0, beta=70.0, base=0.3)
-    # contrastive_loss_func = losses.ContrastiveLoss(pos_margin=0.5, neg_margin=1.0)
-    # contrastive_supervised = losses.SupConLoss(temperature=0.1)
-    # contrastive_norm = losses.NormalizedSoftmaxLoss(temperature=0.05)
+    def relative_distance_loss(features_2d, labels, ideal_structure):
+        """Compare relationships using class statistics"""
+        batch_size = features_2d.size(0)
+        loss = 0
+        
+        # Group points by class in this batch
+        class_indices = {}
+        for i in range(batch_size):
+            label = labels[i].item()
+            if label not in class_indices:
+                class_indices[label] = []
+            class_indices[label].append(i)
+        
+        total_loss = 0
+        num_comparisons = 0
+        
+        for label, indices in class_indices.items():
+            if len(indices) > 1:  # Need at least 2 points
+                points = features_2d[indices]
+                ideal_center = ideal_structure[label]['center']
+                ideal_spread = ideal_structure[label]['spread'] #Isolate losses #Normalize with feature space #Visualize random val dataset #keep the viz scale same
+                
+                # 1. Distance to class center
+                current_center = points.mean(dim=0)
+                center_loss = F.mse_loss(current_center, ideal_center)
+                
+                # 2. Maintain spread
+                current_dists = torch.norm(points - current_center, dim=1)
+                current_spread = current_dists.mean()
+                spread_loss = torch.abs(current_spread - ideal_spread)
+                
+                # 3. Inter-class separation
+                for other_label in class_indices:
+                    if other_label != label:
+                        other_indices = class_indices[other_label]
+                        if other_indices:
+                            other_points = features_2d[other_indices]
+                            other_center = other_points.mean(dim=0)
+                            
+                            # Distance between centers should be at least sum of spreads
+                            min_distance = (ideal_structure[label]['spread'] + 
+                                         ideal_structure[other_label]['spread'])
+                            
+                            center_distance = torch.norm(current_center - other_center)
+                            separation_loss = torch.clamp(min_distance - center_distance, min=0)
+                            
+                            total_loss += separation_loss
+                            num_comparisons += 1
+                
+                total_loss += center_loss + spread_loss
+                num_comparisons += 2
+        
+        return total_loss / max(num_comparisons, 1)  # Avoid division by zero
 
-    mds = MDS(n_components=2, random_state=42, n_init=1, n_jobs=1, metric=True)
-
-    # optimizers = []
-
-    # # Create an optimizer for each pairwise batch
-    # for i in range(len(trainloader_class)):
-    #     optimizer = optim.Adam(model.parameters(), lr=0.0005)
-    #     optimizers.append(optimizer)
-
-    print(f'Alpha: {alpha_var.get()}')
     for epoch in range(num_epochs):
         running_loss = 0.0
+        ce_running_loss = 0.0
+        interaction_running_loss = 0.0
         correct_predictions = 0
         total_predictions = 0
-        ce_criterion = nn.CrossEntropyLoss()
+
+        moved_2d_points = torch.tensor(plot.get_moved_2d_points(), dtype=torch.float32, device=device)
+        ideal_structure = compute_ideal_structure(moved_2d_points, plot.samples_per_class, plot.num_classes)
 
         for i, (inputs, labels) in enumerate(trainloader):
-            if len(inputs) % 10 != 0: # Remove the last entry if odd length of batch ONLY FOR MAGNET LOSS RELEVANT
+            batch_size = inputs.size(0)
+            if len(inputs) % 10 != 0:
                 excess_samples = len(inputs) % 10
-                # Remove excess samples to make the batch size a multiple of num_clusters
                 inputs = inputs[:-excess_samples]
                 labels = labels[:-excess_samples]
+                batch_size = inputs.size(0)
+
             if stop_training and stop_training.is_set():
                 return
             
@@ -69,104 +141,87 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 pause_event.wait()
             
             inputs, labels = inputs.to(device), labels.to(device)
+
+            # Get a matching batch of user-modified data
+            #mod_inputs = get_random_modified_batch(moved_2d_points,batch_size)
+            #mod_inputs = mod_inputs.to(device)
+
             optimizer.zero_grad()
-            if selected_layer:
-                outputs, latent_features = model(inputs, selected_layer)
-            else:
-                outputs, latent_features = model(inputs)
 
-            #print(f"Model output shape: {outputs.shape}")
-            #print(f"Latent features shape: {latent_features.shape}")
-            #print(f"Labels shape: {labels.shape}")
-            #print(f"Unique labels: {torch.unique(labels)}")
-            #print(f"Model output sample: {outputs[0][:10]}")  # Print first 10 elements of first sample
+            alpha_val = alpha_var.get()
 
-            #if selected_layer is not None:
-                #print(f"selected_layer : {selected_layer}")
-                # For convolutional layers, we can't use CrossEntropyLoss
-                # Instead, we'll use MSE loss between the flattened features and one-hot encoded labels
-            #    one_hot_labels = torch.zeros(labels.size(0), model.num_classes, device=device)
-            #    one_hot_labels.scatter_(1, labels.unsqueeze(1), 1)
-            #    loss = nn.MSELoss()(outputs, one_hot_labels)
-            #else:
-            
-
-            if outputs.dim() > 2:
-                outputs = outputs.view(outputs.size(0), -1)
-                print(f"Reshaped output shape: {outputs.shape}")
-            
-            if outputs.size(1) != labels.max() + 1:
-                print(f"Warning: Number of classes in model output ({outputs.size(1)}) "
-                      f"doesn't match the number of classes in labels ({labels.max() + 1})")
-                if outputs.size(1) > labels.max() + 1:
-                    outputs = outputs[:, :labels.max() + 1]  # Truncate extra classes if any
-                else:
-                    raise ValueError("Model output has fewer classes than the labels")
+            outputs, reduced_features, anchor_features = model(inputs)
 
 
-
-            predictions = outputs.argmax(dim=1)
-            magnet_loss_func = MagnetLoss(alpha=1.0)
-            m = 10  # Number of clusters (assume unique class labels are the clusters)
-            d = math.ceil(len(inputs) / m) 
-            # print(m)
-            # print(d)
-            ms_loss, _ = magnet_loss_func(latent_features, labels, m, d)
             ce_loss = ce_criterion(outputs, labels)
-            loss = alpha_var.get()* ms_loss+ (1-alpha_var.get())*ce_loss
 
-            # if (i+1) % freq == 0:
-            #     if loss_type == 'custom':
-            #         class_weights, cluster_centers = calculate_class_weights(latent_features, labels, beta_var.get(), gamma_var.get(), 'tsne', previous_centers, outlier_threshold=0.5)
-            #         previous_centers = cluster_centers
-            #         loss = custom_loss(outputs, labels, class_weights, alpha_var.get())
+            # Apply structure to all points
+            interaction_loss = relative_distance_loss(
+                reduced_features, labels, ideal_structure) #* 100.0
 
-            #     elif loss_type == 'external':
-            #         current_centers = get_current_centers() if get_current_centers else None
-            #         loss, previous_centers = external_loss(loss, alpha_var.get(), beta_var.get(), gamma_var.get(), latent_features, labels, current_centers)
+            scale_reg = 0.1 * torch.abs(1.0 - model.scale)  # Regularize scale to stay close to 1
+            loss = (1-alpha_val)*ce_loss + alpha_val * interaction_loss + scale_reg
 
+            #loss = ce_loss
+            
             loss.backward()
             optimizer.step()
-            running_loss += loss.item()
 
-            # Calculate accuracy
-            correct_predictions += (predictions == labels).sum().item()
+            # Update metrics
+            running_loss += loss.item()
+            ce_running_loss += ce_loss.item()
+            interaction_running_loss += interaction_loss.item()
+            correct_predictions += (outputs.argmax(dim=1) == labels).sum().item()
             total_predictions += labels.size(0)
 
             if (i + 1) % freq == 0:
                 avg_loss = running_loss / freq
+                ce_avg_loss = ce_running_loss / freq
+                interaction_avg_loss = interaction_running_loss / freq
                 accuracy = 100. * correct_predictions / total_predictions
+                
                 log_message = f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.2f}%"
                 print(log_message)
+                print(f'CE Loss: {ce_avg_loss:.3f}, interaction Loss: {interaction_avg_loss:.3f}')
+                
                 if log_callback:
                     log_callback(log_message)
+
                 running_loss = 0.0
+                ce_running_loss = 0.0
+                interaction_running_loss = 0.0
                 correct_predictions = 0
                 total_predictions = 0
-        
-        # Validation after each epoch
+
+        # Validation and Testing
         val_accuracy, val_f1 = evaluate_model(model, valloader, device, selected_layer)
         test_accuracy, test_f1 = evaluate_model(model, testloader, device, selected_layer)
+        
         val_log_message = f"Epoch {epoch + 1} completed. Validation Accuracy: {val_accuracy:.2f}%, F1_Score: {val_f1:.3f}"
         test_log_message = f"Epoch {epoch + 1} completed. Test Accuracy: {test_accuracy:.2f}%, F1_Score: {test_f1:.3f}"
         print(val_log_message)
         print(test_log_message)
-        # In the training loop, after validation:
-        scheduler.step(val_accuracy)
-        
 
         if log_callback:
             log_callback(val_log_message)
             log_callback(test_log_message)
         
-        # Save report
-        #save_report(epoch, running_loss / len(trainloader), val_accuracy, "custom", report_dir)
-        
-        #if epoch_end_callback:
-        #    epoch_end_callback()
-        
-        # Pause after N epochs
+        save_report(epoch, running_loss / len(trainloader), val_accuracy, "custom", report_dir,
+                   alpha_val, interaction_running_loss, ce_running_loss)
+
+        # Handle pause after N epochs
         if pause_after_n_epochs and (epoch + 1) % pause_after_n_epochs == 0:
+            if checkpoint_dir:
+                loss_info = {
+                    'running_loss': running_loss,
+                    'ce_loss': ce_running_loss,
+                    'interaction_loss': interaction_running_loss,
+                    'val_accuracy': val_accuracy,
+                    'test_accuracy': test_accuracy
+                }
+                save_checkpoint(model, optimizer, epoch + 1, checkpoint_dir, loss_info)
+                if log_callback:
+                    log_callback(f"Saved checkpoint at epoch {epoch + 1}")
             if epoch_end_callback:
                 epoch_end_callback()
             if pause_event:
@@ -182,20 +237,21 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
     print('Finished Training')
 
-def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir):
+def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_val, 
+                interaction_loss, ce_loss):
     if not os.path.exists(report_dir):
         os.makedirs(report_dir)
     
-    report_path = os.path.join(report_dir, 'training_report.csv')
+    report_path = os.path.join(report_dir, 'training_report_int_loss.csv')
     
     if not os.path.exists(report_path):
         with open(report_path, mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type"])
+            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type", "Alpha", "interaction Loss", "CE loss"]) #add parameters, loss, part losses as well
     
     with open(report_path, mode='a', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow([epoch+1, train_loss, val_accuracy, loss_type])
+        writer.writerow([epoch+1, train_loss, val_accuracy, loss_type, alpha_val, interaction_loss, ce_loss])
 
 def evaluate_model(model, dataloader, device, selected_layer=None):
     model.eval()
@@ -206,9 +262,9 @@ def evaluate_model(model, dataloader, device, selected_layer=None):
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
             if selected_layer:
-                outputs, _ = model(inputs, layer=selected_layer)
+                outputs, _, _ = model(inputs, layer=selected_layer)
             else:
-                outputs, _ = model(inputs)
+                outputs, _, _ = model(inputs)
             
             if outputs.dim() > 2:
                 outputs = outputs.view(outputs.size(0), -1)

@@ -6,6 +6,7 @@ import threading
 import queue
 import matplotlib
 from torch.utils import data
+import os
 matplotlib.use('TkAgg')
 
 
@@ -13,10 +14,13 @@ from plots import InteractivePlot
 from training import train_model
 from ui_control import create_info_labels, create_training_controls, create_visualization_controls
 from ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
+from training_utils import find_latest_checkpoint, load_checkpoint
 
 class UI:
-    def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type):
+    def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type, visualization):
         self.root = root
+        #self.teacher_model = teacher_model
+        #self.student_model = student_model
         self.model = model
         self.optimizer = optimizer
         self.trainloader = trainloader
@@ -28,6 +32,18 @@ class UI:
         self.dataset_name = dataset_name
         self.model_name = model_name
         self.loss_type = loss_type
+        self.visualization = visualization
+
+        # Load checkpoint first
+        checkpoint_dir = f"models/{self.dataset_name}"
+        if os.path.exists(checkpoint_dir):
+            latest_checkpoint = find_latest_checkpoint(checkpoint_dir)
+            if latest_checkpoint:
+                try:
+                    _, loss_info = load_checkpoint(self.model, self.optimizer, latest_checkpoint)
+                    print(f"Loaded checkpoint with Val Accuracy: {loss_info['val_accuracy']:.2f}%")
+                except Exception as e:
+                    print(f"Error loading checkpoint: {str(e)}")
 
         self.visualization_queue = queue.Queue()
         self.training_thread = None
@@ -103,20 +119,29 @@ class UI:
             self.training_thread.start()
             self.training_button.config(text="Pause Training")
             self.status_var.set("Training...")
+            # Disable pause epochs slider when starting
+            self.pause_slider.configure(state='disabled')
+            self.alpha_entry.configure(state='disabled')
         else:
             if self.pause_event.is_set():
                 self.pause_event.clear()
                 self.training_button.config(text="Pause Training")
                 self.status_var.set("Training...")
+                # Disable pause epochs slider when resuming
+                self.pause_slider.configure(state='disabled')
+                self.alpha_entry.configure(state='disabled')
             else:
                 self.pause_event.set()
                 self.training_button.config(text="Resume Training")
                 self.status_var.set("Paused")
+                # Enable pause epochs slider when pausing
+                self.pause_slider.configure(state='active')
+                self.alpha_entry.configure(state='active')
 
     def run_training(self):
         train_model(self.model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
                     self.epoch_var.get(), self.freq_var.get(), self.alpha_var, 
-                    self.beta_var, self.gamma_var, f"reports/{self.dataset_name}",
+                    f"reports/{self.dataset_name}",
                     self.loss_type,
                     log_callback=self.update_log,
                     pause_event=self.pause_event,
@@ -125,14 +150,19 @@ class UI:
                     pause_after_n_epochs=self.pause_epochs_var.get(),
                     selected_layer=self.selected_layer,
                     centers=True,
-                    plot = self.plot)
+                    plot = self.plot,
+                    checkpoint_dir=f"models/{self.dataset_name}")
 
     def on_epoch_end(self):
         self.pause_event.set()
+        #self.teacher_model = self.student_model ###???
         self.update_visualization()
         self.training_button.config(text="Resume Training")
         self.status_var.set("Paused after N epochs")
         self.update_log("Training paused after N epochs. Press 'Resume Training' to continue.")
+        # Enable pause epochs slider when pausing
+        self.pause_slider.configure(state='active')
+        self.alpha_entry.configure(state='active')
 
 
     def update_log(self, message):
@@ -174,10 +204,25 @@ class UI:
     def update_visualization(self):
         #selected_classes = self.get_selected_classes()
         if self.plot is None:
-            self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type, 
+            if self.visualization =='train':
+                self.plot = InteractivePlot(self.model, self.trainloader, self.current_plot_type, 
+                                        self.dataset_name, self.num_features.get(),
+                                        selected_layer=self.selected_layer)  
+            elif self.visualization =='validation':
+                self.plot = InteractivePlot(self.model, self.valloader, self.current_plot_type, 
+                                        self.dataset_name, self.num_features.get(),
+                                        selected_layer=self.selected_layer)  
+            elif self.visualization =='test':
+                self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type, 
                                         self.dataset_name, self.num_features.get(),
                                         selected_layer=self.selected_layer)    
-        self.plot.prepare_data()      
+            self.plot.prepare_data()   
+        else:
+            self.plot.prepare_data()
+            # Update existing plot object
+            #self.plot.model = self.teacher_model
+            self.plot.plot_type = self.current_plot_type
+            self.plot.selected_layer = self.selected_layer
         #self.plot.selected_classes = selected_classes
         plot_data = self.plot.get_plot_data(self.current_plot_type)
         #plot_data['selected_point_index'] = self.selected_point_index

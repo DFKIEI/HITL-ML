@@ -109,49 +109,39 @@ def calculate_distance_loss_only_interaction(latent_features, labels, previous_c
         return 0, cluster_centers
    
 
-
 class MagnetLoss(nn.Module):
-    """
-    Magnet loss technique presented in the paper:
-    'Metric Learning with Adaptive Density Discrimination' by Oren Rippel, Manohar Paluri, Piotr Dollar, Lubomir Bourdev.
-
-    Args:
-        alpha (float): The cluster separation gap hyperparameter.
-    """
     def __init__(self, alpha=1.0):
         super(MagnetLoss, self).__init__()
         self.alpha = alpha
 
-    def forward(self, r, classes, m, d):
-        # Ensure tensors are on the same device
+    def forward(self, r, classes, m, d, target_features=None):
         device = r.device
         dtype = torch.int64 if device.type == 'mps' else torch.long
 
         self.r = r
         self.classes = classes.to(dtype=dtype)
         self.clusters = torch.arange(0, float(m)).repeat(d).to(dtype=dtype)
-        # print(self.clusters.shape)
         self.cluster_classes = self.classes[0:m*d:d]
         self.n_clusters = m
 
-        # Take cluster means within the batch
-        cluster_examples = dynamic_partition(self.r, self.clusters, self.n_clusters)
+        # Use target_features if provided, otherwise use r
+        features_to_use = target_features if target_features is not None else r
 
+        # Take cluster means within the batch
+        cluster_examples = dynamic_partition(features_to_use, self.clusters, self.n_clusters)
         cluster_means = torch.stack([torch.mean(x, dim=0) for x in cluster_examples])
 
+        # Compute distances to cluster means
         sample_costs = compute_euclidean_distance(cluster_means, expand_dims(r, 1))
 
         clusters_tensor = self.clusters.to(dtype=torch.float32)
         n_clusters_tensor = torch.arange(0, self.n_clusters).to(dtype=torch.float32)
 
         intra_cluster_mask = comparison_mask(clusters_tensor, n_clusters_tensor).to(dtype=torch.float32)
-        # print(intra_cluster_mask.shape)
-        # print(sample_costs.shape)
         intra_cluster_costs = torch.sum(intra_cluster_mask.to(device) * sample_costs.to(device), dim=1)
         
         N = r.size(0)
         variance = torch.sum(intra_cluster_costs) / float(N - 1)
-
         var_normalizer = -1 / (2 * variance**2)
 
         # Compute numerator
@@ -174,23 +164,47 @@ class MagnetLoss(nn.Module):
 
         return total_loss, losses
 
+# Helper functions (keep these as they were)
 def expand_dims(var, dim=0):
-    """ Similar to numpy.expand_dims """
     sizes = list(var.size())
     sizes.insert(dim, 1)
     return var.view(*sizes)
 
 def comparison_mask(a_labels, b_labels):
-    """ Computes boolean mask for distance comparisons """
-    # print(a_labels.shape)
     return torch.eq(expand_dims(a_labels, 1), expand_dims(b_labels, 0))
 
 def dynamic_partition(X, partitions, n_clusters):
-    """ Partitions the data into the number of cluster bins """
     cluster_bin = torch.chunk(X, n_clusters)
     return cluster_bin
 
 def compute_euclidean_distance(x, y):
-    """ Computes pairwise squared Euclidean distance """
     return torch.sum((x - y)**2, dim=2)
-
+    
+def magnitude_direction_loss(x, y, alpha=0.5):
+    """
+    Custom loss function that considers both magnitude and direction.
+    
+    Args:
+    x, y: The two sets of features to compare
+    alpha: Weight balancing factor between Euclidean distance and cosine similarity
+           alpha = 0 considers only direction, alpha = 1 considers only magnitude
+    
+    Returns:
+    Weighted sum of normalized Euclidean distance and cosine distance
+    """
+    # Euclidean distance for magnitude
+    euclidean_dist = F.mse_loss(x, y)
+    
+    # Cosine similarity for direction
+    cos_sim = F.cosine_similarity(x, y).mean()
+    cos_dist = 1 - cos_sim  # Convert to a distance
+    
+    # Normalize Euclidean distance to [0, 1] range
+    # We use the maximum possible Euclidean distance as a normalization factor
+    max_dist = torch.sqrt(torch.sum(torch.max(x, dim=0)[0]**2 + torch.max(y, dim=0)[0]**2))
+    norm_euclidean_dist = euclidean_dist / max_dist
+    
+    # Combine the two distances
+    combined_loss = alpha * norm_euclidean_dist + (1 - alpha) * cos_dist
+    
+    return combined_loss

@@ -11,7 +11,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["--dataset=CIFAR10", "--model=CNN_CIFAR10", "--loss=external", "--batch=60"]
+            "args": ["--dataset=PAMAP2", "--model=CNN_PAMAP2", "--loss=external", "--batch=60", "--visualize=validation"]
         }
     ]
 }

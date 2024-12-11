@@ -15,7 +15,7 @@ class CNN_PAMAP2(nn.Module):
         self.conv3 = nn.Conv1d(hidden[1], hidden[2], kernel_size=kernel3)
         self.dropout3 = nn.Dropout(dropout)
         self.global_max_pool = nn.AdaptiveMaxPool1d(output_size=1)
-        self.global_avg_pool = nn.AdaptiveAvgPool1d(output_size=1)  # Global Average Pooling for intermediate layers
+        self.global_avg_pool = nn.AdaptiveAvgPool1d(output_size=1)
         self.num_classes = num_classes
 
         # Classifier head
@@ -26,31 +26,51 @@ class CNN_PAMAP2(nn.Module):
         self.projection2 = nn.Linear(hidden[1], num_classes)
         self.projection3 = nn.Linear(hidden[2], num_classes)
 
+        # Learnable scale parameter
+        self.scale = nn.Parameter(torch.ones(1) * 10.0)
+
+        # Modified projection layer
+        self.projection_layer = nn.Sequential(
+            nn.Linear(hidden[3], 256),
+            nn.LayerNorm(256),
+            nn.ReLU(),
+            nn.Linear(256, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Linear(64, 2)
+        )
+
     def forward(self, x, layer=None):
         x = x.permute(0, 2, 1)
         x = torch.relu(self.conv1(x))
-        if layer=='conv1':
-            x = self.global_avg_pool(x)
-            x = x.view(x.size(0), -1)
-            return self.projection1(x), x
+        
         x = self.dropout1(x)
         x = torch.relu(self.conv2(x))
-        if layer=='conv2':
-            x = self.global_avg_pool(x)
-            x = x.view(x.size(0), -1)
-            return self.projection2(x), x
+        
         x = self.dropout2(x)
         x = torch.relu(self.conv3(x))
-        if layer=='conv3':
-            x = self.global_avg_pool(x)
-            x = x.view(x.size(0), -1)
-            return self.projection3(x), x
+        
         x = self.dropout3(x)
         x = torch.flatten(self.global_max_pool(x), start_dim=1)
 
         latent_features = torch.relu(self.dense1(x))
+        
+        # Get latent features statistics
+        latent_mean = torch.mean(latent_features)
+        latent_std = torch.std(latent_features)
+        
+        # Project and rescale to match latent statistics
+        projected_2d_features = self.projection_layer(latent_features)
+        
+        # Normalize projected features to same scale as latent
+        projected_mean = torch.mean(projected_2d_features)
+        projected_std = torch.std(projected_2d_features)
+        projected_2d_features = (projected_2d_features - projected_mean) / (projected_std + 1e-8)
+        projected_2d_features = projected_2d_features * latent_std + latent_mean
+        #print(f"Projected features min : {projected_2d_features.min().item()}, max : {projected_2d_features.max().item()}")
+        
         output = self.dense2(latent_features)
-        return output, latent_features
+        return output, projected_2d_features, latent_features
 
     @torch.no_grad()
     def predict(self, x):
@@ -75,15 +95,9 @@ class CNN_MNIST(nn.Module):
 
     def forward(self, x, layer=None):
         x = torch.relu(self.pool(self.conv1(x)))
-        if layer=='conv1':
-            x = self.global_avg_pool(x)
-            x = x.view(x.size(0), -1)
-            return self.projection1(x), x
+
         x = torch.relu(self.pool(self.conv2(x)))
-        if layer=='conv2':
-            x = self.global_avg_pool(x)
-            x = x.view(x.size(0), -1)
-            return self.projection2(x), x
+
         x = torch.flatten(x, 1)  # flatten all dimensions except batch
         latent_features = torch.relu(self.fc1(x))
         x = self.dropout(latent_features)
@@ -207,6 +221,84 @@ class CNN_CIFAR10(nn.Module):
         output = self.forward(x)  # Forward pass
         return output.argmax(dim=-1)  # Get the index of the max log-probability
 
+class SmallCNN_CIFAR10(nn.Module):
+    def __init__(self, in_channels=3, num_classes=10):
+        super(SmallCNN_CIFAR10, self).__init__()
+        
+        # First Conv layer
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, padding=1)
+        self.pool1 = nn.MaxPool2d(2, 2)
+        self.dropout1 = nn.Dropout(0.3)
+        
+        # Second Conv layer
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.pool2 = nn.MaxPool2d(2, 2)
+        self.dropout2 = nn.Dropout(0.3)
+        
+        # Third Conv layer
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.pool3 = nn.MaxPool2d(2, 2)
+        self.dropout3 = nn.Dropout(0.3)
+        
+        # Fully Connected layers
+        self.fc1 = nn.Linear(256 * 4 * 4, 512)
+        self.fc2 = nn.Linear(512, num_classes)
+
+        # Learnable scale parameter
+        self.scale = nn.Parameter(torch.ones(1) * 10.0)
+
+        self.projection_layer = nn.Linear(256*4*4,2)
+        
+        self.dropout4 = nn.Dropout(0.5)
+        
+    def forward(self, x):
+        # First conv layer
+        x = F.relu(self.conv1(x))
+        x = self.pool1(x)
+        x = self.dropout1(x)
+        
+        # Second conv layer
+        x = F.relu(self.conv2(x))
+        x = self.pool2(x)
+        x = self.dropout2(x)
+        
+        # Third conv layer
+        x = F.relu(self.conv3(x))
+        x = self.pool3(x)
+        x = self.dropout3(x)
+        
+        x = torch.flatten(x, 1)
+        latent_features = x
+
+        # Get latent features statistics
+        latent_mean = torch.mean(latent_features)
+        latent_std = torch.std(latent_features)
+        
+        # Project and rescale to match latent statistics
+        projected_2d_features = self.projection_layer(latent_features)
+        
+        # Normalize projected features to same scale as latent
+        projected_mean = torch.mean(projected_2d_features)
+        projected_std = torch.std(projected_2d_features)
+        projected_2d_features = (projected_2d_features - projected_mean) / (projected_std + 1e-8)
+        projected_2d_features = projected_2d_features * latent_std + latent_mean
+        #print(f"Projected features min : {projected_2d_features.min().item()}, max : {projected_2d_features.max().item()}")
+
+        # Fully connected layers
+        x = F.relu(self.fc1(x))
+        x = self.dropout4(x)
+        output = self.fc2(x)
+        
+        return output, projected_2d_features, latent_features
+
+    
+    @torch.no_grad()
+    def predict(self, x):
+        self.eval()  # Set the model to evaluation mode
+        output = self.forward(x)  # Forward pass
+        return output.argmax(dim=-1)  # Get the index of the max log-probability
+
+
 class CNN_CIFAR100(nn.Module):
     def __init__(self, in_channels=3, num_classes=100):
         super(CNN_CIFAR100, self).__init__()
@@ -227,20 +319,11 @@ class CNN_CIFAR100(nn.Module):
 
     def forward(self, x, layer=None):
         x = torch.relu(self.pool(self.conv1(x)))
-        if layer=='conv1':
-            x = self.global_avg_pool(x)
-            x = x.view(x.size(0), -1)
-            return self.projection1(x), x
+        
         x = torch.relu(self.pool(self.conv2(x)))
-        if layer=='conv2':
-            x = self.global_avg_pool(x)
-            x = x.view(x.size(0), -1)
-            return self.projection2(x), x
+        
         x = torch.relu(self.pool(self.conv3(x)))
-        if layer=='conv3':
-            x = self.global_avg_pool(x)
-            x = x.view(x.size(0), -1)
-            return self.projection3(x), x
+        
         x = torch.flatten(x, 1)
         latent_features = torch.relu(self.fc1(x))
         x = self.dropout1(latent_features)
@@ -263,5 +346,7 @@ def get_model(model_name, input_shape, num_classes):
         return CNN_CIFAR10(input_shape[0], num_classes)
     elif model_name == 'CNN_CIFAR100':
         return CNN_CIFAR100(input_shape[0], num_classes)
+    elif model_name == 'SmallCNN_CIFAR10':
+        return SmallCNN_CIFAR10(input_shape[0], num_classes)
     else:
         raise ValueError(f"Unknown model: {model_name}")

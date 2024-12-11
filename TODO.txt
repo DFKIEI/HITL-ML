@@ -25,3 +25,84 @@ Put tool in executable
 Tool Name
 Save the loggings and the images of the plots, track the alpha beta...
 Fix the axis tiles and legends, add the real label to legend --
+
+
+
+
+Knowledge distillation loss(teacher - human interaction - interaction with cluster centers) try with higher dimensions and reduced dimensions
+ensure that teacher and student have same features
+keep fixed features for each epochs
+
+alpha to balance with ce and kd loss
+
+distance calculation -- ?  euclidean
+
+teacher_logits - centers? batch? ?   use as teacher centers
+
+
+knowledge distillation loss = teacher_logits and student_logits [distance between centers of teachers and students]
+
+
+-----------------------------------------------------------------------------------------------------------------------
+
+
+cross entropy vs our approach
+check loss metrics to reduce[isolated experiments]
+classic mse loss(teacher and student) yes
+reduced dimensions[loss calculation] - mse loss and cross entropy with high dimensions
+
+
+
+
+
+[cross entropy with high dim] vs [cross entropy with high dim and mse with low dimensions]
+weight values in reference to the loss values
+
+
+
+
+-------------------------------------------------
+movement to all samples
+simplify core training
+lr and optimizer
+random seed fixed
+dim reduction - random state
+
+baseline - static
+
+
+linear projection for visualization - try
+pca only
+
+
+------
+store model after traditional trainging - pretraining
+experiments with freezing - checkbox for freezing/unfreezing
+
+freezing from beginning/start
+projection layer learning? -- freezed?
+
+learning for high dim
+
+1. freezing from beginning
+2. freezing after traditional training
+
+----------------------------------------------------
+
+
+grey out not irrelevant ui tools and remove if not required / disable
+pause after n epochs - grey after training starts
+
+work on the other plots
+pause training
+
+selection of some of the arguments
+
+code cleanup and stability
+user interface
+project selection - database/model
+
+while puased - adjustable alpha
+
+
+-------------------------------------------------------

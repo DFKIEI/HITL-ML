@@ -23,43 +23,35 @@ def create_sequential_mapping(actions_idx):
     return sequential_mapping
 
 def display_scatter_plot(self, data, tab):
-
     self.selected_point_index = None
     self.selected_point_label = None
+
+    self.dragging_point = None
 
     fig, ax = plt.subplots(figsize=(20, 15))
     unique_labels = np.unique(data['labels'])
     num_classes = len(unique_labels)
 
-    
-    # Get label names for the current dataset
     dict_labels = get_label_names(self.plot.dataloader.dataset)
     sequential_mapping = create_sequential_mapping(dict_labels)
-
-    # Map data['labels'] values to activity names using the sequential mapping
-    #mapped_labels = [sequential_mapping[label] for label in data['labels']]
-
-    # Filter sequential_mapping to include only the labels present in unique_labels
     filtered_label_names = {i: sequential_mapping[i] for i in unique_labels}
-
-    # Number of unique classes in the current batch
-    #num_classes = len(sequential_mapping)
 
     if num_classes > 10:
         cmap = plt.cm.get_cmap('tab20', num_classes)
     else:
         cmap = plt.cm.get_cmap('tab10', num_classes)
 
-    
-    # Use the same coloring for both correct and incorrect classifications
     scatter = ax.scatter(data['features'][:, 0], data['features'][:, 1], 
                          c=data['labels'], cmap=cmap, alpha=0.6, s=50)
 
-    # Add black edge color to incorrectly classified points
     incorrect_mask = data['predicted_labels'] != data['labels']
     ax.scatter(data['features'][incorrect_mask, 0], data['features'][incorrect_mask, 1],
                c=data['labels'][incorrect_mask], cmap=cmap, alpha=0.8, s=50,
                edgecolor='black', linewidth=2.0)
+
+    self.original_points = data['features'].copy()
+    self.moved_points = data['features'].copy()
+    self.individually_moved_points = {}  # Dictionary to store individually moved points
 
     self.center_artists = []
     for i, label in enumerate(unique_labels):
@@ -71,10 +63,11 @@ def display_scatter_plot(self, data, tab):
     cbar = plt.colorbar(scatter, ax=ax, ticks=range(len(filtered_label_names)))
     cbar.set_label('Classes')
     cbar.set_ticklabels(filtered_label_names.values())
-    #cbar.set_ticklabels(unique_labels)
     plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}')
     plt.xlabel('t-SNE feature 1')
     plt.ylabel('t-SNE feature 2')
+
+    self.plot.update_original_2d_points(self.original_points)
 
     def on_press(event):
         if event.inaxes is None:
@@ -86,47 +79,81 @@ def display_scatter_plot(self, data, tab):
                         data['centers'][i][1] - event.ydata)
                 return
 
-        # If not dragging a center, check for point highlighting
         cont, ind = scatter.contains(event)
         if cont:
-            print("Identified", ind['ind'][0])
-            self.selected_point_index = ind['ind'][0]
-            self.selected_point_label = data['labels'][self.selected_point_index]
+            self.dragging_point = ind['ind'][0]
+            self.offset = (self.moved_points[self.dragging_point, 0] - event.xdata,
+                           self.moved_points[self.dragging_point, 1] - event.ydata)
+            print(f"Selected point {self.dragging_point}")
 
     def on_release(event):
         self.dragging = None
+        self.dragging_point = None
 
     def on_motion(event):
-        if self.dragging is None or event.inaxes is None:
+        if self.dragging is not None and event.inaxes is not None:
+            old_center = np.array(data['centers'][self.dragging])
+            new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
+            delta = new_center - old_center
+
+            #print(f"Moving cluster {self.dragging}")
+            #print(f"Old center: {old_center}, New center: {new_center}")
+            #print(f"Delta: {delta}")
+
+            data['centers'][self.dragging] = new_center
+            self.center_artists[self.dragging].set_offsets(new_center)
+
+            mask = data['labels'] == unique_labels[self.dragging]
+            self.moved_points[mask] += delta
+
+            scatter.set_offsets(self.moved_points)
+            ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
+
+            self.plot.update_center(self.dragging, new_center)
+            self.current_centers = self.plot.get_current_centers()
+
+        elif self.dragging_point is not None and event.inaxes is not None:
+            new_pos = np.array([event.xdata + self.offset[0], event.ydata + self.offset[1]])
+            self.moved_points[self.dragging_point] = new_pos
+            self.individually_moved_points[self.dragging_point] = new_pos
+
+            scatter.set_offsets(self.moved_points)
+            if incorrect_mask[self.dragging_point]:
+                ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
+
+            #print(f"Moving point {self.dragging_point} to {new_pos}")
+
+        if self.dragging is not None or self.dragging_point is not None:
+            self.plot.update_latent_space(self.moved_points)
+            self.plot.moved_2d_points = self.moved_points
+            fig.canvas.draw_idle()
+
+    def on_double_click(event):
+        if event.inaxes is None:
             return
-        old_center = np.array(data['centers'][self.dragging])
-        new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
-        delta = new_center - old_center
-
-        # Update the center position
-        data['centers'][self.dragging] = new_center
-        self.center_artists[self.dragging].set_offsets(new_center)
-
-        # Move all points of the same class
-        mask = data['labels'] == unique_labels[self.dragging]
-        data['features'][mask] += delta
-
-        # Update points in scatter objects
-        scatter.set_offsets(data['features'])
-        
-        # Update misclassified points
-        misclassified_scatter = ax.collections[1]  # The second scatter plot (for misclassified points)
-        misclassified_scatter.set_offsets(data['features'][incorrect_mask])
-
-        self.plot.update_center(self.dragging, new_center)
-        self.current_centers = self.plot.get_current_centers()
-
-        fig.canvas.draw_idle()
-
+        for i, artist in enumerate(self.center_artists):
+            if artist.contains(event)[0]:
+                center = data['centers'][i]
+                mask = data['labels'] == unique_labels[i]
+                
+                # Move all points of this class to the center
+                self.moved_points[mask] = np.tile(center, (np.sum(mask), 1))
+                
+                # Update scatter plot
+                scatter.set_offsets(self.moved_points)
+                if np.any(incorrect_mask[mask]):
+                    ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
+                
+                # Update the latent space
+                self.plot.update_latent_space(self.moved_points)
+                self.plot.moved_2d_points = self.moved_points
+                fig.canvas.draw_idle()
+                return
 
     fig.canvas.mpl_connect('button_press_event', on_press)
     fig.canvas.mpl_connect('button_release_event', on_release)
     fig.canvas.mpl_connect('motion_notify_event', on_motion)
+    fig.canvas.mpl_connect('button_press_event', lambda event: on_double_click(event) if event.dblclick else None)
 
     display_plot(self, fig, tab)
 
@@ -155,9 +182,9 @@ def display_radar_plot(self, data, tab):
 
         if self.selected_point_index is not None and self.selected_point_label == class_label:
             ax.plot(angles, values, label=f"{class_label_to_show}", linewidth=2, alpha=1.0)
-            ax.fill(angles, values, alpha=0.25)
+            ax.fill(angles, values, alpha=1.0)
         else:
-            ax.plot(angles, values, label=f"{class_label_to_show}", linewidth=1, alpha=0.2)
+            ax.plot(angles, values, label=f"{class_label_to_show}", linewidth=1, alpha=1.0)
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(data['feature_names'])
@@ -194,7 +221,7 @@ def display_parallel_plot(self, data, tab):
                 if self.selected_point_index is not None and self.selected_point_label == class_label:
                     ax.plot(range(len(data['feature_names'])), row, color=color, alpha=1.0, linewidth=2)
                 else:
-                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=0.1)
+                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=1.0)
 
             
             class_label_to_show = dict_labels[class_label]
