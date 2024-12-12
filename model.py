@@ -179,6 +179,11 @@ class CNN_CIFAR10(nn.Module):
         self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, 128)
         self.fc4 = nn.Linear(128, num_classes)
+
+        # Learnable scale parameter
+        self.scale = nn.Parameter(torch.ones(1) * 10.0)
+
+        self.projection_layer = nn.Linear(256*4*4,2)
         
         self.dropout4 = nn.Dropout(0.5)
         self.dropout5 = nn.Dropout(0.5)
@@ -201,6 +206,21 @@ class CNN_CIFAR10(nn.Module):
         
         x = torch.flatten(x, 1)
         latent_features = x
+
+        # Get latent features statistics
+        latent_mean = torch.mean(latent_features)
+        latent_std = torch.std(latent_features)
+        
+        # Project and rescale to match latent statistics
+        projected_2d_features = self.projection_layer(latent_features)
+        
+        # Normalize projected features to same scale as latent
+        projected_mean = torch.mean(projected_2d_features)
+        projected_std = torch.std(projected_2d_features)
+        projected_2d_features = (projected_2d_features - projected_mean) / (projected_std + 1e-8)
+        projected_2d_features = projected_2d_features * latent_std + latent_mean
+        #print(f"Projected features min : {projected_2d_features.min().item()}, max : {projected_2d_features.max().item()}")
+
         x = F.relu(self.fc1(x))
         x = self.dropout4(x)
         
@@ -213,7 +233,7 @@ class CNN_CIFAR10(nn.Module):
         
         output = self.fc4(x)
         
-        return output, latent_features
+        return output, projected_2d_features, latent_features
     
     @torch.no_grad()
     def predict(self, x):
