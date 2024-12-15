@@ -8,8 +8,8 @@ import matplotlib
 from matplotlib import pyplot as plt
 from torch.utils import data
 import os
-matplotlib.use('TkAgg')
 
+matplotlib.use('TkAgg')
 
 from plots import InteractivePlot
 from training import train_model
@@ -17,11 +17,13 @@ from ui_control import create_info_labels, create_training_controls, create_visu
 from ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
 from training_utils import find_latest_checkpoint, load_checkpoint
 
+
 class UI:
-    def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name, loss_type, visualization):
+    def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name,
+                 loss_type, visualization):
         self.root = root
-        #self.teacher_model = teacher_model
-        #self.student_model = student_model
+        # self.teacher_model = teacher_model
+        # self.student_model = student_model
         self.model = model
         self.optimizer = optimizer
         self.trainloader = trainloader
@@ -71,8 +73,8 @@ class UI:
         main_frame = tk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=padding_value, pady=padding_value)
 
-        #self.control_panel = ttk.LabelFrame(main_frame)
-        #self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=padding_value, pady=padding_value)
+        # self.control_panel = ttk.LabelFrame(main_frame)
+        # self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=padding_value, pady=padding_value)
 
         # Create a canvas with scrollbar for the control panel
         canvas = tk.Canvas(main_frame)
@@ -89,7 +91,6 @@ class UI:
 
         # Configure the control panel to expand to the canvas width
         self.control_panel.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
 
         create_info_labels(self)
         create_training_controls(self)
@@ -110,7 +111,6 @@ class UI:
 
         self.root.after(100, self.process_visualization_queue)
 
-    
     def toggle_training(self):
         if self.training_thread is None or not self.training_thread.is_alive():
             self.pause_event.clear()
@@ -141,7 +141,7 @@ class UI:
 
     def run_training(self):
         train_model(self.model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
-                    self.epoch_var.get(), self.freq_var.get(), self.alpha_var, 
+                    self.epoch_var.get(), self.freq_var.get(), self.alpha_var,
                     f"reports/{self.dataset_name}",
                     self.loss_type,
                     log_callback=self.update_log,
@@ -151,12 +151,12 @@ class UI:
                     pause_after_n_epochs=self.pause_epochs_var.get(),
                     selected_layer=self.selected_layer,
                     centers=True,
-                    plot = self.plot,
+                    plot=self.plot,
                     checkpoint_dir=f"models/{self.dataset_name}")
 
     def on_epoch_end(self):
         self.pause_event.set()
-        #self.teacher_model = self.student_model ###???
+        # self.teacher_model = self.student_model ###???
         self.update_visualization()
         self.training_button.config(text="Resume Training")
         self.status_var.set("Paused after N epochs")
@@ -165,7 +165,6 @@ class UI:
         self.pause_slider.configure(state='active')
         self.alpha_entry.configure(state='active')
 
-
     def update_log(self, message):
         self.log_text.insert(tk.END, message + "\n")
         self.log_text.see(tk.END)
@@ -173,18 +172,19 @@ class UI:
     def show_class_selection(self):
         dataset = self.trainloader.dataset
         labels = get_label_names(dataset)
-    
-        #num_classes = len(dataset.classes) if hasattr(dataset, 'classes') else len(np.unique(labels))
-        #classes = list(range(num_classes))
+
+        # num_classes = len(dataset.classes) if hasattr(dataset, 'classes') else len(np.unique(labels))
+        # classes = list(range(num_classes))
         dropdown = MultiSelectDropdown(self.root, labels.values())
         self.root.wait_window(dropdown)
-        #self.selected_classes_var.set(", ".join(map(str, dropdown.selected_options)))
+        # self.selected_classes_var.set(", ".join(map(str, dropdown.selected_options)))
 
         new_selected_classes = dropdown.selected_options
         if new_selected_classes != self.get_selected_classes():
             self.selected_classes_var.set(", ".join(map(str, new_selected_classes)))
             self.plot.selected_classes = new_selected_classes
             self.update_visualization()
+
     def undo_last_step(self):
         if self.points_last_step is not None and self.last_centers is not None:
             # Restore the previous state of the points and centers
@@ -197,6 +197,9 @@ class UI:
             self.last_centers = None  # Clear the last centers
             self.points_last_step = None  # Clear the last step
 
+            # Log Undoing
+            self.point_tracker.undo_last_step()
+
             # Redraw the canvas to reflect the changes
             self.scatter_fig.canvas.draw_idle()
             print("Undo performed successfully.")
@@ -207,30 +210,30 @@ class UI:
         return (clss for clss in self.selected_classes_var.get().split(", ") if clss)
 
     def update_visualization(self):
-        #selected_classes = self.get_selected_classes()
+        # selected_classes = self.get_selected_classes()
         if self.plot is None:
-            if self.visualization =='train':
-                self.plot = InteractivePlot(self.model, self.trainloader, self.current_plot_type, 
-                                        self.dataset_name, self.num_features.get(),
-                                        selected_layer=self.selected_layer)  
-            elif self.visualization =='validation':
-                self.plot = InteractivePlot(self.model, self.valloader, self.current_plot_type, 
-                                        self.dataset_name, self.num_features.get(),
-                                        selected_layer=self.selected_layer)  
-            elif self.visualization =='test':
-                self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type, 
-                                        self.dataset_name, self.num_features.get(),
-                                        selected_layer=self.selected_layer)    
-            self.plot.prepare_data()   
+            if self.visualization == 'train':
+                self.plot = InteractivePlot(self.model, self.trainloader, self.current_plot_type,
+                                            self.dataset_name, self.num_features.get(),
+                                            selected_layer=self.selected_layer)
+            elif self.visualization == 'validation':
+                self.plot = InteractivePlot(self.model, self.valloader, self.current_plot_type,
+                                            self.dataset_name, self.num_features.get(),
+                                            selected_layer=self.selected_layer)
+            elif self.visualization == 'test':
+                self.plot = InteractivePlot(self.model, self.testloader, self.current_plot_type,
+                                            self.dataset_name, self.num_features.get(),
+                                            selected_layer=self.selected_layer)
+            self.plot.prepare_data()
         else:
             self.plot.prepare_data()
             # Update existing plot object
-            #self.plot.model = self.teacher_model
+            # self.plot.model = self.teacher_model
             self.plot.plot_type = self.current_plot_type
             self.plot.selected_layer = self.selected_layer
-        #self.plot.selected_classes = selected_classes
+        # self.plot.selected_classes = selected_classes
         plot_data = self.plot.get_plot_data(self.current_plot_type)
-        #plot_data['selected_point_index'] = self.selected_point_index
+        # plot_data['selected_point_index'] = self.selected_point_index
         self.visualization_queue.put((plot_data, self.current_plot_type))
 
     def on_tab_change(self, event):
@@ -244,10 +247,10 @@ class UI:
             self.selected_layer = None
         else:
             self.selected_layer = selected_layer
-        
+
         if self.plot:
             self.plot.set_selected_layer(self.selected_layer)
-        
+
         self.update_visualization()
 
     def process_visualization_queue(self):
@@ -273,7 +276,7 @@ class UI:
                 line.set_alpha(0.1)
             highlighted_class = self.plot.selected_labels[ind]
             class_lines = [line for line in self.radar_lines if line.get_label() == f"Class {highlighted_class}"]
-            print("Class lines",class_lines)
+            print("Class lines", class_lines)
             for line in class_lines:
                 line.set_alpha(1.0)
                 line.set_linewidth(3)
@@ -290,6 +293,7 @@ class UI:
                 line.set_linewidth(3)
             self.parallel_fig.canvas.draw()
 
+
 class Pause(threading.Event):
     def __init__(self):
         super().__init__()
@@ -305,7 +309,7 @@ class Pause(threading.Event):
 
     def is_set(self):
         return self._is_set
-    
+
 
 class MultiSelectDropdown(tk.Toplevel):
     def __init__(self, parent, options, title="Select Classes"):

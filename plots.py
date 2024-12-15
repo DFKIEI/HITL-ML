@@ -8,10 +8,12 @@ from sklearn.utils import shuffle
 from scipy.spatial.distance import cosine
 from sklearn.neighbors import NearestNeighbors
 
-from plots_utils import extract_latent_features, compute_feature_importance, calculate_cluster_centers, get_scatter_data, get_radar_data, get_parallel_data
+from plots_utils import extract_latent_features, compute_feature_importance, calculate_cluster_centers, \
+    get_scatter_data, get_radar_data, get_parallel_data
+
 
 class InteractivePlot:
-    def __init__(self, model, dataloader, plot_type, dataset_name, imp_features_number, selected_layer = None):
+    def __init__(self, model, dataloader, plot_type, dataset_name, imp_features_number, selected_layer=None):
         self.model = model
         self.dataloader = dataloader
         self.plot_type = plot_type
@@ -23,12 +25,12 @@ class InteractivePlot:
         self.similarity_threshold = 0.99
         self.previous_tsne_features = None
         self.samples_to_track = self.select_balanced_samples()  # Store indices of samples to track
-        #self.original_high_dim_points = None
+        # self.original_high_dim_points = None
         self.original_2d_points = None
         self.moved_2d_points = None
         self.movement_occured = False
-        #self.prepare_data()
-        #self.prepare_plot_data()
+        # self.prepare_data()
+        # self.prepare_plot_data()
 
     def synchronize_state(self):
         # This method should be called before using the plot object in the training process
@@ -41,20 +43,20 @@ class InteractivePlot:
 
     def select_balanced_samples(self):
         labels = []
-        for _, label in self.dataloader.dataset:  #can improve code here. use dataset.labels to directly get unique labels
+        for _, label in self.dataloader.dataset:  # can improve code here. use dataset.labels to directly get unique labels
             labels.append(label.item() if hasattr(label, 'item') else label)
 
         labels = np.array(labels)
         unique_labels = np.unique(labels)
         selected_indices = []
-        num_samples_per_class = 10 # can be user input
+        num_samples_per_class = 10  # can be user input
 
         # Find minimum number of samples across all classes
         min_samples = float('inf')
         for label in unique_labels:
             indices = np.where(labels == label)[0]
             min_samples = min(min_samples, len(indices))
-        
+
         # Use either the original num_samples_per_class or the minimum available samples
         samples_to_take = min(num_samples_per_class, min_samples)
         self.samples_per_class = samples_to_take
@@ -63,26 +65,24 @@ class InteractivePlot:
         for label in unique_labels:
             indices = np.where(labels == label)[0]
             selected_indices.extend(np.random.choice(indices, samples_to_take, replace=False))
-        
+
         return selected_indices
-    
+
     def features_similar(self, features1, features2):
         if features1 is None or features2 is None:
             return False
         if features1.shape != features2.shape:
             return False
-        
+
         # Compare the first few principal components
         n_components_to_compare = min(10, features1.shape[1])
-        similarity = 1 - cosine(features1[:, :n_components_to_compare].flatten(), 
+        similarity = 1 - cosine(features1[:, :n_components_to_compare].flatten(),
                                 features2[:, :n_components_to_compare].flatten())
         return similarity > self.similarity_threshold
 
     def prepare_data(self):
         print("Extract Latent Features")
         features_2d, latent_features, labels, predicted_labels = extract_latent_features(self)
-
-        
 
         self.labels = labels
         self.selected_features = features_2d[self.samples_to_track]  # Use 2D features directly
@@ -97,7 +97,7 @@ class InteractivePlot:
         print("Calculate Feature Importance and Cluster Center")
         self.num_classes = len(np.unique(self.selected_labels))
         self.cluster_centers = calculate_cluster_centers(self)
-    
+
         self.original_2d_points = self.selected_features
 
     def get_current_high_dim_points(self):
@@ -114,7 +114,7 @@ class InteractivePlot:
 
         nn = NearestNeighbors(n_neighbors=1, metric='euclidean')
         nn.fit(self.original_2d_points)
-    
+
         # For each moved 2D point, find the closest original 2D point
         distances, indices = nn.kneighbors(self.moved_2d_points)
 
@@ -134,7 +134,8 @@ class InteractivePlot:
         # Calculate the direction of movement in high-dimensional space
         high_dim_directions = original_high_dim - self.original_high_dim_points[indices.flatten()]
         norm = np.linalg.norm(high_dim_directions, axis=1, keepdims=True)
-        high_dim_directions = np.divide(high_dim_directions, norm, out=np.zeros_like(high_dim_directions), where=norm!=0)
+        high_dim_directions = np.divide(high_dim_directions, norm, out=np.zeros_like(high_dim_directions),
+                                        where=norm != 0)
 
         # Apply the movement to the high-dimensional points
         movement = movement_magnitude[:, np.newaxis] * high_dim_directions
@@ -176,10 +177,10 @@ class InteractivePlot:
         self.movement_occured = True
         print(f"moved_2d_points updated, shape: {self.moved_2d_points.shape}")
 
-    #def get_current_high_dim_points(self):
+    # def get_current_high_dim_points(self):
     #    moved_2d_points = self.get_moved_2d_points()
     #    return self.estimate_inverse_transform(moved_2d_points)
-            
+
     def get_current_centers(self):
         return self.cluster_centers
 
@@ -189,7 +190,6 @@ class InteractivePlot:
     def set_selected_classes(self, selected_classes):
         self.selected_classes = selected_classes
 
-
     def get_plot_data(self, plot_type):
         if plot_type == 'scatter':
             return get_scatter_data(self)
@@ -197,6 +197,3 @@ class InteractivePlot:
             return get_radar_data(self)
         elif plot_type == 'parallel':
             return get_parallel_data(self)
-
-
-

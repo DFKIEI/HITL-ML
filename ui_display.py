@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
 import tkinter as tk
+from custom_logging import PointTracker
 
 
 def get_label_names(dataset):
@@ -29,6 +30,7 @@ def display_scatter_plot(self, data, tab):
     self.selected_point_label = None
     self.data = data
     self.dragging_point = None
+    self.point_tracker = PointTracker()
 
     fig, ax = plt.subplots(figsize=(20, 15))
     self.ax = ax
@@ -95,8 +97,29 @@ def display_scatter_plot(self, data, tab):
             print(f"Selected point {self.dragging_point}")
 
     def on_release(event):
-        self.dragging = None
-        self.dragging_point = None
+        if self.dragging is not None:
+            old_center = self.last_centers[self.dragging]
+            new_center = data['centers'][self.dragging]
+            # Log center movement
+            self.point_tracker.log_center_movement(
+                unique_labels[self.dragging],
+                old_center,
+                new_center
+            )
+            print(f"Center moved: Class {unique_labels[self.dragging]} from {old_center} to {new_center}")
+            self.dragging = None
+
+        elif self.dragging_point is not None and self.dragging is None:  # Logging for individual point movement
+            old_position = self.points_last_step[self.dragging_point]
+            new_position = self.moved_points[self.dragging_point]
+            self.point_tracker.log_individual_point_movement(
+                self.dragging_point,
+                old_position,
+                new_position,
+                data['labels'][self.dragging_point]
+            )
+
+            self.dragging_point = None  # Reset dragging for point
 
     def on_motion(event):
         if self.dragging is not None and event.inaxes is not None:
@@ -144,6 +167,13 @@ def display_scatter_plot(self, data, tab):
 
                 # Move all points of this class to the center
                 self.moved_points[mask] = np.tile(center, (np.sum(mask), 1))
+
+                # Log class points reset
+                self.point_tracker.log_class_points_reset(
+                    unique_labels[i],
+                    center,
+                    np.sum(mask)
+                )
 
                 # Update scatter plot
                 scatter.set_offsets(self.moved_points)

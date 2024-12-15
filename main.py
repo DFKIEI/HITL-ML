@@ -7,9 +7,12 @@ from ui import UI
 from data_loader import load_dataset
 from model import get_model
 import os
+from ui_init_window import run_initial_ui
 
 
 def main():
+    user_input = run_initial_ui()
+    print(f"Initial Setup: {user_input}")
     parser = argparse.ArgumentParser(description='Train and visualize neural networks')
     parser.add_argument('--dataset', type=str, default='PAMAP2', help='Dataset to use')
     parser.add_argument('--model', type=str, default='CNN_PAMAP2', help='Model architecture to use')
