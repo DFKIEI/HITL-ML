@@ -5,6 +5,7 @@ import numpy as np
 import threading
 import queue
 import matplotlib
+from matplotlib import pyplot as plt
 from torch.utils import data
 import os
 matplotlib.use('TkAgg')
@@ -171,19 +172,6 @@ class UI:
 
     def show_class_selection(self):
         dataset = self.trainloader.dataset
-
-        #if hasattr(dataset, 'dataset'): ###For CIFAR10,100
-        #    dataset = dataset.dataset
-    
-        #if hasattr(dataset, 'targets'):
-        #    labels = dataset.targets
-        #elif hasattr(dataset, 'labels'):
-        #    labels = dataset.labels
-        #elif hasattr(dataset, 'classes'):
-        #    labels = range(len(dataset.classes))
-        #else:
-        #    raise AttributeError("Dataset has no recognizable label attribute")
-
         labels = get_label_names(dataset)
     
         #num_classes = len(dataset.classes) if hasattr(dataset, 'classes') else len(np.unique(labels))
@@ -197,6 +185,23 @@ class UI:
             self.selected_classes_var.set(", ".join(map(str, new_selected_classes)))
             self.plot.selected_classes = new_selected_classes
             self.update_visualization()
+    def undo_last_step(self):
+        if self.points_last_step is not None and self.last_centers is not None:
+            # Restore the previous state of the points and centers
+            self.moved_points = self.points_last_step.copy()
+            self.scatter.set_offsets(self.moved_points)
+            self.ax.collections[1].set_offsets(self.moved_points[self.data['predicted_labels'] != self.data['labels']])
+
+            self.plot.update_latent_space(self.moved_points)  # Update latent space
+            self.plot.moved_2d_points = self.moved_points  # Update plot data
+            self.last_centers = None  # Clear the last centers
+            self.points_last_step = None  # Clear the last step
+
+            # Redraw the canvas to reflect the changes
+            self.scatter_fig.canvas.draw_idle()
+            print("Undo performed successfully.")
+        else:
+            print("Nothing to undo.")
 
     def get_selected_classes(self):
         return (clss for clss in self.selected_classes_var.get().split(", ") if clss)

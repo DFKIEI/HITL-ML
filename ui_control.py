@@ -55,4 +55,5 @@ def create_visualization_controls(self):
 
     ttk.Label(self.control_panel, text="Select Layer:").pack(pady=3)
     self.layer_var = tk.StringVar(value="final")
+    ttk.Button(self.control_panel, text="undo", command=self.undo_last_step).pack(pady=3)
     

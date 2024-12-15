@@ -5,9 +5,9 @@ import tkinter as tk
 
 
 def get_label_names(dataset):
-    if hasattr(dataset, 'dataset'): ###For CIFAR10,100
+    if hasattr(dataset, 'dataset'):  ###For CIFAR10,100
         dataset = dataset.dataset
-    
+
     if hasattr(dataset, 'classes'):
         return {i: name for i, name in enumerate(dataset.classes)}
     elif hasattr(dataset, 'class_to_idx'):
@@ -17,18 +17,23 @@ def get_label_names(dataset):
     else:
         return {}  # Return an empty dict if no label names are found
 
+
 def create_sequential_mapping(actions_idx):
     # Create a reverse mapping that maps sequential indices to the correct activities
     sequential_mapping = {i: actions_idx[key] for i, key in enumerate(sorted(actions_idx.keys()))}
     return sequential_mapping
 
+
 def display_scatter_plot(self, data, tab):
     self.selected_point_index = None
     self.selected_point_label = None
-
+    self.data = data
     self.dragging_point = None
 
     fig, ax = plt.subplots(figsize=(20, 15))
+    self.ax = ax
+    self.scatter_fig = fig
+
     unique_labels = np.unique(data['labels'])
     num_classes = len(unique_labels)
 
@@ -36,13 +41,12 @@ def display_scatter_plot(self, data, tab):
     sequential_mapping = create_sequential_mapping(dict_labels)
     filtered_label_names = {i: sequential_mapping[i] for i in unique_labels}
 
-    if num_classes > 10:
-        cmap = plt.cm.get_cmap('tab20', num_classes)
-    else:
-        cmap = plt.cm.get_cmap('tab10', num_classes)
+    cmap_name = 'tab20' if num_classes > 10 else 'tab10'
+    cmap = plt.cm.get_cmap(cmap_name, num_classes)
 
-    scatter = ax.scatter(data['features'][:, 0], data['features'][:, 1], 
+    scatter = ax.scatter(data['features'][:, 0], data['features'][:, 1],
                          c=data['labels'], cmap=cmap, alpha=0.6, s=50)
+    self.scatter = scatter
 
     incorrect_mask = data['predicted_labels'] != data['labels']
     ax.scatter(data['features'][incorrect_mask, 0], data['features'][incorrect_mask, 1],
@@ -51,12 +55,14 @@ def display_scatter_plot(self, data, tab):
 
     self.original_points = data['features'].copy()
     self.moved_points = data['features'].copy()
+    self.points_last_step = None
+    self.last_centers = None
     self.individually_moved_points = {}  # Dictionary to store individually moved points
 
     self.center_artists = []
     for i, label in enumerate(unique_labels):
         center = data['centers'][i]
-        center_artist = ax.scatter(center[0], center[1], color=cmap(i), 
+        center_artist = ax.scatter(center[0], center[1], color=cmap(i),
                                    marker='x', s=100, linewidths=2, picker=5)
         self.center_artists.append(center_artist)
 
@@ -72,11 +78,13 @@ def display_scatter_plot(self, data, tab):
     def on_press(event):
         if event.inaxes is None:
             return
+        self.points_last_step = self.moved_points.copy()  # backup current points
+        self.last_centers = data['centers'].copy()
         for i, artist in enumerate(self.center_artists):
             if artist.contains(event)[0]:
                 self.dragging = i
                 self.offset = (data['centers'][i][0] - event.xdata,
-                        data['centers'][i][1] - event.ydata)
+                               data['centers'][i][1] - event.ydata)
                 return
 
         cont, ind = scatter.contains(event)
@@ -95,10 +103,6 @@ def display_scatter_plot(self, data, tab):
             old_center = np.array(data['centers'][self.dragging])
             new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
             delta = new_center - old_center
-
-            #print(f"Moving cluster {self.dragging}")
-            #print(f"Old center: {old_center}, New center: {new_center}")
-            #print(f"Delta: {delta}")
 
             data['centers'][self.dragging] = new_center
             self.center_artists[self.dragging].set_offsets(new_center)
@@ -121,7 +125,7 @@ def display_scatter_plot(self, data, tab):
             if incorrect_mask[self.dragging_point]:
                 ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
 
-            #print(f"Moving point {self.dragging_point} to {new_pos}")
+            # print(f"Moving point {self.dragging_point} to {new_pos}")
 
         if self.dragging is not None or self.dragging_point is not None:
             self.plot.update_latent_space(self.moved_points)
@@ -133,17 +137,19 @@ def display_scatter_plot(self, data, tab):
             return
         for i, artist in enumerate(self.center_artists):
             if artist.contains(event)[0]:
+                self.points_last_step = self.moved_points.copy()  # backup current points
+                self.last_centers = data['centers'].copy()
                 center = data['centers'][i]
                 mask = data['labels'] == unique_labels[i]
-                
+
                 # Move all points of this class to the center
                 self.moved_points[mask] = np.tile(center, (np.sum(mask), 1))
-                
+
                 # Update scatter plot
                 scatter.set_offsets(self.moved_points)
                 if np.any(incorrect_mask[mask]):
                     ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
-                
+
                 # Update the latent space
                 self.plot.update_latent_space(self.moved_points)
                 self.plot.moved_2d_points = self.moved_points
@@ -175,7 +181,7 @@ def display_radar_plot(self, data, tab):
 
     # Plot each class
     for class_label, class_values in data['class_data'].items():
-        
+
         class_label_to_show = dict_labels[class_label]
         # Ensure the class_values also closes the loop
         values = np.concatenate([class_values, [class_values[0]]])
@@ -223,7 +229,6 @@ def display_parallel_plot(self, data, tab):
                 else:
                     ax.plot(range(len(data['feature_names'])), row, color=color, alpha=1.0)
 
-            
             class_label_to_show = dict_labels[class_label]
             # Create a line for the legend
             legend_line = plt.Line2D([0], [0], color=color, lw=2, label=f'{class_label_to_show}')
@@ -249,13 +254,16 @@ def display_parallel_plot(self, data, tab):
 
     display_plot(self, fig, tab)
 
+
 def display_plot(self, fig, tab):
     for widget in tab.winfo_children():
         widget.destroy()
     canvas = FigureCanvasTkAgg(fig, master=tab)
     canvas.draw()
+
     toolbar = NavigationToolbar2Tk(canvas, tab)
     toolbar.update()
+
     canvas_widget = canvas.get_tk_widget()
     canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
     toolbar.pack(side=tk.BOTTOM, fill=tk.X)
