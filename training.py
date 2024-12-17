@@ -105,6 +105,9 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
     model.train()
 
+    move_2d_points = None
+    ideal_structure = None
+
     for epoch in range(num_epochs):
         running_loss = 0.0
         ce_running_loss = 0.0
@@ -112,8 +115,15 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         correct_predictions = 0
         total_predictions = 0
 
-        moved_2d_points = torch.tensor(plot.get_moved_2d_points(), dtype=torch.float32, device=device)
-        ideal_structure = compute_ideal_structure(moved_2d_points, plot.samples_per_class, plot.num_classes)
+        if epoch % pause_after_n_epochs == 0:
+            moved_2d_points = torch.tensor(plot.get_moved_2d_points(), dtype=torch.float32, device=device)
+            ideal_structure = compute_ideal_structure(moved_2d_points, plot.samples_per_class, plot.num_classes)
+
+        if stop_training and stop_training.is_set():
+            return
+
+        if pause_event and pause_event.is_set():
+            pause_event.wait()
 
         for i, (inputs, labels) in enumerate(trainloader):
             batch_size = inputs.size(0)
@@ -123,11 +133,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 labels = labels[:-excess_samples]
                 batch_size = inputs.size(0)
 
-            if stop_training and stop_training.is_set():
-                return
 
-            if pause_event and pause_event.is_set():
-                pause_event.wait()
 
             inputs, labels = inputs.to(device), labels.to(device)
 
