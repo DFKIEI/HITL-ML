@@ -1,10 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
+
 def create_info_labels(self):
     ttk.Label(self.control_panel, text=f"Dataset: {self.dataset_name}").pack(pady=5)
     ttk.Label(self.control_panel, text=f"Model: {self.model_name}").pack(pady=5)
     ttk.Label(self.control_panel, text=f"Loss: {self.loss_type}").pack(pady=5)
+
 
 def create_training_controls(self):
     ttk.Label(self.control_panel, text="Number of Epochs:").pack(pady=3)
@@ -23,7 +25,6 @@ def create_training_controls(self):
     self.freq_entry.pack(padx=3, pady=3)
     self.freq_entry.configure(state='disabled')
 
-
     ttk.Label(self.control_panel, text="Number of features for plotting high dim:").pack(pady=3)
     self.num_features = tk.IntVar(value=10)
     self.features_entry = ttk.Entry(self.control_panel, textvariable=self.num_features)
@@ -32,9 +33,9 @@ def create_training_controls(self):
 
     ttk.Label(self.control_panel, text="Pause after every N epochs:").pack(pady=3)
     self.pause_epochs_var = tk.IntVar(value=5)
-    self.pause_slider = tk.Scale(self.control_panel, from_=1, to=self.epoch_var.get(), orient=tk.HORIZONTAL, variable=self.pause_epochs_var)
+    self.pause_slider = tk.Scale(self.control_panel, from_=1, to=self.epoch_var.get(), orient=tk.HORIZONTAL,
+                                 variable=self.pause_epochs_var)
     self.pause_slider.pack(padx=3, pady=3)
-
 
     self.status_var = tk.StringVar(value="Not started")
     ttk.Label(self.control_panel, textvariable=self.status_var).pack(pady=3)
@@ -47,6 +48,7 @@ def create_training_controls(self):
 
     ttk.Button(self.control_panel, text="Stop Training", command=self.stop_training.set).pack(pady=3)
 
+
 def create_visualization_controls(self):
     ttk.Label(self.control_panel, text="Select Classes to Visualize:").pack(pady=3)
     self.selected_classes_var = tk.StringVar()
@@ -55,4 +57,4 @@ def create_visualization_controls(self):
 
     ttk.Label(self.control_panel, text="Select Layer:").pack(pady=3)
     self.layer_var = tk.StringVar(value="final")
-    
+    ttk.Button(self.control_panel, text="undo", command=self.undo_last_step).pack(pady=3)

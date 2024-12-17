@@ -31,9 +31,9 @@ def load_pamap2(batch_size=32, window_size=200, window_step=50, frequency=50, sp
     val_dataset = PAMAP2(window_size=window_size, window_step=window_step, users='val', columns=columns, train_users=[1, 3, 4, 5, 6, 8], frequency=frequency)
     test_dataset = PAMAP2(window_size=window_size, window_step=window_step, users='test', columns=columns, train_users=[1, 3, 4, 5, 6, 8], frequency=frequency)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0,pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0,pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0,pin_memory=True)
 
     # Extract labels from each dataset
     train_labels = extract_labels(train_dataset)
@@ -101,9 +101,9 @@ def load_cifar100(batch_size=32, val_split=0.5):
     val_dataset, test_dataset = random_split(full_test_dataset, [val_size, test_size])
 
     # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     # CIFAR-100 has 100 classes
     num_classes = 100
