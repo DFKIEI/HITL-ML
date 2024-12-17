@@ -16,6 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train and visualize neural networks')
     parser.add_argument('--dataset', type=str, default=user_input['dataset'], help='Dataset to use')
     parser.add_argument('--model', type=str, default=f'CNN_{user_input['dataset']}', help='Model architecture to use')
+    parser.add_argument('--checkpoint', type=str, default=user_input['dataset'], help='checkpoint ')
     parser.add_argument('--loss', type=str, default='cross_entropy', choices=['cross_entropy', 'custom', 'external'],
                         help='Loss function to use')
     parser.add_argument('--batch', type=int, default=128, help='Batch Size')
@@ -43,7 +44,7 @@ def main():
     # Create UI
     root = tk.Tk()
     UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss,
-       args.visualize)
+       args.visualize,args.checkpoint)
     root.mainloop()
 
 

@@ -35,8 +35,7 @@ class PointTracker:
             new_center (np.ndarray): New center coordinates
         """
         self.logger.info(
-            f"Center movement - Class {class_label}: "
-            f"From {old_center} to {new_center}"
+            f"CM, {class_label},{old_center},{new_center}"
         )
 
     def init_logging_header(self,
@@ -71,14 +70,9 @@ class PointTracker:
             new_position (np.ndarray): New point coordinates
             class_label (Optional[int]): Label of the point's class
         """
-        message = (
-            f"Point movement - Index {point_index}: "
-            f"From {old_position} to {new_position}"
+        self.logger.info(
+            f"PM, {point_index},{old_position},{new_position}"
         )
-        if class_label is not None:
-            message += f" (Class {class_label})"
-
-        self.logger.info(message)
 
     def log_class_points_reset(self,
                                class_label: int,
@@ -93,8 +87,7 @@ class PointTracker:
             num_points (int): Number of points reset
         """
         self.logger.info(
-            f"Class points reset - Class {class_label}: "
-            f"All {num_points} points moved to center {center}"
+            f"CR, {class_label}, {center}, _"
         )
 
     def undo_last_step(self):
