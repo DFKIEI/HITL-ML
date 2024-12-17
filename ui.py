@@ -20,7 +20,7 @@ from training_utils import find_latest_checkpoint, load_checkpoint
 
 class UI:
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name,
-                 loss_type, visualization, checkpoint):
+                 loss_type, visualization, checkpoint, probant_id, scenario):
         self.root = root
         # self.teacher_model = teacher_model
         # self.student_model = student_model
@@ -36,9 +36,16 @@ class UI:
         self.model_name = model_name
         self.loss_type = loss_type
         self.visualization = visualization
+        self.probant_id = probant_id,
+        self.scenario = scenario
 
-        # Load checkpoint first
-        checkpoint_dir = f"models/{self.dataset_name}"
+        self.probant_scenario_dir = f'{probant_id}_{scenario}'
+        if not os.path.exists(self.probant_scenario_dir):
+            os.makedirs(self.probant_scenario_dir)
+
+        # checkpoint_dir = f"models/{self.dataset_name}"
+        checkpoint_dir = self.probant_scenario_dir
+
         if os.path.exists(checkpoint_dir):
             # latest_checkpoint = find_latest_checkpoint(checkpoint_dir)
             # if latest_checkpoint:
@@ -152,7 +159,7 @@ class UI:
                     selected_layer=self.selected_layer,
                     centers=True,
                     plot=self.plot,
-                    checkpoint_dir=f"models/{self.dataset_name}")
+                    checkpoint_dir=self.probant_scenario_dir)
 
     def on_epoch_end(self):
         self.pause_event.set()

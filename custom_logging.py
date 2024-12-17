@@ -4,11 +4,11 @@ from typing import Optional
 
 
 class PointTracker:
-    def __init__(self, id: str = 'test', scenario: str = 'A1', log_file: str = 'point_movements.log'):
+    def __init__(self, probant_id: str = 'test', scenario: str = 'A1'):
         # Configure logging
         self.logger = logging.getLogger('PointTracker')
         self.logger.setLevel(logging.INFO)
-        log_file = f'point_movements_id_{id}_scenario_{scenario}.log'
+        log_file = f'point_movements_id_{probant_id}_scenario_{scenario}.log'
         # File handler
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.INFO)
@@ -20,7 +20,7 @@ class PointTracker:
         # Add handler if not already added
         if not self.logger.handlers:
             self.logger.addHandler(file_handler)
-        self.init_logging_header(id, scenario)
+        self.init_logging_header(probant_id, scenario)
 
     def log_center_movement(self,
                             class_label: int,

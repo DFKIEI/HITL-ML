@@ -44,7 +44,7 @@ def main():
     # Create UI
     root = tk.Tk()
     UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss,
-       args.visualize,args.checkpoint)
+       args.visualize,args.checkpoint, args.id, args.scenario)
     root.mainloop()
 
 

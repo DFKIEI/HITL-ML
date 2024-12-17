@@ -30,7 +30,7 @@ def display_scatter_plot(self, data, tab):
     self.selected_point_label = None
     self.data = data
     self.dragging_point = None
-    self.point_tracker = PointTracker()
+    self.point_tracker = PointTracker(self.probant_id, self.scenario)
 
     fig, ax = plt.subplots(figsize=(20, 15))
     self.ax = ax

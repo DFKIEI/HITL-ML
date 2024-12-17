@@ -14,53 +14,36 @@ import matplotlib.pyplot as plt
 import random
 from training_utils import save_checkpoint
 from collections import defaultdict
-
+import torch.cuda.amp as amp
 
 def compute_ideal_structure(moved_points, samples_per_class, num_classes):
     """Extract mean and spread of each class"""
     class_info = {}
-    num_classes = num_classes
-    points_per_class = samples_per_class
-
+    points = moved_points.view(num_classes, samples_per_class, -1)
+    centers = points.mean(dim=1)
+    spreads = torch.norm(points - centers[:, None], dim=2).mean(dim=1)
     for c in range(num_classes):
-        start_idx = c * points_per_class
-        end_idx = start_idx + points_per_class
-        class_points = moved_points[start_idx:end_idx]
-
-        # Compute center and spread
-        center = class_points.mean(dim=0)
-        dists_to_center = torch.norm(class_points - center, dim=1)
-        spread = dists_to_center.mean()
-
-        # Store statistics instead of full matrices
-        class_info[c] = {
-            'center': center,
-            'spread': spread,
-        }
-
+        class_info[c] = {'center': centers[c], 'spread': spreads[c]}
     return class_info
 
 
 def relative_distance_loss(features_2d, labels, ideal_structure):
-    """Compare relationships using class statistics"""
+    """Optimized version of relative distance loss"""
     batch_size = features_2d.size(0)
+    num_classes = len(ideal_structure)
 
-    # Group points by class in this batch
-    class_indices = defaultdict(list)
-    for i in range(batch_size):
-        class_indices[labels[i].item()].append(i)
+    # Group points by class more efficiently
+    class_points = [features_2d[labels == c] for c in range(num_classes)]
 
     total_loss = 0
     num_comparisons = 0
 
-    for label, indices in class_indices.items():
-        if len(indices) > 1:  # Need at least 2 points
-            points = features_2d[indices]
+    for label, points in enumerate(class_points):
+        if len(points) > 1:
             ideal_center = ideal_structure[label]['center']
-            ideal_spread = ideal_structure[label][
-                'spread']  # Isolate losses #Normalize with feature space #Visualize random val dataset #keep the viz scale same
+            ideal_spread = ideal_structure[label]['spread']
 
-            # 1. Distance to class center
+            # 1. Distance to class center (use built-in PyTorch operations)
             current_center = points.mean(dim=0)
             center_loss = F.mse_loss(current_center, ideal_center)
 
@@ -69,28 +52,25 @@ def relative_distance_loss(features_2d, labels, ideal_structure):
             current_spread = current_dists.mean()
             spread_loss = torch.abs(current_spread - ideal_spread)
 
-            # 3. Inter-class separation
-            for other_label in class_indices:
-                if other_label != label:
-                    other_indices = class_indices[other_label]
-                    if other_indices:
-                        other_points = features_2d[other_indices]
-                        other_center = other_points.mean(dim=0)
+            # 3. Inter-class separation (vectorized)
+            for other_label, other_points in enumerate(class_points):
+                if other_label != label and len(other_points) > 0:
+                    other_center = other_points.mean(dim=0)
 
-                        # Distance between centers should be at least sum of spreads
-                        min_distance = (ideal_structure[label]['spread'] +
-                                        ideal_structure[other_label]['spread'])
+                    # Distance between centers
+                    min_distance = (ideal_structure[label]['spread'] +
+                                    ideal_structure[other_label]['spread'])
+                    center_distance = torch.norm(current_center - other_center)
+                    separation_loss = torch.clamp(min_distance - center_distance, min=0)
 
-                        center_distance = torch.norm(current_center - other_center)
-                        separation_loss = torch.clamp(min_distance - center_distance, min=0)
-
-                        total_loss += separation_loss
-                        num_comparisons += 1
+                    total_loss += separation_loss
+                    num_comparisons += 1
 
             total_loss += center_loss + spread_loss
             num_comparisons += 2
 
-    return total_loss / max(num_comparisons, 1)  # Avoid division by zero
+    return total_loss / max(num_comparisons, 1)
+
 
 
 def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq,
@@ -98,17 +78,19 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None,
                 get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None,
                 checkpoint_dir=None):
-    ce_criterion = nn.CrossEntropyLoss()
 
+    scaler = amp.GradScaler()
+
+    ce_criterion = nn.CrossEntropyLoss()
     for param in model.projection_layer.parameters():
         param.requires_grad = False
-
     model.train()
 
     move_2d_points = None
     ideal_structure = None
 
     for epoch in range(num_epochs):
+        model.train()
         running_loss = 0.0
         ce_running_loss = 0.0
         interaction_running_loss = 0.0
@@ -126,40 +108,41 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             pause_event.wait()
 
         for i, (inputs, labels) in enumerate(trainloader):
-            batch_size = inputs.size(0)
-            if len(inputs) % 10 != 0:
-                excess_samples = len(inputs) % 10
-                inputs = inputs[:-excess_samples]
-                labels = labels[:-excess_samples]
-                batch_size = inputs.size(0)
-
-
 
             inputs, labels = inputs.to(device), labels.to(device)
 
-            # Get a matching batch of user-modified data
-            # mod_inputs = get_random_modified_batch(moved_2d_points,batch_size)
-            # mod_inputs = mod_inputs.to(device)
+            batch_size = inputs.size(0)
+            if batch_size % 10 != 0:
+                inputs = inputs[:-(batch_size % 10)]
+                labels = labels[:-(batch_size % 10)]
+                batch_size = inputs.size(0)
+
 
             optimizer.zero_grad()
 
             alpha_val = alpha_var.get()
 
-            outputs, reduced_features, anchor_features = model(inputs)
+            with torch.amp.autocast('cuda'):
+                outputs, reduced_features, anchor_features = model(inputs)
 
-            ce_loss = ce_criterion(outputs, labels)
+                ce_loss = ce_criterion(outputs, labels)
 
-            # Apply structure to all points
-            interaction_loss = relative_distance_loss(
-                reduced_features, labels, ideal_structure)  # * 100.0
+                # Apply structure to all points
+                interaction_loss = relative_distance_loss(
+                    reduced_features, labels, ideal_structure)  # * 100.0
 
-            scale_reg = 0.1 * torch.abs(1.0 - model.scale)  # Regularize scale to stay close to 1
-            loss = (1 - alpha_val) * ce_loss + alpha_val * interaction_loss + scale_reg
+                scale_reg = 0.1 * torch.abs(1.0 - model.scale)  # Regularize scale to stay close to 1
+                loss = (1 - alpha_val) * ce_loss + alpha_val * interaction_loss + scale_reg
 
-            # loss = ce_loss
 
-            loss.backward()
-            optimizer.step()
+            # Scale the loss and backpropagate
+            scaler.scale(loss).backward()
+
+            # Unscale and update weights
+            scaler.step(optimizer)
+
+            # Update the scale for next iteration
+            scaler.update()
 
             # Update metrics
             running_loss += loss.item()
