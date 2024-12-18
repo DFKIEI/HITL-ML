@@ -7,6 +7,7 @@ import queue
 import matplotlib
 from matplotlib import pyplot as plt
 from torch.utils import data
+from custom_logging import PointTracker, AllDataPointsTracker
 import os
 
 matplotlib.use('TkAgg')
@@ -18,17 +19,15 @@ from ui_display import display_scatter_plot, display_parallel_plot, display_rada
 from training_utils import find_latest_checkpoint, load_checkpoint
 
 
+
+
 class UI:
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name,
                  loss_type, visualization, checkpoint, probant_id, scenario):
         self.root = root
-        # self.teacher_model = teacher_model
-        # self.student_model = student_model
         self.model = model
         self.optimizer = optimizer
         self.trainloader = trainloader
-        # self.trainloader_shuffled = trainloader_shuffled
-        # self.trainloader_class = trainloader_class
         self.valloader = valloader
         self.testloader = testloader
         self.device = device
@@ -38,6 +37,9 @@ class UI:
         self.visualization = visualization
         self.probant_id = probant_id,
         self.scenario = scenario
+
+        self.point_tracker = PointTracker(self.probant_id, self.scenario)
+        self.all_datapoints_tracker = AllDataPointsTracker(self.probant_id, self.scenario)
 
         self.probant_scenario_dir = f'{probant_id}_{scenario}'
         if not os.path.exists(self.probant_scenario_dir):
@@ -145,10 +147,11 @@ class UI:
                 # Enable pause epochs slider when pausing
                 self.pause_slider.configure(state='active')
                 self.alpha_entry.configure(state='active')
+        self.all_datapoints_tracker.log_datapoints_state(self.data,self.moved_points)
 
     def run_training(self):
-        train_model(self.model, self.optimizer, self.trainloader, self.valloader, self.testloader, self.device,
-                    self.epoch_var.get(), self.freq_var.get(), self.alpha_var,
+        train_model(self.model, self.optimizer, self.trainloader, self.valloader,
+                    self.testloader, self.device, self.epoch_var.get(), self.freq_var.get(), self.alpha_var,
                     f"reports/{self.dataset_name}",
                     self.loss_type,
                     log_callback=self.update_log,
@@ -180,11 +183,8 @@ class UI:
         dataset = self.trainloader.dataset
         labels = get_label_names(dataset)
 
-        # num_classes = len(dataset.classes) if hasattr(dataset, 'classes') else len(np.unique(labels))
-        # classes = list(range(num_classes))
         dropdown = MultiSelectDropdown(self.root, labels.values())
         self.root.wait_window(dropdown)
-        # self.selected_classes_var.set(", ".join(map(str, dropdown.selected_options)))
 
         new_selected_classes = dropdown.selected_options
         if new_selected_classes != self.get_selected_classes():
