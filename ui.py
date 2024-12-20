@@ -1,7 +1,5 @@
 import tkinter as tk
 from tkinter import ttk
-from tkinter.constants import NO
-import numpy as np
 import threading
 import queue
 import matplotlib
@@ -19,8 +17,6 @@ from ui_display import display_scatter_plot, display_parallel_plot, display_rada
 from training_utils import find_latest_checkpoint, load_checkpoint
 
 
-
-
 class UI:
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name,
                  loss_type, visualization, checkpoint, probant_id, scenario):
@@ -35,22 +31,17 @@ class UI:
         self.model_name = model_name
         self.loss_type = loss_type
         self.visualization = visualization
-        self.probant_id = probant_id,
+        self.probant_id = probant_id
         self.scenario = scenario
 
-        self.point_tracker = PointTracker(self.probant_id, self.scenario)
-        self.all_datapoints_tracker = AllDataPointsTracker(self.probant_id, self.scenario)
-
-        self.probant_scenario_dir = f'{probant_id}_{scenario}'
+        self.probant_scenario_dir = f'user_study_logs/{probant_id}_{scenario}'
         if not os.path.exists(self.probant_scenario_dir):
             os.makedirs(self.probant_scenario_dir)
 
-        # checkpoint_dir = f"models/{self.dataset_name}"
-        checkpoint_dir = self.probant_scenario_dir
+        self.point_tracker = PointTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
+        self.all_datapoints_tracker = AllDataPointsTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
 
-        if os.path.exists(checkpoint_dir):
-            # latest_checkpoint = find_latest_checkpoint(checkpoint_dir)
-            # if latest_checkpoint:
+        if os.path.exists(checkpoint):
             try:
                 _, loss_info = load_checkpoint(self.model, self.optimizer, checkpoint)
                 print(f"Loaded checkpoint with Val Accuracy: {loss_info['val_accuracy']:.2f}%")
@@ -147,7 +138,7 @@ class UI:
                 # Enable pause epochs slider when pausing
                 self.pause_slider.configure(state='active')
                 self.alpha_entry.configure(state='active')
-        self.all_datapoints_tracker.log_datapoints_state(self.data,self.moved_points)
+        self.all_datapoints_tracker.log_datapoints_state(self.data, self.moved_points)
 
     def run_training(self):
         train_model(self.model, self.optimizer, self.trainloader, self.valloader,

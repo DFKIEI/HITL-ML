@@ -1,14 +1,15 @@
 import logging
 import numpy as np
 from typing import Optional
+import os
 
 
 class PointTracker:
-    def __init__(self, probant_id: str = 'test', scenario: str = 'A1'):
+    def __init__(self, probant_id: str = 'test', scenario: str = 'A1', log_path: str = ''):
         # Configure logging
         self.logger = logging.getLogger('PointTracker')
         self.logger.setLevel(logging.INFO)
-        log_file = f'point_movements_id_{probant_id}_scenario_{scenario}.log'
+        log_file = f'{log_path}{os.sep}point_movements_id_{probant_id}_scenario_{scenario}.log'
         # File handler
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.INFO)
@@ -101,12 +102,12 @@ class PointTracker:
 
 
 class AllDataPointsTracker:
-    def __init__(self, probant_id: str = 'test', scenario: str = 'A1'):
+    def __init__(self, probant_id: str = 'test', scenario: str = 'A1', log_path: str = ''):
         # Configure logging
         self.iter_counter = 0
         self.logger = logging.getLogger('AllDataPointsTracker')
         self.logger.setLevel(logging.INFO)
-        log_file = f'all_datapoints_id_{probant_id}_scenario_{scenario}.log'
+        log_file = f'{log_path}{os.sep}all_datapoints_id_{probant_id}_scenario_{scenario}.log'
         # File handler
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(logging.INFO)

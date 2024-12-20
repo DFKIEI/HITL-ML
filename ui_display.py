@@ -4,7 +4,6 @@ import numpy as np
 import tkinter as tk
 
 
-
 def get_label_names(dataset):
     if hasattr(dataset, 'dataset'):  ###For CIFAR10,100
         dataset = dataset.dataset
@@ -31,7 +30,6 @@ def display_scatter_plot(self, data, tab):
     self.data = data
     self.dragging_point = None
 
-
     fig, ax = plt.subplots(figsize=(20, 15))
     self.ax = ax
     self.scatter_fig = fig
@@ -46,8 +44,11 @@ def display_scatter_plot(self, data, tab):
     cmap_name = 'tab20' if num_classes > 10 else 'tab10'
     cmap = plt.cm.get_cmap(cmap_name, num_classes)
 
+    # Create a normalized colormap that maps each label to a color index between 0 and 1
+    norm = plt.Normalize(vmin=-0.5, vmax=num_classes - 0.5)
+
     scatter = ax.scatter(data['features'][:, 0], data['features'][:, 1],
-                         c=data['labels'], cmap=cmap, alpha=0.6, s=50)
+                         c=data['labels'], cmap=cmap, norm=norm, alpha=0.6, s=50)
     self.scatter = scatter
 
     incorrect_mask = data['predicted_labels'] != data['labels']
@@ -68,12 +69,21 @@ def display_scatter_plot(self, data, tab):
                                    marker='x', s=100, linewidths=2, picker=5)
         self.center_artists.append(center_artist)
 
-    cbar = plt.colorbar(scatter, ax=ax, ticks=range(len(filtered_label_names)))
+    # Create colorbar with center-aligned ticks
+    boundaries = np.arange(num_classes + 1) - 0.5
+    ticks = np.arange(num_classes)
+
+    # Create a new ScalarMappable with the same colormap and normalization
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+
+    cbar = plt.colorbar(sm, ax=ax, boundaries=boundaries, ticks=ticks)
     cbar.set_label('Classes')
-    cbar.set_ticklabels(filtered_label_names.values())
+    cbar.set_ticklabels(list(filtered_label_names.values()))
+
     plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}')
-    plt.xlabel('t-SNE feature 1')
-    plt.ylabel('t-SNE feature 2')
+    plt.xlabel('Feature 1')
+    plt.ylabel('Feature 2')
 
     self.plot.update_original_2d_points(self.original_points)
 

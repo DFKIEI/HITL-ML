@@ -76,15 +76,16 @@ def find_latest_checkpoint(checkpoint_dir):
     latest_checkpoint = max(checkpoints, key=lambda x: int(x.split('_epoch_')[1].split('.')[0]))
     return os.path.join(checkpoint_dir, latest_checkpoint)
 
+
 def load_checkpoint(model, optimizer, checkpoint_path):
     """Load model checkpoint and return relevant training information"""
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"No checkpoint found at {checkpoint_path}")
-        
-    checkpoint = torch.load(checkpoint_path)
+
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    
+
     return checkpoint['epoch'], checkpoint['loss_info']
 
 
