@@ -128,3 +128,32 @@ class AllDataPointsTracker:
             f"{self.iter_counter}, {data},{moved_points}"
         )
         self.iter_counter += 1
+
+
+class ModelTracker:
+    def __init__(self, probant_id: str = 'test', scenario: str = 'A1', log_path: str = ''):
+        # Configure logging
+        self.iter_counter = 0
+        self.logger = logging.getLogger('ModelTracker')
+        self.logger.setLevel(logging.INFO)
+        log_file = f'{log_path}{os.sep}model_scores_id_{probant_id}_scenario_{scenario}.log'
+        # File handler
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.INFO)
+
+        # Formatter
+        formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        file_handler.setFormatter(formatter)
+
+        # Add handler if not already added
+        if not self.logger.handlers:
+            self.logger.addHandler(file_handler)
+
+    def log_model_results(self, message: str = ''):
+        """
+        Log movement of all datapoints
+        """
+        self.logger.info(
+            message
+        )
+        self.iter_counter += 1

@@ -77,7 +77,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 alpha_var, report_dir, loss_type,
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None,
                 get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None,
-                checkpoint_dir=None):
+                checkpoint_dir=None, logger=None):
     scaler = amp.GradScaler()
 
     ce_criterion = nn.CrossEntropyLoss()
@@ -173,6 +173,9 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
         val_log_message = f"Epoch {epoch + 1} completed. Validation Accuracy: {val_accuracy:.2f}%, F1_Score: {val_f1:.3f}"
         test_log_message = f"Epoch {epoch + 1} completed. Test Accuracy: {test_accuracy:.2f}%, F1_Score: {test_f1:.3f}"
+
+        logger.log_model_results(val_log_message)
+        logger.log_model_results(test_log_message)
         print(val_log_message)
         print(test_log_message)
 

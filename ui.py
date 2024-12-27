@@ -5,7 +5,7 @@ import queue
 import matplotlib
 from matplotlib import pyplot as plt
 from torch.utils import data
-from custom_logging import PointTracker, AllDataPointsTracker
+from custom_logging import PointTracker, AllDataPointsTracker, ModelTracker
 import os
 
 matplotlib.use('TkAgg')
@@ -40,6 +40,7 @@ class UI:
 
         self.point_tracker = PointTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
         self.all_datapoints_tracker = AllDataPointsTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
+        self.model_tracker = ModelTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
 
         if os.path.exists(checkpoint):
             try:
@@ -153,7 +154,7 @@ class UI:
                     selected_layer=self.selected_layer,
                     centers=True,
                     plot=self.plot,
-                    checkpoint_dir=self.probant_scenario_dir)
+                    checkpoint_dir=self.probant_scenario_dir, logger=self.model_tracker)
 
     def on_epoch_end(self):
         self.pause_event.set()
