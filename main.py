@@ -15,7 +15,7 @@ def main():
     print(f"Initial Setup: {user_input}")
     parser = argparse.ArgumentParser(description='Train and visualize neural networks')
     parser.add_argument('--dataset', type=str, default=user_input['dataset'], help='Dataset to use')
-    parser.add_argument('--model', type=str, default=f'CNN_{user_input['dataset']}', help='Model architecture to use')
+    parser.add_argument('--model', type=str, default=f"CNN_{user_input['dataset']}", help='Model architecture to use')
     parser.add_argument('--checkpoint', type=str, default=user_input['model_path'], help='checkpoint ')
     parser.add_argument('--loss', type=str, default='cross_entropy', choices=['cross_entropy', 'custom', 'external'],
                         help='Loss function to use')
