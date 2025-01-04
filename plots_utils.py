@@ -83,13 +83,13 @@ def get_radar_data(self):
     print(f"After class filtering - Selected features shape: {selected_features.shape}")
     print(f"After class filtering - Selected labels shape: {selected_labels.shape}")
 
-    # Ensure that the number of features is within the PCA output dimensions
-     # Take the first num_features dimensions
-    num_features = min(self.imp_features, selected_features.shape[1])
-    feature_names = [f"Feature {i}" for i in range(num_features)]
+    # Get indices of important features
+    important_indices = compute_feature_importance(self, self.imp_features)
+    num_features = len(important_indices)
     
-    selected_features = selected_features[:, :num_features]  # Take first num_features dimensions
-
+    # Select only the important features
+    selected_features = selected_features[:, important_indices]
+    feature_names = [f"Feature {i}" for i in important_indices]
 
     print(f"Number of important features: {len(feature_names)}")
 
@@ -147,11 +147,13 @@ def get_parallel_data(self):
     print(f"After class filtering - Selected features shape: {selected_features.shape}")
     print(f"After class filtering - Selected labels shape: {selected_labels.shape}")
 
-     # Take the first num_features dimensions
-    num_features = min(self.imp_features, selected_features.shape[1])
-    feature_names = [f"Feature {i}" for i in range(num_features)]
+    # Get indices of important features
+    important_indices = compute_feature_importance(self, self.imp_features)
+    num_features = len(important_indices)
     
-    selected_features = selected_features[:, :num_features]  # Take first num_features dimensions
+    # Select only the important features
+    selected_features = selected_features[:, important_indices]
+    feature_names = [f"Feature {i}" for i in important_indices]
 
     print(f"Number of features: {len(feature_names)}")
 
@@ -174,9 +176,17 @@ def get_parallel_data(self):
 
 
 def compute_feature_importance(self, imp_features):
-    feature_importance = np.abs(self.pca.components_).sum(axis=0)
-    num_features = min(50, imp_features)
-    important_indices = np.argsort(feature_importance)[-num_features:]
+    """
+    Compute feature importance based on variance across the dataset
+    Returns indices of features with highest variance
+    """
+    # Calculate variance for each feature
+    feature_variance = np.var(self.latent_features, axis=0)
+    num_features = min(len(feature_variance), imp_features)
+    # Get indices of features with highest variance
+    important_indices = np.argsort(feature_variance)[-num_features:]
+    # Sort indices in ascending order for consistent feature ordering
+    important_indices.sort()
     return important_indices
 
 
