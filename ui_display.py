@@ -244,56 +244,204 @@ def display_radar_plot(self, data, tab):
     # Display the plot on the provided tab
     display_plot(self, fig, tab)
 
-
 def display_parallel_plot(self, data, tab):
+    print("Starting display_parallel_plot")
     fig, ax = plt.subplots(figsize=(15, 10))
+    
+    try:
+        dict_labels = get_label_names(self.plot.dataloader.dataset)
+        
+        # Find global min/max for setting axis limits
+        all_values = []
+        for class_label in data['selected_classes']:
+            class_data = data['class_data'][class_label]
+            if len(class_data) > 0:
+                all_values.extend(class_data)
+        all_values = np.array(all_values)
+        global_min = np.min(all_values)
+        global_max = np.max(all_values)
+        
+        # Add padding to the limits
+        padding = (global_max - global_min) * 0.1
+        y_min = global_min - padding
+        y_max = global_max + padding
 
-    dict_labels = get_label_names(self.plot.dataloader.dataset)
+        num_classes = len(data['selected_classes'])
+        cmap = plt.cm.get_cmap('tab20' if num_classes > 10 else 'tab10', num_classes)
 
-    # Use a colormap that can distinguish classes
-    num_classes = len(data['selected_classes'])
-    if num_classes > 10:
-        cmap = plt.cm.get_cmap('tab20', num_classes)
-    else:
-        cmap = plt.cm.get_cmap('tab10', num_classes)
+        legend_handles = []
+        self.parallel_lines = {}
+        self.active_axis = None
+        self.dragging_line = None
+        self.last_y = None
+        self.selected_class = None
 
-    legend_handles = []
+        # Plot lines for each class
+        for i, class_label in enumerate(data['selected_classes']):
+            print(f"Processing class {class_label}")
+            class_data = data['class_data'][class_label]
+            
+            if not isinstance(class_data, (list, np.ndarray)) or len(class_data) == 0:
+                continue
 
-    for i, class_label in enumerate(data['selected_classes']):
-        class_data = data['class_data'][class_label]
-        if len(class_data) > 0:  # Only plot if there's data for this class
             color = cmap(i)
-            for j, row in enumerate(class_data):
-                if self.selected_point_index is not None and self.selected_point_label == class_label:
-                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=1.0, linewidth=2)
-                else:
-                    ax.plot(range(len(data['feature_names'])), row, color=color, alpha=1.0)
-
-            class_label_to_show = dict_labels[class_label]
-            # Create a line for the legend
+            lines = []
+            
+            class_array = np.array(class_data)
+            for j, row in enumerate(class_array):
+                x_coords = np.arange(len(data['feature_names']))
+                line = ax.plot(x_coords, row, 
+                             color=color, 
+                             alpha=0.5, 
+                             picker=True, 
+                             pickradius=5,
+                             zorder=2)[0]
+                
+                lines.append(line)
+                line.class_label = class_label
+                line.sample_index = j
+                line.original_data = row.copy()
+                line.current_data = row.copy()
+            
+            self.parallel_lines[class_label] = lines
+            
+            class_label_to_show = dict_labels.get(class_label, f"Class {class_label}")
             legend_line = plt.Line2D([0], [0], color=color, lw=2, label=f'{class_label_to_show}')
             legend_handles.append(legend_line)
 
-    # Ensure that all features are displayed
-    ax.set_xticks(range(len(data['feature_names'])))
-    ax.set_xticklabels(data['feature_names'], rotation=45, ha='right')
+        # Setup axes and grid
+        ax.set_xticks(range(len(data['feature_names'])))
+        ax.set_xticklabels(data['feature_names'], rotation=45, ha='right')
+        ax.set_ylim(y_min, y_max)
+        ax.grid(True, axis='x', zorder=1)
+        ax.set_ylabel('Feature values')
+        ax.set_title(f'Parallel Coordinates Plot - {data["dataset_name"]}')
+        
+        if legend_handles:
+            ax.legend(handles=legend_handles, loc='center left', bbox_to_anchor=(1.05, 0.5))
+        
+        plt.tight_layout(rect=[0, 0, 0.85, 1])
 
-    # Adding vertical gridlines
-    ax.xaxis.grid(True)  # This enables the vertical gridlines
-    ax.set_ylabel('Normalized feature values')
-    ax.set_title(f'Parallel Coordinates Plot - {data["dataset_name"]}')
+        def find_nearest_axis(event):
+            if event.xdata is None:
+                return None
+            x_ticks = range(len(data['feature_names']))
+            nearest_idx = min(range(len(x_ticks)), 
+                            key=lambda i: abs(x_ticks[i] - event.xdata))
+            if abs(x_ticks[nearest_idx] - event.xdata) < 0.5:
+                return nearest_idx
+            return None
 
-    # Add legend with custom handles
-    ax.legend(handles=legend_handles, loc='center left', bbox_to_anchor=(1.05, 0.5))
+        def highlight_class(class_label):
+            for current_class, lines in self.parallel_lines.items():
+                alpha = 1.0 if current_class == class_label else 0.1
+                for line in lines:
+                    line.set_alpha(alpha)
+            fig.canvas.draw_idle()
 
-    # Adjust layout to prevent cutting off labels and legends
-    plt.tight_layout(rect=[0, 0, 0.85, 1])
+        def on_pick(event):
+            if not isinstance(event.artist, plt.Line2D):
+                return
 
-    self.parallel_lines = ax.lines  # Store lines for later highlighting
-    self.parallel_fig = fig
+            mouse_event = event.mouseevent
+            self.active_axis = find_nearest_axis(mouse_event)
+            
+            if self.active_axis is not None:
+                self.dragging_line = event.artist
+                self.last_y = mouse_event.ydata
+                self.selected_class = self.dragging_line.class_label
+                
+                # Highlight selected line and class
+                highlight_class(self.selected_class)
+                self.dragging_line.set_linewidth(2.0)
+                fig.canvas.draw_idle()
 
-    display_plot(self, fig, tab)
+        def on_motion(event):
+            if self.dragging_line is None or self.active_axis is None or event.inaxes != ax:
+                return
 
+            if event.ydata is not None and self.last_y is not None:
+                delta_y = event.ydata - self.last_y
+                self.last_y = event.ydata
+
+                # Update the data
+                new_data = self.dragging_line.current_data.copy()
+                new_data[self.active_axis] = new_data[self.active_axis] + delta_y
+                
+                # Update line visualization
+                self.dragging_line.current_data = new_data
+                self.dragging_line.set_ydata(new_data)
+
+                # Update data structure
+                class_label = self.dragging_line.class_label
+                sample_index = self.dragging_line.sample_index
+                data['class_data'][class_label][sample_index] = new_data
+
+                fig.canvas.draw_idle()
+
+        def on_release(event):
+            if self.dragging_line is None:
+                return
+
+            # Reset line appearances
+            for lines in self.parallel_lines.values():
+                for line in lines:
+                    line.set_alpha(0.5)
+                    line.set_linewidth(1.0)
+
+            # Reset variables
+            self.dragging_line = None
+            self.active_axis = None
+            self.last_y = None
+            self.selected_class = None
+            
+            fig.canvas.draw_idle()
+
+        def on_double_click(event):
+            if event.inaxes != ax:
+                return
+
+            nearest_axis = find_nearest_axis(event)
+            if nearest_axis is None:
+                return
+
+            # Find closest line
+            min_dist = float('inf')
+            closest_line = None
+            
+            for lines in self.parallel_lines.values():
+                for line in lines:
+                    dist = abs(line.current_data[nearest_axis] - event.ydata)
+                    if dist < min_dist:
+                        min_dist = dist
+                        closest_line = line
+
+            if closest_line and min_dist < 0.1 * (y_max - y_min):
+                # Reset to original data
+                closest_line.current_data = closest_line.original_data.copy()
+                closest_line.set_ydata(closest_line.original_data)
+                
+                # Reset in data structure
+                class_label = closest_line.class_label
+                sample_index = closest_line.sample_index
+                data['class_data'][class_label][sample_index] = closest_line.original_data.copy()
+                
+                fig.canvas.draw_idle()
+
+        # Connect events
+        fig.canvas.mpl_connect('pick_event', on_pick)
+        fig.canvas.mpl_connect('motion_notify_event', on_motion)
+        fig.canvas.mpl_connect('button_release_event', on_release)
+        fig.canvas.mpl_connect('button_press_event', 
+                             lambda event: on_double_click(event) if event.dblclick else None)
+
+        print("Successfully created parallel plot")
+        display_plot(self, fig, tab)
+        
+    except Exception as e:
+        print(f"Error in display_parallel_plot: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 def display_plot(self, fig, tab):
     for widget in tab.winfo_children():
