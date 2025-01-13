@@ -261,7 +261,6 @@ def display_parallel_plot(self, data, tab):
         global_min = np.min(all_values)
         global_max = np.max(all_values)
         
-        # Add padding to the limits
         padding = (global_max - global_min) * 0.1
         y_min = global_min - padding
         y_max = global_max + padding
@@ -271,12 +270,14 @@ def display_parallel_plot(self, data, tab):
 
         legend_handles = []
         self.parallel_lines = {}
+        self.stat_lines = {}
         self.active_axis = None
         self.dragging_line = None
+        self.dragging_mean = False
         self.last_y = None
         self.selected_class = None
 
-        # Plot lines for each class
+        # Plot lines and statistics for each class
         for i, class_label in enumerate(data['selected_classes']):
             print(f"Processing class {class_label}")
             class_data = data['class_data'][class_label]
@@ -287,12 +288,23 @@ def display_parallel_plot(self, data, tab):
             color = cmap(i)
             lines = []
             
+            # Convert to numpy array for calculations
             class_array = np.array(class_data)
+            
+            # Calculate statistics
+            mean_line = np.mean(class_array, axis=0)
+            min_line = np.min(class_array, axis=0)
+            max_line = np.max(class_array, axis=0)
+            
+            # Store original distances from mean for each line
+            original_distances = class_array - mean_line
+            
+            # Plot individual lines
             for j, row in enumerate(class_array):
                 x_coords = np.arange(len(data['feature_names']))
                 line = ax.plot(x_coords, row, 
                              color=color, 
-                             alpha=0.5, 
+                             alpha=0.2,
                              picker=True, 
                              pickradius=5,
                              zorder=2)[0]
@@ -302,8 +314,48 @@ def display_parallel_plot(self, data, tab):
                 line.sample_index = j
                 line.original_data = row.copy()
                 line.current_data = row.copy()
+                line.distance_from_mean = original_distances[j]  # Store distance from mean
+            
+            # Plot statistical lines
+            x_coords = np.arange(len(data['feature_names']))
+            
+            # Mean line (solid, thicker, and pickable)
+            mean_plot = ax.plot(x_coords, mean_line, 
+                              color=color, 
+                              linewidth=3, 
+                              linestyle='-',
+                              alpha=1.0,
+                              picker=True,
+                              pickradius=10,
+                              zorder=4)[0]
+            mean_plot.is_mean_line = True  # Add identifier
+            mean_plot.class_label = class_label
+            mean_plot.original_data = mean_line.copy()
+            mean_plot.current_data = mean_line.copy()
+            
+            # Min line (dashed)
+            min_plot = ax.plot(x_coords, min_line, 
+                             color=color, 
+                             linewidth=1.5, 
+                             linestyle='--',
+                             alpha=0.8,
+                             zorder=3)[0]
+            
+            # Max line (dashed)
+            max_plot = ax.plot(x_coords, max_line, 
+                             color=color, 
+                             linewidth=1.5, 
+                             linestyle='--',
+                             alpha=0.8,
+                             zorder=3)[0]
             
             self.parallel_lines[class_label] = lines
+            self.stat_lines[class_label] = {
+                'mean': mean_plot,
+                'min': min_plot,
+                'max': max_plot,
+                'original_mean': mean_line.copy()
+            }
             
             class_label_to_show = dict_labels.get(class_label, f"Class {class_label}")
             legend_line = plt.Line2D([0], [0], color=color, lw=2, label=f'{class_label_to_show}')
@@ -322,6 +374,48 @@ def display_parallel_plot(self, data, tab):
         
         plt.tight_layout(rect=[0, 0, 0.85, 1])
 
+        def update_stats(class_label):
+            class_data = np.array([line.current_data for line in self.parallel_lines[class_label]])
+            min_line = np.min(class_data, axis=0)
+            max_line = np.max(class_data, axis=0)
+            
+            self.stat_lines[class_label]['min'].set_ydata(min_line)
+            self.stat_lines[class_label]['max'].set_ydata(max_line)
+
+        def move_lines_with_mean(class_label, axis_idx, delta):
+            # Move mean line
+            mean_line = self.stat_lines[class_label]['mean']
+            new_mean = mean_line.current_data.copy()
+            new_mean[axis_idx] += delta
+            mean_line.current_data = new_mean
+            mean_line.set_ydata(new_mean)
+            
+            # Move individual lines maintaining relative distances
+            for line in self.parallel_lines[class_label]:
+                new_data = line.current_data.copy()
+                new_data[axis_idx] = new_mean[axis_idx] + line.distance_from_mean[axis_idx]
+                line.current_data = new_data
+                line.set_ydata(new_data)
+                
+                # Update data structure
+                data['class_data'][class_label][line.sample_index] = new_data
+            
+            # Update statistical lines
+            update_stats(class_label)
+
+        def highlight_class(class_label):
+            for current_class, lines in self.parallel_lines.items():
+                alpha = 0.5 if current_class == class_label else 0.05
+                for line in lines:
+                    line.set_alpha(alpha)
+                
+                stat_alpha = 1.0 if current_class == class_label else 0.2
+                self.stat_lines[current_class]['mean'].set_alpha(stat_alpha)
+                self.stat_lines[current_class]['min'].set_alpha(stat_alpha * 0.8)
+                self.stat_lines[current_class]['max'].set_alpha(stat_alpha * 0.8)
+            
+            fig.canvas.draw_idle()
+
         def find_nearest_axis(event):
             if event.xdata is None:
                 return None
@@ -331,13 +425,6 @@ def display_parallel_plot(self, data, tab):
             if abs(x_ticks[nearest_idx] - event.xdata) < 0.5:
                 return nearest_idx
             return None
-
-        def highlight_class(class_label):
-            for current_class, lines in self.parallel_lines.items():
-                alpha = 1.0 if current_class == class_label else 0.1
-                for line in lines:
-                    line.set_alpha(alpha)
-            fig.canvas.draw_idle()
 
         def on_pick(event):
             if not isinstance(event.artist, plt.Line2D):
@@ -350,10 +437,11 @@ def display_parallel_plot(self, data, tab):
                 self.dragging_line = event.artist
                 self.last_y = mouse_event.ydata
                 self.selected_class = self.dragging_line.class_label
+                self.dragging_mean = hasattr(self.dragging_line, 'is_mean_line')
                 
-                # Highlight selected line and class
                 highlight_class(self.selected_class)
-                self.dragging_line.set_linewidth(2.0)
+                self.dragging_line.set_linewidth(3.0 if self.dragging_mean else 2.0)
+                self.dragging_line.set_alpha(1.0)
                 fig.canvas.draw_idle()
 
         def on_motion(event):
@@ -364,18 +452,30 @@ def display_parallel_plot(self, data, tab):
                 delta_y = event.ydata - self.last_y
                 self.last_y = event.ydata
 
-                # Update the data
-                new_data = self.dragging_line.current_data.copy()
-                new_data[self.active_axis] = new_data[self.active_axis] + delta_y
-                
-                # Update line visualization
-                self.dragging_line.current_data = new_data
-                self.dragging_line.set_ydata(new_data)
+                if self.dragging_mean:
+                    # Move all lines relative to mean
+                    move_lines_with_mean(self.selected_class, self.active_axis, delta_y)
+                else:
+                    # Move individual line
+                    new_data = self.dragging_line.current_data.copy()
+                    new_data[self.active_axis] += delta_y
+                    
+                    # Update line
+                    self.dragging_line.current_data = new_data
+                    self.dragging_line.set_ydata(new_data)
 
-                # Update data structure
-                class_label = self.dragging_line.class_label
-                sample_index = self.dragging_line.sample_index
-                data['class_data'][class_label][sample_index] = new_data
+                    # Update data structure
+                    class_label = self.dragging_line.class_label
+                    sample_index = self.dragging_line.sample_index
+                    data['class_data'][class_label][sample_index] = new_data
+                    
+                    # Update mean and distances
+                    mean_data = np.mean([line.current_data for line in self.parallel_lines[class_label]], axis=0)
+                    self.stat_lines[class_label]['mean'].set_ydata(mean_data)
+                    self.stat_lines[class_label]['mean'].current_data = mean_data
+                    
+                    # Update statistical lines
+                    update_stats(class_label)
 
                 fig.canvas.draw_idle()
 
@@ -383,57 +483,35 @@ def display_parallel_plot(self, data, tab):
             if self.dragging_line is None:
                 return
 
-            # Reset line appearances
-            for lines in self.parallel_lines.values():
+            for current_class, lines in self.parallel_lines.items():
                 for line in lines:
-                    line.set_alpha(0.5)
+                    line.set_alpha(0.2)
                     line.set_linewidth(1.0)
+                
+                self.stat_lines[current_class]['mean'].set_alpha(1.0)
+                self.stat_lines[current_class]['mean'].set_linewidth(3.0)
+                self.stat_lines[current_class]['min'].set_alpha(0.8)
+                self.stat_lines[current_class]['max'].set_alpha(0.8)
 
-            # Reset variables
+            if self.dragging_mean:
+                # Recalculate distances from new mean
+                class_label = self.dragging_line.class_label
+                mean_data = self.stat_lines[class_label]['mean'].current_data
+                for line in self.parallel_lines[class_label]:
+                    line.distance_from_mean = line.current_data - mean_data
+
             self.dragging_line = None
             self.active_axis = None
             self.last_y = None
             self.selected_class = None
+            self.dragging_mean = False
             
             fig.canvas.draw_idle()
-
-        def on_double_click(event):
-            if event.inaxes != ax:
-                return
-
-            nearest_axis = find_nearest_axis(event)
-            if nearest_axis is None:
-                return
-
-            # Find closest line
-            min_dist = float('inf')
-            closest_line = None
-            
-            for lines in self.parallel_lines.values():
-                for line in lines:
-                    dist = abs(line.current_data[nearest_axis] - event.ydata)
-                    if dist < min_dist:
-                        min_dist = dist
-                        closest_line = line
-
-            if closest_line and min_dist < 0.1 * (y_max - y_min):
-                # Reset to original data
-                closest_line.current_data = closest_line.original_data.copy()
-                closest_line.set_ydata(closest_line.original_data)
-                
-                # Reset in data structure
-                class_label = closest_line.class_label
-                sample_index = closest_line.sample_index
-                data['class_data'][class_label][sample_index] = closest_line.original_data.copy()
-                
-                fig.canvas.draw_idle()
 
         # Connect events
         fig.canvas.mpl_connect('pick_event', on_pick)
         fig.canvas.mpl_connect('motion_notify_event', on_motion)
         fig.canvas.mpl_connect('button_release_event', on_release)
-        fig.canvas.mpl_connect('button_press_event', 
-                             lambda event: on_double_click(event) if event.dblclick else None)
 
         print("Successfully created parallel plot")
         display_plot(self, fig, tab)
