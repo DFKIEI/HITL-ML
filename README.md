@@ -29,8 +29,8 @@ sklearn
 ## Installation
 1. Clone the repository:
    ```bash
-   git clone <repository-url>
-   cd <project-directory>
+   git clone https://github.com/DFKIEI/HITL-ML.git
+   cd HITL-ML
    ```
 2. Install dependencies:
    ```bash
