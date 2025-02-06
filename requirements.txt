@@ -1,0 +1,9 @@
+torch
+numpy
+matplotlib
+tkinter
+torchvision
+argparse
+typing
+logging
+sklearn

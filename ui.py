@@ -145,20 +145,16 @@ class UI:
         train_model(self.model, self.optimizer, self.trainloader, self.valloader,
                     self.testloader, self.device, self.epoch_var.get(), self.freq_var.get(), self.alpha_var,
                     f"reports/{self.dataset_name}",
-                    self.loss_type,
                     log_callback=self.update_log,
                     pause_event=self.pause_event,
                     stop_training=self.stop_training,
                     epoch_end_callback=self.on_epoch_end,
                     pause_after_n_epochs=self.pause_epochs_var.get(),
-                    selected_layer=self.selected_layer,
-                    centers=True,
                     plot=self.plot,
                     checkpoint_dir=self.probant_scenario_dir, logger=self.model_tracker)
 
     def on_epoch_end(self):
         self.pause_event.set()
-        # self.teacher_model = self.student_model ###???
         self.update_visualization()
         self.training_button.config(text="Resume Training")
         self.status_var.set("Paused after N epochs")
@@ -232,7 +228,6 @@ class UI:
             self.plot.selected_layer = self.selected_layer
         # self.plot.selected_classes = selected_classes
         plot_data = self.plot.get_plot_data(self.current_plot_type)
-        # plot_data['selected_point_index'] = self.selected_point_index
         self.visualization_queue.put((plot_data, self.current_plot_type))
 
     def on_tab_change(self, event):

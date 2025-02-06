@@ -110,48 +110,6 @@ class CNN_MNIST(nn.Module):
         output, _ = self.forward(x)
         return output.argmax(dim=-1)
 
-# class CNN_CIFAR10(nn.Module):
-#     def __init__(self, in_channels=3, num_classes=10):
-#         super(CNN_CIFAR10, self).__init__()
-#         self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
-#         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-#         self.pool = nn.MaxPool2d(2, 2)
-#         self.dropout1 = nn.Dropout(0.25)
-#         self.fc1 = nn.Linear(64 * 8 * 8, 512)
-#         self.dropout2 = nn.Dropout(0.5)
-#         self.fc2 = nn.Linear(512, num_classes)
-#         self.global_avg_pool = nn.AdaptiveAvgPool2d(output_size=(1, 1))  # Global Average Pooling for intermediate layers
-#         self.num_classes = num_classes
-
-#         self.projection1 = nn.Linear(32, num_classes)
-#         self.projection2 = nn.Linear(64, num_classes)
-
-#     def forward(self, x, layer=None):
-#         x = torch.relu(self.pool(self.conv1(x)))
-#         # latent_features=x
-#         # if layer=='conv1':
-#         #     x = self.global_avg_pool(x)
-#         #     x = x.view(x.size(0), -1)
-#         #     return self.projection1(x), x
-#         x = torch.relu(self.pool(self.conv2(x)))
-#         # if layer=='conv2':
-#         #     x = self.global_avg_pool(x)
-#         #     x = x.view(x.size(0), -1)
-#         #     return self.projection2(x), x
-#         x = torch.flatten(x, 1)
-        
-#         x = torch.relu(self.fc1(x))
-#         x = self.dropout1(x)
-#         output = self.fc2(x)
-#         latent_features=output
-#         return output, latent_features
-
-
-#     @torch.no_grad()
-#     def predict(self, x):
-#         self.eval()
-#         output, _ = self.forward(x)
-#         return output.argmax(dim=-1)
 
 class CNN_CIFAR10(nn.Module):
     def __init__(self, in_channels=3, num_classes=10):
@@ -318,6 +276,8 @@ class SmallCNN_CIFAR10(nn.Module):
         output = self.forward(x)  # Forward pass
         return output.argmax(dim=-1)  # Get the index of the max log-probability
 
+
+##########CIFAR100 is not supported in the tool yet##############################
 
 class CNN_CIFAR100(nn.Module):
     def __init__(self, in_channels=3, num_classes=100):

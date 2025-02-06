@@ -5,7 +5,7 @@ from tkinter import ttk, scrolledtext
 def create_info_labels(self):
     ttk.Label(self.control_panel, text=f"Dataset: {self.dataset_name}").pack(pady=5)
     ttk.Label(self.control_panel, text=f"Model: {self.model_name}").pack(pady=5)
-    ttk.Label(self.control_panel, text=f"Loss: {self.loss_type}").pack(pady=5)
+    #ttk.Label(self.control_panel, text=f"Loss: {self.loss_type}").pack(pady=5) Not required
 
 
 def create_training_controls(self):

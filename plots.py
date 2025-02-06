@@ -8,7 +8,7 @@ from sklearn.utils import shuffle
 from scipy.spatial.distance import cosine
 from sklearn.neighbors import NearestNeighbors
 
-from plots_utils import extract_latent_features, compute_feature_importance, calculate_cluster_centers, \
+from plots_utils import extract_latent_features, calculate_cluster_centers, \
     get_scatter_data, get_radar_data, get_parallel_data
 
 
@@ -29,17 +29,7 @@ class InteractivePlot:
         self.original_2d_points = None
         self.moved_2d_points = None
         self.movement_occured = False
-        # self.prepare_data()
-        # self.prepare_plot_data()
 
-    def synchronize_state(self):
-        # This method should be called before using the plot object in the training process
-        self.movement_occurred = getattr(self, 'movement_occurred', False)
-        self.moved_2d_points = getattr(self, 'moved_2d_points', self.original_2d_points)
-        print(f"Synchronizing state: movement_occurred={self.movement_occurred}")
-
-    def set_selected_layer(self, layer):
-        self.selected_layer = layer
 
     def select_balanced_samples(self):
         labels = []
@@ -49,7 +39,7 @@ class InteractivePlot:
         labels = np.array(labels)
         unique_labels = np.unique(labels)
         selected_indices = []
-        num_samples_per_class = 10  # can be user input
+        num_samples_per_class = 10  # can be user input/settings
 
         # Find minimum number of samples across all classes
         min_samples = float('inf')
@@ -68,17 +58,6 @@ class InteractivePlot:
 
         return selected_indices
 
-    def features_similar(self, features1, features2):
-        if features1 is None or features2 is None:
-            return False
-        if features1.shape != features2.shape:
-            return False
-
-        # Compare the first few principal components
-        n_components_to_compare = min(10, features1.shape[1])
-        similarity = 1 - cosine(features1[:, :n_components_to_compare].flatten(),
-                                features2[:, :n_components_to_compare].flatten())
-        return similarity > self.similarity_threshold
 
     def prepare_data(self):
         print("Extract Latent Features")
@@ -89,7 +68,6 @@ class InteractivePlot:
         self.latent_features = latent_features[self.samples_to_track]
         self.original_high_dim_points = latent_features[self.samples_to_track]
 
-        # Cache results
         self.selected_labels = labels[self.samples_to_track]
         self.selected_predicted_labels = predicted_labels[self.samples_to_track]
 

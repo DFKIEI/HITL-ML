@@ -3,8 +3,6 @@ import numpy as np
 from ui_display import get_label_names
 
 def extract_latent_features(self):
-
-
     self.model.eval()
     all_features = []
     all_2d_features = []
@@ -52,8 +50,6 @@ def get_scatter_data(self):
     }
 
 
-
-# WRONG SAMPLE SELECT, TBD
 def get_radar_data(self):
     print("Starting get_radar_data...")
 

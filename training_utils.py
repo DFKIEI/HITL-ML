@@ -2,64 +2,32 @@ from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import torch
 import os
+import csv
+from datetime import datetime
 
-def calculate_class_weights(latent_features, labels, beta, gamma, method='tsne', previous_centers=None, outlier_threshold=1.5):
-    coordinates = calculate_2d_coordinates(latent_features, method=method)
-    
-    unique_labels = labels.unique()
-    num_classes = len(unique_labels)
-    
-    cluster_centers = {}
-    intra_cluster_distances = []
-    movement_penalties = []
+def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_val,
+                interaction_loss, ce_loss):
+    if not os.path.exists(report_dir):
+        os.makedirs(report_dir)
 
-    for label in unique_labels:
-        class_features = coordinates[labels == label]
-        initial_cluster_center = class_features.mean(dim=0)
-        distances = torch.norm(class_features - initial_cluster_center, dim=1)
-        
-        Q1 = torch.quantile(distances, 0.25)
-        Q3 = torch.quantile(distances, 0.75)
-        IQR = Q3 - Q1
-        lower_threshold = Q1 - outlier_threshold * IQR
-        upper_threshold = Q3 + outlier_threshold * IQR
+    report_path = os.path.join(report_dir, f"training_report_int_loss.csv_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
-        non_outliers = (distances >= lower_threshold) & (distances <= upper_threshold)
-        refined_class_features = class_features[non_outliers]
-        refined_distances = distances[non_outliers]
-        
-        cluster_center = refined_class_features.mean(dim=0)
-        intra_cluster_distance = refined_distances.mean().item()
-        
-        cluster_centers[label.item()] = cluster_center
-        intra_cluster_distances.append(intra_cluster_distance)
-        
-        if previous_centers is not None and label.item() in previous_centers:
-            previous_center = previous_centers[label.item()]
-            movement_penalty = torch.norm(cluster_center - previous_center).item()
-            movement_penalties.append(movement_penalty)
-        else:
-            movement_penalties.append(0)
+    if not os.path.exists(report_path):
+        with open(report_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type", "Alpha", "interaction Loss",
+                             "CE loss"])  # add parameters, loss, part losses as well
 
-    overall_center = torch.mean(torch.stack(list(cluster_centers.values())), dim=0)
-    
-    inter_cluster_distances = [torch.norm(center - overall_center).item() for center in cluster_centers.values()]
-    
-    class_weights = [(1 - beta) * intra + beta * ((1-gamma)*inter + gamma * move)
-                     for intra, inter, move in zip(intra_cluster_distances, inter_cluster_distances, movement_penalties)]
-    
-    return torch.tensor(class_weights, device=latent_features.device), cluster_centers
+    with open(report_path, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([epoch + 1, train_loss, val_accuracy, loss_type, alpha_val, interaction_loss, ce_loss])
 
-def calculate_2d_coordinates(latent_features, method='tsne', n_components=2):
-    if method == 'tsne':
-        tsne = TSNE(n_components=n_components, random_state=0)
-        coordinates = tsne.fit_transform(latent_features.detach().cpu().numpy())
-    elif method == 'pca':
-        pca = PCA(n_components=n_components)
-        coordinates = pca.fit_transform(latent_features.detach().cpu().numpy())
-    else:
-        raise ValueError("Invalid method. Choose 'tsne' or 'pca'.")
-    return torch.tensor(coordinates, device=latent_features.device)
+def compute_ideal_structure(moved_points, samples_per_class, num_classes):
+    """Extract mean and spread of each class"""
+    points = moved_points.view(num_classes, samples_per_class, -1)
+    centers = points.mean(dim=1)
+    spreads = torch.norm(points - centers[:, None], dim=2).mean(dim=1)
+    return {c: {'center': centers[c], 'spread': spreads[c]} for c in range(num_classes)}
 
 
 

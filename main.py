@@ -39,7 +39,7 @@ def main():
 
     model = get_model(args.model, input_shape, num_classes).to(device)
     torch.manual_seed(42)
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)  # add l2 regularization
+    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
 
     # Create UI
     root = tk.Tk()
@@ -49,5 +49,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()

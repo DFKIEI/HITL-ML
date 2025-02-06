@@ -12,71 +12,15 @@ from sklearn.metrics import f1_score
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import random
-from training_utils import save_checkpoint
+from training_utils import save_checkpoint, compute_ideal_structure, save_report
 from collections import defaultdict
 import torch.cuda.amp as amp
-
-
-def compute_ideal_structure(moved_points, samples_per_class, num_classes):
-    """Extract mean and spread of each class"""
-    points = moved_points.view(num_classes, samples_per_class, -1)
-    centers = points.mean(dim=1)
-    spreads = torch.norm(points - centers[:, None], dim=2).mean(dim=1)
-    return {c: {'center': centers[c], 'spread': spreads[c]} for c in range(num_classes)}
-
-
-def relative_distance_loss(features_2d, labels, ideal_structure):
-    device = features_2d.device
-    num_classes = len(ideal_structure)
-
-    # Group points by class using advanced indexing
-    class_points = [features_2d[labels == c] for c in range(num_classes)]
-
-    # Precompute ideal centers and spreads
-    ideal_centers = torch.stack([ideal_structure[c]['center'].to(device) for c in range(num_classes)])
-    ideal_spreads = torch.tensor([ideal_structure[c]['spread'] for c in range(num_classes)], device=device)
-
-    total_loss = 0
-    num_comparisons = 0
-
-    for label, points in enumerate(class_points):
-        if points.size(0) > 0:  # Skip empty classes
-            # Compute current center and spread
-            current_center = points.mean(dim=0)
-            current_dists = torch.norm(points - current_center, dim=1)
-            current_spread = current_dists.mean()
-
-            # Loss 1: Distance to ideal center
-            center_loss = F.mse_loss(current_center, ideal_centers[label])
-
-            # Loss 2: Maintain spread
-            spread_loss = torch.abs(current_spread - ideal_spreads[label])
-
-            # Loss 3: Inter-class separation (batch computation)
-            valid_classes = [c for c, p in enumerate(class_points) if c != label and p.size(0) > 0]
-            if valid_classes:  # Skip if no valid other classes
-                other_centers = torch.stack([class_points[c].mean(dim=0) for c in valid_classes]).to(device)
-                center_distances = torch.norm(current_center - other_centers, dim=1)
-
-                # Compute minimum distances
-                min_distances = ideal_spreads[label] + ideal_spreads[valid_classes]
-                separation_losses = torch.clamp(min_distances - center_distances, min=0)
-
-                total_loss += separation_losses.sum()
-                num_comparisons += separation_losses.numel()
-
-            # Add center and spread losses
-            total_loss += center_loss + spread_loss
-            num_comparisons += 2  # One for center, one for spread
-
-    # Avoid division by zero
-    return total_loss / max(num_comparisons, 1)
-
+from losses import relative_distance_loss
 
 def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq,
-                alpha_var, report_dir, loss_type,
+                alpha_var, report_dir,
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None,
-                get_current_centers=None, pause_after_n_epochs=None, selected_layer=None, centers=None, plot=None,
+                pause_after_n_epochs=None, plot=None,
                 checkpoint_dir=None, logger=None):
     scaler = amp.GradScaler()
 
@@ -85,7 +29,6 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         param.requires_grad = False
     model.train()
 
-    move_2d_points = None
     ideal_structure = None
 
     for epoch in range(num_epochs):
@@ -121,7 +64,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             alpha_val = alpha_var.get()
 
             with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
-                outputs, reduced_features, anchor_features = model(inputs)
+                outputs, reduced_features, _ = model(inputs)
 
                 ce_loss = ce_criterion(outputs, labels)
 
@@ -168,8 +111,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 total_predictions = 0
 
         # Validation and Testing
-        val_accuracy, val_f1 = evaluate_model(model, valloader, device, selected_layer)
-        test_accuracy, test_f1 = evaluate_model(model, testloader, device, selected_layer)
+        val_accuracy, val_f1 = evaluate_model(model, valloader, device)
+        test_accuracy, test_f1 = evaluate_model(model, testloader, device)
 
         val_log_message = f"Epoch {epoch + 1} completed. Validation Accuracy: {val_accuracy:.2f}%, F1_Score: {val_f1:.3f}"
         test_log_message = f"Epoch {epoch + 1} completed. Test Accuracy: {test_accuracy:.2f}%, F1_Score: {test_f1:.3f}"
@@ -215,25 +158,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
     print('Finished Training')
 
 
-def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_val,
-                interaction_loss, ce_loss):
-    if not os.path.exists(report_dir):
-        os.makedirs(report_dir)
-
-    report_path = os.path.join(report_dir, 'training_report_int_loss.csv')
-
-    if not os.path.exists(report_path):
-        with open(report_path, mode='w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type", "Alpha", "interaction Loss",
-                             "CE loss"])  # add parameters, loss, part losses as well
-
-    with open(report_path, mode='a', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow([epoch + 1, train_loss, val_accuracy, loss_type, alpha_val, interaction_loss, ce_loss])
-
-
-def evaluate_model(model, dataloader, device, selected_layer=None):
+def evaluate_model(model, dataloader, device):
     model.eval()
     all_labels = []
     all_predictions = []
@@ -241,10 +166,7 @@ def evaluate_model(model, dataloader, device, selected_layer=None):
     with torch.no_grad():
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
-            if selected_layer:
-                outputs, _, _ = model(inputs, layer=selected_layer)
-            else:
-                outputs, _, _ = model(inputs)
+            outputs, _, _ = model(inputs)
 
             if outputs.dim() > 2:
                 outputs = outputs.view(outputs.size(0), -1)
