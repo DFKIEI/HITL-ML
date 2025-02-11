@@ -8,7 +8,7 @@ from sklearn.utils import shuffle
 from scipy.spatial.distance import cosine
 from sklearn.neighbors import NearestNeighbors
 
-from plots_utils import extract_latent_features, calculate_cluster_centers, \
+from plots.plots_utils import extract_latent_features, calculate_cluster_centers, \
     get_scatter_data, get_radar_data, get_parallel_data
 
 

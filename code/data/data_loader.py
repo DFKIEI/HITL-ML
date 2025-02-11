@@ -1,7 +1,7 @@
 import numpy as np
 from torch.utils.data import DataLoader, Subset, random_split
 from torchvision import datasets, transforms
-from PAMAP2_data import PAMAP2
+from data.PAMAP2_data import PAMAP2
 import torch
 
 

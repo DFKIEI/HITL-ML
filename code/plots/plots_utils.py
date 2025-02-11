@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from ui_display import get_label_names
+from ui.ui_display import get_label_names
 
 def extract_latent_features(self):
     self.model.eval()

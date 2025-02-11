@@ -3,11 +3,17 @@ import torch
 import torch.optim as optim
 import argparse
 
-from ui import UI
-from data_loader import load_dataset
-from model import get_model
 import os
-from ui_init_window import run_initial_ui
+import sys
+# Add the parent directory of 'code' to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+from ui.ui import UI
+from data.data_loader import load_dataset
+from model import get_model
+from ui.ui_init_window import run_initial_ui
 
 
 def main():

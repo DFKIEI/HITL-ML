@@ -12,10 +12,10 @@ from sklearn.metrics import f1_score
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import random
-from training_utils import save_checkpoint, compute_ideal_structure, save_report
+from training.training_utils import save_checkpoint, compute_ideal_structure, save_report
 from collections import defaultdict
 import torch.cuda.amp as amp
-from losses import relative_distance_loss
+from training.losses import relative_distance_loss
 
 def train_model(model, optimizer, trainloader, valloader, testloader, device, num_epochs, freq,
                 alpha_var, report_dir,

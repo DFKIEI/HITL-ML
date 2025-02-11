@@ -10,11 +10,11 @@ import os
 
 matplotlib.use('TkAgg')
 
-from plots import InteractivePlot
-from training import train_model
-from ui_control import create_info_labels, create_training_controls, create_visualization_controls
-from ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
-from training_utils import find_latest_checkpoint, load_checkpoint
+from plots.plots import InteractivePlot
+from training.training import train_model
+from ui.ui_control import create_info_labels, create_training_controls, create_visualization_controls
+from ui.ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
+from training.training_utils import find_latest_checkpoint, load_checkpoint
 
 
 class UI:
