@@ -21,4 +21,4 @@ Implements training loops, custom loss functions, and training utilities for mod
 Manages the graphical user interface and user interactions, including real-time visualization and feedback collection.
 
 ### model.py
-Defines model architectures and related utilities.
+Defines model architectures. Currently has definitions for MNIST, PAMAP2, CIFAR10 and CIFAR100. Can be extended
