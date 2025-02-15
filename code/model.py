@@ -29,7 +29,7 @@ class CNN_PAMAP2(nn.Module):
         # Learnable scale parameter
         self.scale = nn.Parameter(torch.ones(1) * 10.0)
 
-        # Modified projection layer
+        #projection layer
         self.projection_layer = nn.Sequential(
             nn.Linear(hidden[3], 256),
             nn.LayerNorm(256),
@@ -330,3 +330,7 @@ def get_model(model_name, input_shape, num_classes):
         return SmallCNN_CIFAR10(input_shape[0], num_classes)
     else:
         raise ValueError(f"Unknown model: {model_name}")
+    ##############NEW MODEL#################
+    #elif model_name == 'New_Model':
+    #   return New_Model(input_shape[0], num_classes)
+    ########################################

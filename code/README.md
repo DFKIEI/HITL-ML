@@ -9,7 +9,8 @@ This directory contains the core implementation of the Human-in-the-Loop Machine
 Entry point for the application. Handles command line arguments and initializes the system.
 
 ### data/
-Handles all data loading and preprocessing operations. Includes specialized loaders for different datasets.
+Handles all data loading and preprocessing operations. Includes specialized loaders for different datasets. 
+Currently has support for MNIST, PAMAP2, CIFAR10 and CIFAR100. Can be extended(review the data_loader.py file for more info...)
 
 ### plots/
 Contains visualization utilities for data and model results, supporting interactive visualization.
@@ -21,4 +22,4 @@ Implements training loops, custom loss functions, and training utilities for mod
 Manages the graphical user interface and user interactions, including real-time visualization and feedback collection.
 
 ### model.py
-Defines model architectures. Currently has definitions for MNIST, PAMAP2, CIFAR10 and CIFAR100. Can be extended
+Defines model architectures. Currently has definitions for MNIST, PAMAP2, CIFAR10 and CIFAR100. Can be extended(review the file for more info...)

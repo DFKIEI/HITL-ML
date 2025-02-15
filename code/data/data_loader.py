@@ -16,6 +16,10 @@ def load_dataset(dataset_name, batch_size=32):
         return load_cifar100(batch_size)
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
+    ###################
+    #elif dataset_name == 'New_Dataset':
+    #    return load_new_dataset(batch_size)
+    ###################    
 
 
 def load_pamap2(batch_size=32, window_size=200, window_step=50, frequency=50, split_ratio=0.8):
@@ -156,3 +160,7 @@ def load_cifar10(batch_size=32, val_split=0.5):
     input_shape = (3, 32, 32)
 
     return train_loader, val_loader, test_loader, num_classes, input_shape
+
+###########NEW DATASET###########
+#def load_new_dataset()
+#################################
