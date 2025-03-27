@@ -16,18 +16,18 @@ def run_initial_ui():
         user_input['model_path'] = filename
         root.destroy()
 
-    def select_model():
-        """Open a file dialog to select a model file."""
-        nonlocal filename
-        filename = filedialog.askopenfilename(title="Select Model File",
-                                              filetypes=[("PyTorch Model", "*.pt;*.pth"), ("All files", "*.*")])
-        if filename:
-            model_button.config(text="Model Selected")
-            on_input_change()  # Re-check for enabling confirm button
+    #def select_model():
+    #    """Open a file dialog to select a model file."""
+    #    nonlocal filename
+    #    filename = filedialog.askopenfilename(title="Select Model File",
+    #                                          filetypes=[("PyTorch Model", "*.pt;*.pth"), ("All files", "*.*")])
+    #    if filename:
+    #        model_button.config(text="Model Selected")
+    #        on_input_change()  # Re-check for enabling confirm button
 
     def on_input_change(*args):
         """Enable Confirm button when all inputs are provided."""
-        if id_var.get() and dataset_var.get() and scenario_var.get() and filename:
+        if id_var.get() and dataset_var.get() and scenario_var.get():# and filename:
             confirm_button.config(state=tk.NORMAL)
         else:
             confirm_button.config(state=tk.DISABLED)
@@ -50,15 +50,15 @@ def run_initial_ui():
     tk.Entry(root, textvariable=id_var).grid(row=0, column=1, padx=10, pady=10)
 
     tk.Label(root, text="Select Dataset:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
-    dataset_dropdown = ttk.Combobox(root, textvariable=dataset_var, values=["PAMAP2", "CIFAR10"], state="readonly")
+    dataset_dropdown = ttk.Combobox(root, textvariable=dataset_var, values=["PAMAP2", "CIFAR10"], state="readonly")  #Add other models-datasets option here
     dataset_dropdown.grid(row=1, column=1, padx=10, pady=10)
 
     tk.Label(root, text="Scenario Name:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
     tk.Entry(root, textvariable=scenario_var).grid(row=2, column=1, padx=10, pady=10)
 
     # Model Selection Button
-    model_button = tk.Button(root, text="Select Model", command=select_model)
-    model_button.grid(row=3, column=0, columnspan=2, pady=10)
+    #model_button = tk.Button(root, text="Select Model", command=select_model)
+    #model_button.grid(row=3, column=0, columnspan=2, pady=10)
 
     # Confirm Button
     confirm_button = tk.Button(root, text="Confirm", state=tk.DISABLED, command=confirm_action)

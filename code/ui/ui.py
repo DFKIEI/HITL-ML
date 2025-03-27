@@ -19,7 +19,7 @@ from training.training_utils import find_latest_checkpoint, load_checkpoint
 
 class UI:
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name,
-                 loss_type, visualization, checkpoint, probant_id, scenario):
+                 loss_type, visualization, probant_id, scenario):
         self.root = root
         self.model = model
         self.optimizer = optimizer
@@ -42,12 +42,12 @@ class UI:
         self.all_datapoints_tracker = AllDataPointsTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
         self.model_tracker = ModelTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
 
-        if os.path.exists(checkpoint):
-            try:
-                _, loss_info = load_checkpoint(self.model, self.optimizer, checkpoint)
-                print(f"Loaded checkpoint with Val Accuracy: {loss_info['val_accuracy']:.2f}%")
-            except Exception as e:
-                print(f"Error loading checkpoint: {str(e)}")
+        #if checkpoint and os.path.exists(checkpoint):
+        #    try:
+        #        _, loss_info = load_checkpoint(self.model, self.optimizer, checkpoint)
+        #        print(f"Loaded checkpoint with Val Accuracy: {loss_info['val_accuracy']:.2f}%")
+        #    except Exception as e:
+        #        print(f"Error loading checkpoint: {str(e)}")
 
         self.visualization_queue = queue.Queue()
         self.training_thread = None
