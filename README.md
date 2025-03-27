@@ -46,16 +46,17 @@ sklearn
 3. Adjust training parameters and start training.
 4. Visualize the results using different plots.
 
-## Project Structure
+## Project Structure (Main files)
 ```
-|-- main.py            # Entry point of the application
-|-- plots_utils.py     # Utility functions for visualizations
-|-- ui_display.py      # Handles plotting and visualization
-|-- ui_init_window.py  # Initializes the UI setup window
-|-- ui.py              # Main UI logic and interactions
-|-- training.py        # Main Training code
-|-- losses.py          # Calculation of the feedback loss
-|-- model.py           # Collection of the supported models
+|-- code/main.py            # Entry point of the application
+|-- code/plots/plots_utils.py     # Utility functions for visualizations
+|-- code/ui/ui_display.py      # Handles plotting and visualization
+|-- code/ui/ui_init_window.py  # Initializes the UI setup window -- Add new database/model option for the ui init window here
+|-- code/ui.py              # Main UI logic and interactions
+|-- code/training/training.py        # Main Training code
+|-- code/training/losses.py          # Calculation of the feedback loss
+|-- code/model.py           # Collection of the supported models -- Add new model here
+|-- code/data/data_loader.py # Data loading for the current supported datasets -- Add new data loader for the new dataset here
 ```
 
 ## Contribution
