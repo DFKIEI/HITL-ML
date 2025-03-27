@@ -18,12 +18,9 @@ This project requires Python and the following dependencies:
 torch
 numpy
 matplotlib
-tkinter
+pandas
 torchvision
-argparse
-typing
-logging
-sklearn
+scikit-learn
 ```
 
 ## Installation
