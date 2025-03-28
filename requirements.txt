@@ -1,9 +1,6 @@
 torch
 numpy
 matplotlib
-tkinter
+pandas
 torchvision
-argparse
-typing
-logging
-sklearn
+scikit-learn
