@@ -64,6 +64,7 @@ class InteractivePlot:
         features_2d, latent_features, labels, predicted_labels = extract_latent_features(self)
 
         self.labels = labels
+        self.predicted_labels = predicted_labels  # full split, used by the LLM summary
         self.selected_features = features_2d[self.samples_to_track]  # Use 2D features directly
         self.latent_features = latent_features[self.samples_to_track]
         self.original_high_dim_points = latent_features[self.samples_to_track]
@@ -149,8 +150,11 @@ class InteractivePlot:
 
     def update_latent_space(self, moved_latent_space):
         print("Updating latent space")
-        print(f"Max difference in update_latent_space: {np.max(np.abs(moved_latent_space - self.original_2d_points))}")
-        print(f"Min difference in update_latent_space: {np.min(np.abs(moved_latent_space - self.original_2d_points))}")
+        previous = self.moved_2d_points if self.moved_2d_points is not None else self.original_2d_points
+        step_diff = np.abs(moved_latent_space - previous)
+        total_diff = np.abs(moved_latent_space - self.original_2d_points)
+        print(f"Max/min change from last step: {np.max(step_diff)} / {np.min(step_diff)}")
+        print(f"Max/min change from original layout: {np.max(total_diff)} / {np.min(total_diff)}")
         self.moved_2d_points = moved_latent_space
         self.movement_occured = True
         print(f"moved_2d_points updated, shape: {self.moved_2d_points.shape}")

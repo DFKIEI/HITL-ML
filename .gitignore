@@ -213,3 +213,6 @@ TODO.txt
 
 ##VSCode
 .vscode/
+
+## LLM API key - keep it out of the repository
+llm_config.txt

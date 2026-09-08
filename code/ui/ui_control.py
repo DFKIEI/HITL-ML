@@ -15,9 +15,14 @@ def create_training_controls(self):
     epoch_slider.pack(padx=3, pady=3)
 
     self.alpha_var = tk.DoubleVar(value=0.5)
-    ttk.Label(self.control_panel, text="Alpha:").pack(pady=3)
+    ttk.Label(self.control_panel, text="Alpha (human loss weight):").pack(pady=3)
     self.alpha_entry = ttk.Entry(self.control_panel, textvariable=self.alpha_var)
     self.alpha_entry.pack(padx=3, pady=3)
+
+    self.beta_var = tk.DoubleVar(value=0.0)
+    ttk.Label(self.control_panel, text="Beta (LLM loss weight):").pack(pady=3)
+    self.beta_entry = ttk.Entry(self.control_panel, textvariable=self.beta_var)
+    self.beta_entry.pack(padx=3, pady=3)
 
     ttk.Label(self.control_panel, text="Evaluation Frequency (batches):").pack(pady=3)
     self.freq_var = tk.IntVar(value=100)
@@ -58,3 +63,7 @@ def create_visualization_controls(self):
     ttk.Label(self.control_panel, text="Select Layer:").pack(pady=3)
     self.layer_var = tk.StringVar(value="final")
     ttk.Button(self.control_panel, text="undo", command=self.undo_last_step).pack(pady=3)
+
+    ttk.Separator(self.control_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+    ttk.Button(self.control_panel, text="LLM Suggestions",
+               command=self.show_llm_suggestions).pack(pady=3)

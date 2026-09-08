@@ -1,5 +1,5 @@
 {
-    "python.pythonPath": "/Users/vishalbanwari/miniconda3/bin/python",
+    "python.defaultInterpreterPath": "/Users/vishalbanwari/miniconda3/envs/pamap/bin/python",
     "python.analysis.extraPaths": [
     ]
 }

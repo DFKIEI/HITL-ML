@@ -14,6 +14,7 @@ from ui.ui import UI
 from data.data_loader import load_dataset
 from model import get_model
 from ui.ui_init_window import run_initial_ui
+from llm import openrouter
 
 
 def main():
@@ -30,7 +31,13 @@ def main():
                         choices=['train', 'validation', 'test'])
     parser.add_argument('--id', type=str, default=user_input['id'], help='Person ID to identifgy partisipent')
     parser.add_argument('--scenario', type=str, default=user_input['scenario'], help='Name of scenario')
+    parser.add_argument('--llm-model', type=str, default=openrouter.get_default_model(),
+                        dest='llm_model',
+                        help='OpenRouter model id used for the latent space suggestions')
     args = parser.parse_args()
+
+    # The suggestion window reads the default model from the environment
+    os.environ[openrouter.MODEL_ENV_VAR] = args.llm_model
 
     # Set up device
     if torch.cuda.is_available():

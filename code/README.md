@@ -21,5 +21,9 @@ Implements training loops, custom loss functions, and training utilities for mod
 ### ui/
 Manages the graphical user interface and user interactions, including real-time visualization and feedback collection.
 
+### llm/
+Optional LLM assistance: describes the current latent space, asks an LLM (through OpenRouter) for concrete
+rearrangements, and executes the ones the operator accepts. Requires an OpenRouter API key, see llm/README.md.
+
 ### model.py
 Defines model architectures. Currently has definitions for MNIST, PAMAP2, CIFAR10 and CIFAR100. Can be extended(review the file for more info...)

@@ -5,7 +5,7 @@ import queue
 import matplotlib
 from matplotlib import pyplot as plt
 from torch.utils import data
-from custom_logging import PointTracker, AllDataPointsTracker, ModelTracker
+from custom_logging import PointTracker, AllDataPointsTracker, ModelTracker, LLMTracker
 import os
 
 matplotlib.use('TkAgg')
@@ -15,6 +15,7 @@ from training.training import train_model
 from ui.ui_control import create_info_labels, create_training_controls, create_visualization_controls
 from ui.ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
 from training.training_utils import find_latest_checkpoint, load_checkpoint
+from ui.ui_llm import open_llm_suggestions
 
 
 class UI:
@@ -41,6 +42,7 @@ class UI:
         self.point_tracker = PointTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
         self.all_datapoints_tracker = AllDataPointsTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
         self.model_tracker = ModelTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
+        self.llm_tracker = LLMTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
 
         #if checkpoint and os.path.exists(checkpoint):
         #    try:
@@ -65,6 +67,14 @@ class UI:
         self.offset = None
 
         self.plot = None
+
+        self.llm_window = None
+        self.latest_metrics = {}
+        self.latest_llm_suggestions = []
+        # ids of suggestions that were applied - still in latest_llm_suggestions
+        # (so they keep driving the beta/LLM loss) but hidden from the overlay
+        # since the operator already saw them enacted on the scatter plot.
+        self.applied_llm_suggestion_ids = set()
 
         self.create_ui()
 
@@ -124,6 +134,7 @@ class UI:
             # Disable pause epochs slider when starting
             self.pause_slider.configure(state='disabled')
             self.alpha_entry.configure(state='disabled')
+            self.beta_entry.configure(state='disabled')
         else:
             if self.pause_event.is_set():
                 self.pause_event.clear()
@@ -132,6 +143,7 @@ class UI:
                 # Disable pause epochs slider when resuming
                 self.pause_slider.configure(state='disabled')
                 self.alpha_entry.configure(state='disabled')
+                self.beta_entry.configure(state='disabled')
             else:
                 self.pause_event.set()
                 self.training_button.config(text="Resume Training")
@@ -139,6 +151,7 @@ class UI:
                 # Enable pause epochs slider when pausing
                 self.pause_slider.configure(state='active')
                 self.alpha_entry.configure(state='active')
+                self.beta_entry.configure(state='active')
         self.all_datapoints_tracker.log_datapoints_state(self.data, self.moved_points)
 
     def run_training(self):
@@ -151,7 +164,22 @@ class UI:
                     epoch_end_callback=self.on_epoch_end,
                     pause_after_n_epochs=self.pause_epochs_var.get(),
                     plot=self.plot,
-                    checkpoint_dir=self.probant_scenario_dir, logger=self.model_tracker)
+                    checkpoint_dir=self.probant_scenario_dir, logger=self.model_tracker,
+                    metrics_callback=self.record_metrics,
+                    beta_var=self.beta_var,
+                    llm_suggestions_callback=self.get_latest_llm_suggestions)
+
+    def record_metrics(self, metrics):
+        """Keep the newest scores so the LLM sees how the model is doing."""
+        self.latest_metrics = metrics
+
+    def get_latest_llm_suggestions(self):
+        """Read by the training loop to build the beta-weighted LLM loss -
+        the LLM closing the loop on top of the CE and human losses."""
+        return self.latest_llm_suggestions
+
+    def show_llm_suggestions(self):
+        open_llm_suggestions(self)
 
     def on_epoch_end(self):
         self.pause_event.set()
@@ -162,6 +190,7 @@ class UI:
         # Enable pause epochs slider when pausing
         self.pause_slider.configure(state='active')
         self.alpha_entry.configure(state='active')
+        self.beta_entry.configure(state='active')
 
     def update_log(self, message):
         self.log_text.insert(tk.END, message + "\n")
@@ -186,6 +215,13 @@ class UI:
             self.moved_points = self.points_last_step.copy()
             self.scatter.set_offsets(self.moved_points)
             self.ax.collections[1].set_offsets(self.moved_points[self.data['predicted_labels'] != self.data['labels']])
+
+            # Restore the centers too, otherwise the markers stay where the last
+            # drag or applied LLM suggestion left them
+            for i, center in enumerate(self.last_centers):
+                self.data['centers'][i] = center
+                self.center_artists[i].set_offsets(center)
+                self.plot.update_center(i, center)
 
             self.plot.update_latent_space(self.moved_points)  # Update latent space
             self.plot.moved_2d_points = self.moved_points  # Update plot data

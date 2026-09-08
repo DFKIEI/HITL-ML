@@ -1,0 +1,9 @@
+# Configuration for the LLM suggestions (see code/llm/README.md).
+# Copy this file to llm_config.txt and put your own key in it.
+# llm_config.txt is git-ignored - never commit a file that contains a real key.
+
+# Your OpenRouter API key from https://openrouter.ai/keys
+OPENROUTER_API_KEY=
+
+# Any model id from https://openrouter.ai/models
+OPENROUTER_MODEL=anthropic/claude-opus-5

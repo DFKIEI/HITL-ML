@@ -3,6 +3,10 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 import numpy as np
 import tkinter as tk
 
+from matplotlib.patches import Circle
+
+from llm.movement import compute_class_movements, compute_class_tighten_factors, suggestion_vectors, TIGHTEN_FACTOR
+
 
 def get_label_names(dataset):
     if hasattr(dataset, 'dataset'):  ###For CIFAR10,100
@@ -42,7 +46,7 @@ def display_scatter_plot(self, data, tab):
     filtered_label_names = {i: sequential_mapping[i] for i in unique_labels}
 
     cmap_name = 'tab20' if num_classes > 10 else 'tab10'
-    cmap = plt.cm.get_cmap(cmap_name, num_classes)
+    cmap = plt.colormaps[cmap_name].resampled(num_classes)
 
     # Create a normalized colormap that maps each label to a color index between 0 and 1
     norm = plt.Normalize(vmin=-0.5, vmax=num_classes - 0.5)
@@ -52,6 +56,8 @@ def display_scatter_plot(self, data, tab):
     self.scatter = scatter
 
     incorrect_mask = data['predicted_labels'] != data['labels']
+    self.unique_labels = unique_labels
+    self.incorrect_mask = incorrect_mask
     ax.scatter(data['features'][incorrect_mask, 0], data['features'][incorrect_mask, 1],
                c=data['labels'][incorrect_mask], cmap=cmap, alpha=0.8, s=50,
                edgecolor='black', linewidth=2.0)
@@ -201,7 +207,155 @@ def display_scatter_plot(self, data, tab):
     fig.canvas.mpl_connect('motion_notify_event', on_motion)
     fig.canvas.mpl_connect('button_press_event', lambda event: on_double_click(event) if event.dblclick else None)
 
+    self.llm_overlay_artists = []
+    refresh_llm_overlay(self)
+
     display_plot(self, fig, tab)
+
+
+def refresh_llm_overlay(self):
+    """Draw an arrow per class showing the movement (direction + scale) the
+    LLM last suggested for it, and a shrinking dashed circle for any class it
+    flagged as too spread out (tighten_i/tighten_j), so the operator can
+    compare both against what they actually do. Advisory only - purely
+    visual, applied for real only via the "Apply" button."""
+    ax = getattr(self, 'ax', None)
+    fig = getattr(self, 'scatter_fig', None)
+    if ax is None or fig is None:
+        return
+
+    for artist in getattr(self, 'llm_overlay_artists', []):
+        artist.remove()
+    self.llm_overlay_artists = []
+
+    all_suggestions = getattr(self, 'latest_llm_suggestions', None)
+    applied_ids = getattr(self, 'applied_llm_suggestion_ids', None) or set()
+    # Applied suggestions stay in latest_llm_suggestions to keep driving the
+    # beta/LLM loss, but the operator already saw them enacted on the scatter
+    # plot - redrawing their arrow/circle here would look like nothing happened.
+    suggestions = [s for s in all_suggestions if id(s) not in applied_ids] if all_suggestions else all_suggestions
+    data = getattr(self, 'data', None)
+    unique_labels = getattr(self, 'unique_labels', None)
+    if suggestions and data is not None and unique_labels is not None:
+        centroids = {int(label): np.asarray(data['centers'][i], dtype=float)
+                     for i, label in enumerate(unique_labels)}
+        movements = compute_class_movements(suggestions, centroids)
+
+        for class_index, vector in movements.items():
+            start = centroids.get(class_index)
+            if start is None:
+                continue
+            end = start + vector
+            arrow = ax.annotate(
+                '', xy=tuple(end), xytext=tuple(start),
+                arrowprops=dict(arrowstyle='-|>', color='black', lw=2,
+                                alpha=0.85, linestyle='--'),
+                zorder=10,
+            )
+            self.llm_overlay_artists.append(arrow)
+
+        tighten_factors = compute_class_tighten_factors(suggestions)
+        if tighten_factors:
+            for i, label in enumerate(unique_labels):
+                class_index = int(label)
+                if class_index not in tighten_factors:
+                    continue
+                center = centroids[class_index]
+                mask = data['labels'] == class_index
+                points = data['features'][mask]
+                if points.shape[0] == 0:
+                    continue
+                radius = float(np.linalg.norm(points - center, axis=1).mean())
+                target_radius = radius * tighten_factors[class_index]
+                if target_radius <= 1e-8:
+                    continue
+                circle = Circle(tuple(center), target_radius, fill=False, linestyle='--',
+                                edgecolor='purple', linewidth=2, alpha=0.85, zorder=9)
+                ax.add_patch(circle)
+                self.llm_overlay_artists.append(circle)
+
+    fig.canvas.draw_idle()
+
+
+def _class_position(unique_labels, class_index):
+    matches = np.where(unique_labels == class_index)[0]
+    return int(matches[0]) if len(matches) else None
+
+
+def _tighten_class_in_place(self, data, unique_labels, class_index):
+    """Pull class_index's points in towards its own (current) center by
+    TIGHTEN_FACTOR - the "condensation" a pure center-to-center move can never
+    produce, for a class the LLM flagged as too diffuse."""
+    position = _class_position(unique_labels, class_index)
+    if position is None:
+        return False
+    center = np.asarray(data['centers'][position], dtype=float)
+    mask = data['labels'] == class_index
+    num_points = int(mask.sum())
+    if num_points == 0:
+        return False
+
+    self.moved_points[mask] = center + (self.moved_points[mask] - center) * TIGHTEN_FACTOR
+    self.point_tracker.log_llm_class_scaling(class_index, center, TIGHTEN_FACTOR, num_points)
+    return True
+
+
+def apply_llm_suggestion(self, suggestion):
+    """Apply one suggestion's direction/scale (and tighten_i/tighten_j) to the
+    2D scatter plot for real, right now - moving/condensing exactly like an
+    operator drag would, so it's immediately reflected in
+    moved_points/data['centers'] (and therefore in the next human-loss
+    ideal_structure too). Returns True if anything was actually changed."""
+    data = getattr(self, 'data', None)
+    unique_labels = getattr(self, 'unique_labels', None)
+    if data is None or unique_labels is None or getattr(self, 'ax', None) is None:
+        return False
+
+    position_i = _class_position(unique_labels, suggestion.class_i)
+    if position_i is None:
+        return False
+
+    centroids = {int(label): np.asarray(data['centers'][i], dtype=float)
+                 for i, label in enumerate(unique_labels)}
+    vectors = suggestion_vectors(suggestion, centroids)
+
+    if not vectors and not suggestion.tighten_i and not suggestion.tighten_j:
+        return False
+
+    # Same bookkeeping a manual drag does, so Undo still works afterwards.
+    self.points_last_step = self.moved_points.copy()
+    self.last_centers = data['centers'].copy()
+
+    for class_index, vector in vectors.items():
+        position = _class_position(unique_labels, class_index)
+        if position is None:
+            continue
+        old_center = np.asarray(data['centers'][position], dtype=float).copy()
+        new_center = old_center + vector
+        data['centers'][position] = new_center
+        self.center_artists[position].set_offsets(new_center)
+
+        mask = data['labels'] == class_index
+        self.moved_points[mask] += vector
+
+        self.plot.update_center(position, new_center)
+        self.point_tracker.log_llm_center_movement(class_index, old_center, new_center)
+
+    if suggestion.tighten_i:
+        _tighten_class_in_place(self, data, unique_labels, suggestion.class_i)
+    if suggestion.tighten_j:
+        _tighten_class_in_place(self, data, unique_labels, suggestion.class_j)
+
+    self.scatter.set_offsets(self.moved_points)
+    incorrect_mask = getattr(self, 'incorrect_mask', None)
+    if incorrect_mask is not None:
+        self.ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
+
+    self.plot.update_latent_space(self.moved_points)
+    self.plot.moved_2d_points = self.moved_points
+
+    self.scatter_fig.canvas.draw_idle()
+    return True
 
 
 def display_radar_plot(self, data, tab):
@@ -253,9 +407,9 @@ def display_parallel_plot(self, data, tab):
     # Use a colormap that can distinguish classes
     num_classes = len(data['selected_classes'])
     if num_classes > 10:
-        cmap = plt.cm.get_cmap('tab20', num_classes)
+        cmap = plt.colormaps['tab20'].resampled(num_classes)
     else:
-        cmap = plt.cm.get_cmap('tab10', num_classes)
+        cmap = plt.colormaps['tab10'].resampled(num_classes)
 
     legend_handles = []
 

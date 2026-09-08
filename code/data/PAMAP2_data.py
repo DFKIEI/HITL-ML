@@ -202,11 +202,10 @@ class PAMAP2(Dataset):
         if not data_path.exists():
             path_to_zip_file = self.dir.joinpath('data.zip')
 
-            # Download zip file with data
-            if not path_to_zip_file.exists():
+            # Download zip file with data, resuming/retrying on dropped connections
+            if not path_to_zip_file.exists() or not zipfile.is_zipfile(path_to_zip_file):
                 print("Downloading data...")
-                local_fn, headers = urllib.request.urlretrieve(url=url, filename=path_to_zip_file)
-                # print(local_fn, headers)
+                self._download_with_resume(url, path_to_zip_file)
 
             # Extract the zip file
             if not data_path.parent.joinpath('PAMAP2_Dataset').exists():
@@ -215,6 +214,35 @@ class PAMAP2(Dataset):
                     zip_ref.extractall(data_path.parent)
 
         return data_path.parent.joinpath('PAMAP2_Dataset')
+
+    @staticmethod
+    def _download_with_resume(url, dest_path, max_retries=8):
+        # archive.ics.uci.edu intermittently drops chunked-encoding connections
+        # before the transfer completes, so plain urlretrieve leaves a truncated
+        # (unopenable) zip behind. Retry with HTTP Range resume instead.
+        import requests
+        import time
+
+        for attempt in range(1, max_retries + 1):
+            resume_pos = dest_path.stat().st_size if dest_path.exists() else 0
+            headers = {'Range': f'bytes={resume_pos}-'} if resume_pos else {}
+            try:
+                with requests.get(url, headers=headers, stream=True, timeout=30) as r:
+                    if r.status_code not in (200, 206):
+                        r.raise_for_status()
+                    mode = 'ab' if resume_pos and r.status_code == 206 else 'wb'
+                    with open(dest_path, mode) as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                f.write(chunk)
+                if zipfile.is_zipfile(dest_path):
+                    return
+                print(f"Downloaded file failed validation (attempt {attempt}/{max_retries}), retrying...")
+            except (requests.exceptions.RequestException, IOError) as e:
+                print(f"Download error (attempt {attempt}/{max_retries}): {e}")
+            time.sleep(3)
+
+        raise RuntimeError(f"Failed to download a valid zip file from {url} after {max_retries} attempts")
 
     @staticmethod
     def extra_interpolates_nan(x):

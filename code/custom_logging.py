@@ -1,3 +1,4 @@
+import json
 import logging
 import numpy as np
 from typing import Optional
@@ -91,6 +92,40 @@ class PointTracker:
             f"CR, {class_label}, {center}, _"
         )
 
+    def log_llm_center_movement(self,
+                                class_label: int,
+                                old_center: np.ndarray,
+                                new_center: np.ndarray):
+        """
+        Log a class center movement that came from an applied LLM suggestion
+
+        Args:
+            class_label (int): The label of the class
+            old_center (np.ndarray): Original center coordinates
+            new_center (np.ndarray): New center coordinates
+        """
+        self.logger.info(
+            f"LLM_CM, {class_label},{old_center},{new_center}"
+        )
+
+    def log_llm_class_scaling(self,
+                              class_label: int,
+                              center: np.ndarray,
+                              factor: float,
+                              num_points: int):
+        """
+        Log the rescaling of a class spread that came from an applied LLM suggestion
+
+        Args:
+            class_label (int): The label of the class
+            center (np.ndarray): The center the points were scaled around
+            factor (float): Scaling factor applied to the distances to the center
+            num_points (int): Number of points affected
+        """
+        self.logger.info(
+            f"LLM_CS, {class_label}, {center}, {factor}, {num_points}"
+        )
+
     def undo_last_step(self):
         """
         Log undoing of last step
@@ -157,3 +192,64 @@ class ModelTracker:
             message
         )
         self.iter_counter += 1
+
+
+class LLMTracker:
+    def __init__(self, probant_id: str = 'test', scenario: str = 'A1', log_path: str = ''):
+        # Configure logging
+        self.iter_counter = 0
+        self.logger = logging.getLogger('LLMTracker')
+        self.logger.setLevel(logging.INFO)
+        log_file = f'{log_path}{os.sep}llm_suggestions_id_{probant_id}_scenario_{scenario}.log'
+        # File handler
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.INFO)
+
+        # Formatter
+        formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        file_handler.setFormatter(formatter)
+
+        # Add handler if not already added
+        if not self.logger.handlers:
+            self.logger.addHandler(file_handler)
+
+    def log_request(self, model: str, goal, state: dict):
+        """Log the latent space state that was sent to the LLM"""
+        self.iter_counter += 1
+        self.logger.info(
+            f"REQUEST, {self.iter_counter}, {model}, goal={goal}, {json.dumps(state)}"
+        )
+
+    def log_response(self, model: str, raw_response: str):
+        """Log the raw answer of the LLM"""
+        self.logger.info(
+            f"RESPONSE, {self.iter_counter}, {model}, {json.dumps(raw_response)}"
+        )
+
+    def log_suggestions(self, global_summary, suggestions):
+        """Log the global assessment and per-pair suggestions shown to the participant"""
+        payload = {
+            'global': global_summary.as_log_dict(),
+            'suggestions': [s.as_log_dict() for s in suggestions],
+        }
+        self.logger.info(
+            f"SHOWN, {self.iter_counter}, {json.dumps(payload)}"
+        )
+
+    def log_dismissed(self, suggestion):
+        """Log a suggestion the participant rejected"""
+        self.logger.info(
+            f"DISMISSED, {self.iter_counter}, {json.dumps(suggestion.as_log_dict())}"
+        )
+
+    def log_applied(self, suggestion):
+        """Log a suggestion the participant applied to the 2D plot directly"""
+        self.logger.info(
+            f"APPLIED, {self.iter_counter}, {json.dumps(suggestion.as_log_dict())}"
+        )
+
+    def log_error(self, message: str):
+        """Log a failed request or a failed execution"""
+        self.logger.info(
+            f"ERROR, {self.iter_counter}, {message}"
+        )

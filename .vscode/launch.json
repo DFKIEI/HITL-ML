@@ -7,11 +7,11 @@
 
         {
             "name": "Python: Current File",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
-            "args": ["--dataset=PAMAP2", "--model=CNN_PAMAP2", "--loss=external", "--batch=60", "--visualize=validation"]
+            "program": "${workspaceFolder}/code/main.py",
+            "python": "/Users/vishalbanwari/miniconda3/envs/pamap/bin/python",
+            "console": "integratedTerminal"
         }
     ]
 }
