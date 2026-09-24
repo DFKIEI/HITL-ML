@@ -1,13 +1,13 @@
 """Turn an LLM movement/tighten suggestion into 2D vectors and factors.
 
 Shared by the three places that need to know "what would this suggestion do
-to the class centroids/spreads": the beta-weighted LLM loss in
-``training/training.py`` (closing the loop - the model is nudged towards the
-suggested layout), the scatter-plot overlay in ``ui/ui_display.py`` (showing
-the operator the same thing), and the "Apply" button in ``ui/ui_llm.py``
-(applying it for real). All three consume plain
-``{class_index: np.ndarray([x, y])}`` centroids so this module has no torch or
-matplotlib dependency.
+to the class centroids/spreads": the high-dim strategies' loss target in
+``training/training_utils.py`` (closing the loop - the model is nudged
+towards the suggested layout), the scatter-plot overlay in
+``ui/ui_display.py`` (showing the operator the same thing), and the "Apply"
+button / auto-apply path in ``ui/ui_llm.py`` (applying it for real). All
+three consume plain ``{class_index: np.ndarray([x, y])}`` centroids so this
+module has no torch or matplotlib dependency.
 """
 
 from collections import defaultdict

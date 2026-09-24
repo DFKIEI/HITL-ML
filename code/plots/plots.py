@@ -29,6 +29,11 @@ class InteractivePlot:
         self.original_2d_points = None
         self.moved_2d_points = None
         self.movement_occured = False
+        # Strategy 5 (human edits, LLM approves - see llm/strategies.py): the
+        # last 2D layout the LLM actually approved. Only this - not the live
+        # drag in moved_2d_points - drives the loss for that strategy, so an
+        # un-approved drag never silently starts counting.
+        self.approved_2d_points = None
 
 
     def select_balanced_samples(self):
@@ -140,6 +145,18 @@ class InteractivePlot:
             return self.moved_2d_points
         else:
             return self.original_2d_points
+
+    def get_approved_2d_points(self):
+        """Strategy 5's loss target: the last layout the LLM approved, or the
+        untouched original layout before the first approval."""
+        if self.approved_2d_points is not None:
+            return self.approved_2d_points
+        return self.original_2d_points
+
+    def commit_approved_2d_points(self):
+        """Snapshot the current (operator-dragged) 2D layout as LLM-approved.
+        Only called once the LLM approves it - see ui/ui_llm.py."""
+        self.approved_2d_points = self.get_moved_2d_points().copy()
 
     def update_original_2d_points(self, original_2d_points):
         self.original_2d_points = original_2d_points

@@ -16,6 +16,9 @@ from ui.ui_control import create_info_labels, create_training_controls, create_v
 from ui.ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
 from training.training_utils import find_latest_checkpoint, load_checkpoint
 from ui.ui_llm import open_llm_suggestions
+from llm.strategies import get_strategy, id_from_label
+from ui import ui_theme
+from ui.ui_theme import apply_theme
 
 
 class UI:
@@ -65,6 +68,10 @@ class UI:
 
         self.dragging = None
         self.offset = None
+        # Whether the operator can drag clusters/points on the scatter plot at
+        # all - set by on_strategy_change per the active strategy (see
+        # llm/strategies.py); strategies 2, 3 and 6 are LLM-only.
+        self.dragging_enabled = True
 
         self.plot = None
 
@@ -72,40 +79,81 @@ class UI:
         self.latest_metrics = {}
         self.latest_llm_suggestions = []
         # ids of suggestions that were applied - still in latest_llm_suggestions
-        # (so they keep driving the beta/LLM loss) but hidden from the overlay
+        # (so high-dim strategies keep using them) but hidden from the overlay
         # since the operator already saw them enacted on the scatter plot.
         self.applied_llm_suggestion_ids = set()
 
         self.create_ui()
 
     def create_ui(self):
-        padding_value = 2
+        apply_theme(self.root)
+        self.root.title("HITL-ML — Human-in-the-Loop Training")
+        self.root.minsize(1100, 700)
+        try:
+            self.root.state('zoomed')  # start maximized where supported (Windows/some Linux WMs)
+        except tk.TclError:
+            self.root.geometry("1440x900")
 
-        main_frame = tk.Frame(self.root)
+        padding_value = ui_theme.PAD_M
+
+        main_frame = tk.Frame(self.root, bg=ui_theme.BG)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=padding_value, pady=padding_value)
 
-        # self.control_panel = ttk.LabelFrame(main_frame)
-        # self.control_panel.pack(side=tk.LEFT, fill=tk.Y, padx=padding_value, pady=padding_value)
-
-        # Create a canvas with scrollbar for the control panel
-        canvas = tk.Canvas(main_frame)
+        # Scrollable control panel: a themed canvas + scrollbar hosting the
+        # actual (ttk) control_panel frame, so the panel can grow taller than
+        # the window without the window itself growing.
+        canvas = tk.Canvas(main_frame, bg=ui_theme.BG, highlightthickness=0, width=360)
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
-        self.control_panel = ttk.Frame(canvas)
+        self.control_panel = ttk.Frame(canvas, padding=(ui_theme.PAD_M, ui_theme.PAD_M))
 
         # Configure the canvas
         canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="y")
+        scrollbar.pack(side="left", fill="y")
 
         # Add the control panel to the canvas
-        canvas.create_window((0, 0), window=self.control_panel, anchor="nw")
+        panel_window = canvas.create_window((0, 0), window=self.control_panel, anchor="nw")
 
         # Configure the control panel to expand to the canvas width
         self.control_panel.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(panel_window, width=e.width))
+
+        def _on_panel_wheel(event):
+            step = -1 if getattr(event, 'num', None) == 4 else (
+                1 if getattr(event, 'num', None) == 5 else int(-1 * (event.delta / 60)))
+            canvas.yview_scroll(step or 0, "units")
+
+        def _bind_panel_wheel(_event=None):
+            # bind_all while the pointer is over the panel (not just its
+            # background - the panel is mostly filled with child widgets) so
+            # the wheel works everywhere inside it, same pattern as the LLM
+            # Suggestions window's scroll area.
+            canvas.bind_all("<MouseWheel>", _on_panel_wheel)
+            canvas.bind_all("<Button-4>", _on_panel_wheel)
+            canvas.bind_all("<Button-5>", _on_panel_wheel)
+
+        def _unbind_panel_wheel(_event=None):
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                canvas.unbind_all(sequence)
+
+        canvas.bind("<Enter>", _bind_panel_wheel)
+        canvas.bind("<Leave>", _unbind_panel_wheel)
+        self.control_panel.bind("<Enter>", _bind_panel_wheel)
+        self.control_panel.bind("<Leave>", _unbind_panel_wheel)
+        # Keyboard scrolling for the control panel, for operators navigating
+        # without a mouse/trackpad.
+        canvas.bind("<Up>", lambda e: canvas.yview_scroll(-1, "units"))
+        canvas.bind("<Down>", lambda e: canvas.yview_scroll(1, "units"))
+        canvas.bind("<Prior>", lambda e: canvas.yview_scroll(-1, "pages"))  # Page Up
+        canvas.bind("<Next>", lambda e: canvas.yview_scroll(1, "pages"))  # Page Down
+        canvas.configure(takefocus=True)
+        canvas.bind("<Button-1>", lambda e: canvas.focus_set(), add="+")
 
         create_info_labels(self)
         create_training_controls(self)
         create_visualization_controls(self)
+
+        ttk.Separator(main_frame, orient=tk.VERTICAL).pack(side="left", fill="y", padx=ui_theme.PAD_M)
 
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -121,6 +169,7 @@ class UI:
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_change)
 
         self.root.after(100, self.process_visualization_queue)
+        self.on_strategy_change()
 
     def toggle_training(self):
         if self.training_thread is None or not self.training_thread.is_alive():
@@ -134,7 +183,7 @@ class UI:
             # Disable pause epochs slider when starting
             self.pause_slider.configure(state='disabled')
             self.alpha_entry.configure(state='disabled')
-            self.beta_entry.configure(state='disabled')
+            self.strategy_combo.configure(state='disabled')
         else:
             if self.pause_event.is_set():
                 self.pause_event.clear()
@@ -143,7 +192,7 @@ class UI:
                 # Disable pause epochs slider when resuming
                 self.pause_slider.configure(state='disabled')
                 self.alpha_entry.configure(state='disabled')
-                self.beta_entry.configure(state='disabled')
+                self.strategy_combo.configure(state='disabled')
             else:
                 self.pause_event.set()
                 self.training_button.config(text="Resume Training")
@@ -151,7 +200,7 @@ class UI:
                 # Enable pause epochs slider when pausing
                 self.pause_slider.configure(state='active')
                 self.alpha_entry.configure(state='active')
-                self.beta_entry.configure(state='active')
+                self.strategy_combo.configure(state='readonly')
         self.all_datapoints_tracker.log_datapoints_state(self.data, self.moved_points)
 
     def run_training(self):
@@ -166,7 +215,7 @@ class UI:
                     plot=self.plot,
                     checkpoint_dir=self.probant_scenario_dir, logger=self.model_tracker,
                     metrics_callback=self.record_metrics,
-                    beta_var=self.beta_var,
+                    strategy_var=self.strategy_var,
                     llm_suggestions_callback=self.get_latest_llm_suggestions)
 
     def record_metrics(self, metrics):
@@ -174,12 +223,36 @@ class UI:
         self.latest_metrics = metrics
 
     def get_latest_llm_suggestions(self):
-        """Read by the training loop to build the beta-weighted LLM loss -
-        the LLM closing the loop on top of the CE and human losses."""
+        """Read by the training loop to build the high-dim strategies' (2, 6)
+        loss target - the LLM closing the loop on top of the CE loss."""
         return self.latest_llm_suggestions
 
     def show_llm_suggestions(self):
         open_llm_suggestions(self)
+
+    def on_strategy_change(self, event=None):
+        """Sync UI state to the active strategy (see llm/strategies.py):
+        which drags are allowed, whether the LLM Suggestions button is even
+        usable, and (if open) the LLM Suggestions window's own controls."""
+        strategy_id = id_from_label(self.strategy_display_var.get())
+        self.strategy_var.set(strategy_id)
+        strategy = get_strategy(strategy_id)
+        self.strategy_desc_var.set(strategy.description)
+        self.dragging_enabled = strategy.human_drag
+
+        if self.plot is not None:
+            # A pending (un-approved) drag from a previous strategy should
+            # never silently start counting under a new one.
+            self.plot.approved_2d_points = None
+
+        if hasattr(self, 'llm_suggestions_button'):
+            self.llm_suggestions_button.configure(
+                state='normal' if strategy.llm_suggestions else 'disabled')
+
+        if self.llm_window is not None and self.llm_window.winfo_exists():
+            self.llm_window.refresh_for_strategy()
+
+        self.update_log(f"Strategy set to: {strategy.label}")
 
     def on_epoch_end(self):
         self.pause_event.set()
@@ -190,7 +263,7 @@ class UI:
         # Enable pause epochs slider when pausing
         self.pause_slider.configure(state='active')
         self.alpha_entry.configure(state='active')
-        self.beta_entry.configure(state='active')
+        self.strategy_combo.configure(state='readonly')
 
     def update_log(self, message):
         self.log_text.insert(tk.END, message + "\n")
@@ -344,18 +417,22 @@ class Pause(threading.Event):
 class MultiSelectDropdown(tk.Toplevel):
     def __init__(self, parent, options, title="Select Classes"):
         super().__init__(parent)
+        self.configure(bg=ui_theme.BG)
         self.title(title)
         self.selected_options = []
+
+        container = ttk.Frame(self, padding=ui_theme.PAD_L)
+        container.pack(fill=tk.BOTH, expand=True)
 
         self.check_vars = []
         for option in options:
             var = tk.BooleanVar()
-            chk = tk.Checkbutton(self, text=option, variable=var)
-            chk.pack(anchor=tk.W)
+            chk = ttk.Checkbutton(container, text=option, variable=var)
+            chk.pack(anchor=tk.W, pady=2)
             self.check_vars.append((var, option))
 
-        btn = tk.Button(self, text="OK", command=self.on_ok)
-        btn.pack()
+        btn = ttk.Button(container, text="OK", style='Primary.TButton', command=self.on_ok)
+        btn.pack(pady=(ui_theme.PAD_L, 0))
 
     def on_ok(self):
         self.selected_options = [option for var, option in self.check_vars if var.get()]

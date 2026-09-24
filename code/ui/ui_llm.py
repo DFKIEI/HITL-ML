@@ -7,8 +7,10 @@ import tkinter as tk
 from tkinter import ttk
 
 from llm import openrouter
-from llm.suggestions import request_suggestions
+from llm.strategies import get_strategy
+from llm.suggestions import request_suggestions, request_approval
 from ui.ui_display import apply_llm_suggestion, refresh_llm_overlay
+from ui import ui_theme
 
 WRAP_LENGTH = 560
 
@@ -51,16 +53,20 @@ def open_llm_suggestions(ui):
 class LLMSuggestionsWindow(tk.Toplevel):
     def __init__(self, ui):
         super().__init__(ui.root)
+        self.configure(bg=ui_theme.BG)
         self.ui = ui
         self.title("LLM Suggestions for the Latent Space")
-        self.geometry("640x760")
+        self.geometry("680x780")
+        self.minsize(560, 500)
 
         self.result_queue = queue.Queue()
         self.request_running = False
         self.plot_retries = 0
 
         self._build_controls()
+        self._build_approval_area()
         self._build_suggestion_area()
+        self.refresh_for_strategy()
         self.after(200, self._process_queue)
 
     # ----------------------------------------------------------------- layout
@@ -77,7 +83,8 @@ class LLMSuggestionsWindow(tk.Toplevel):
                     values=model_values).grid(
             row=0, column=1, sticky=tk.EW, padx=5, pady=2)
 
-        ttk.Label(frame, text="Focus (optional):").grid(row=1, column=0, sticky=tk.W)
+        self.goal_label_var = tk.StringVar(value="Focus (optional):")
+        ttk.Label(frame, textvariable=self.goal_label_var).grid(row=1, column=0, sticky=tk.W)
         self.goal_var = tk.StringVar()
         goal_entry = ttk.Entry(frame, textvariable=self.goal_var, width=42)
         goal_entry.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
@@ -94,18 +101,55 @@ class LLMSuggestionsWindow(tk.Toplevel):
             self.key_row.grid_remove()
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
-        self.request_button = ttk.Button(buttons, text="Get Suggestions",
+        buttons.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
+        self.request_button = ttk.Button(buttons, text="Get Suggestions", style='Primary.TButton',
                                          command=self.request_suggestions)
         self.request_button.pack(side=tk.LEFT)
         ttk.Button(buttons, text="Clear", command=self._clear_all).pack(
-            side=tk.LEFT, padx=5)
+            side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
 
         self.status_var = tk.StringVar(value=self._key_status())
         ttk.Label(frame, textvariable=self.status_var, wraplength=WRAP_LENGTH,
-                  justify=tk.LEFT).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
+                  justify=tk.LEFT, style='Muted.TLabel').grid(
+            row=4, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
 
         frame.columnconfigure(1, weight=1)
+
+    def _build_approval_area(self):
+        """Strategy 5 (human edits, LLM approves - see llm/strategies.py)
+        only: a gate the operator's 2D drags must pass through before they
+        count towards the loss. Hidden for every other strategy."""
+        self.approval_frame = ttk.LabelFrame(self, text="Approval (Strategy 5)",
+                                             padding=(ui_theme.PAD_M, ui_theme.PAD_S))
+
+        ttk.Label(self.approval_frame,
+                  text="Drag class clusters on the Scatter Plot tab, then request approval - "
+                      "only an approved layout drives training.",
+                  wraplength=WRAP_LENGTH, justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 4))
+
+        self.approval_status_var = tk.StringVar(value="Not yet requested.")
+        self.approval_status_label = ttk.Label(self.approval_frame, textvariable=self.approval_status_var,
+                                               wraplength=WRAP_LENGTH, justify=tk.LEFT)
+        self.approval_status_label.pack(anchor=tk.W)
+
+        self.approval_button = ttk.Button(self.approval_frame, text="Request LLM Approval",
+                                          style='Primary.TButton', command=self.request_approval)
+        self.approval_button.pack(anchor=tk.W, pady=(ui_theme.PAD_S, 4))
+
+    def refresh_for_strategy(self):
+        """Called on open and whenever the operator changes strategy in the
+        main window, so this window's controls always match the active
+        strategy (see llm/strategies.py)."""
+        strategy = get_strategy(self.ui.strategy_var.get())
+
+        self.goal_label_var.set(
+            "Strategy for the LLM (required):" if strategy.human_strategy_text
+            else "Focus (optional):")
+
+        if strategy.approval_required:
+            self.approval_frame.pack(fill=tk.X, padx=10, pady=(0, 10), before=self.canvas.master)
+        else:
+            self.approval_frame.pack_forget()
 
     def _build_suggestion_area(self):
         container = ttk.Frame(self)
@@ -165,6 +209,10 @@ class LLMSuggestionsWindow(tk.Toplevel):
     def request_suggestions(self):
         if self.request_running:
             return
+        strategy = get_strategy(self.ui.strategy_var.get())
+        if strategy.human_strategy_text and not self.goal_var.get().strip():
+            self.status_var.set("This strategy requires you to write a strategy for the LLM above.")
+            return
         if not openrouter.get_api_key():
             self.key_row.grid()
             self.status_var.set(self._key_status())
@@ -203,13 +251,20 @@ class LLMSuggestionsWindow(tk.Toplevel):
         try:
             while True:
                 status, payload = self.result_queue.get_nowait()
-                self.request_running = False
-                self.request_button.configure(state='normal')
                 if status == 'error':
+                    self.request_running = False
+                    self.request_button.configure(state='normal')
                     self.status_var.set(payload)
                     self.ui.llm_tracker.log_error(payload)
-                else:
+                elif status == 'ok':
+                    self.request_running = False
+                    self.request_button.configure(state='normal')
                     self._show_suggestions(*payload)
+                elif status == 'approval':
+                    self._handle_approval(*payload)
+                elif status == 'approval_error':
+                    self.approval_status_var.set(payload)
+                    self.ui.llm_tracker.log_error(payload)
         except queue.Empty:
             pass
         finally:
@@ -218,56 +273,118 @@ class LLMSuggestionsWindow(tk.Toplevel):
     # ----------------------------------------------------------------- output
     def _show_suggestions(self, global_summary, suggestions, state, raw, model, goal):
         self._clear_suggestions()
+        strategy = get_strategy(self.ui.strategy_var.get())
         self.ui.llm_tracker.log_request(model, goal, state)
         self.ui.llm_tracker.log_response(model, raw)
         self.ui.llm_tracker.log_suggestions(global_summary, suggestions)
 
         self.ui.latest_llm_suggestions = list(suggestions)
         self.ui.applied_llm_suggestion_ids = set()
+
+        if strategy.llm_auto_apply and strategy.space == '2d':
+            # Strategy 3: the LLM is the only actor in 2D - apply every
+            # suggestion to the scatter plot immediately, no manual click.
+            for suggestion in suggestions:
+                if apply_llm_suggestion(self.ui, suggestion):
+                    self.ui.applied_llm_suggestion_ids.add(id(suggestion))
+
         refresh_llm_overlay(self.ui)
 
         self._build_global_card(global_summary)
         for index, suggestion in enumerate(suggestions):
-            self._build_card(index, suggestion)
+            self._build_card(index, suggestion, strategy)
 
-        self.status_var.set(f"{len(suggestions)} suggestion(s) from {model}. "
-                            "These are advisory for the plot - the arrows on the Scatter "
-                            "Plot tab show them, and if Beta > 0 they also nudge training.")
+        if strategy.space == 'high_dim':
+            note = ("These drive training directly in the model's real latent space - "
+                    f"{strategy.label}.")
+        elif strategy.llm_auto_apply:
+            note = "Applied automatically to the 2D plot - this is the only editing strategy for this run."
+        else:
+            note = ("These are advisory for the plot - the arrows on the Scatter Plot tab "
+                    "show them. Use Apply to move the plot for real.")
+        self.status_var.set(f"{len(suggestions)} suggestion(s) from {model}. {note}")
         self.ui.update_log(f"LLM: {len(suggestions)} suggestion(s) received.")
+
+    def request_approval(self):
+        """Strategy 5's gate: ask the LLM whether the operator's current 2D
+        drag positions should be committed to drive the interaction loss."""
+        if not openrouter.get_api_key():
+            self.key_row.grid()
+            self.approval_status_var.set(self._key_status())
+            return
+        if getattr(self.ui, 'plot', None) is None:
+            self.approval_status_var.set("Open the Scatter Plot tab and make a change first.")
+            return
+
+        self.approval_button.configure(state='disabled')
+        self.approval_status_var.set("Asking the LLM to review the current layout...")
+        model = self.model_var.get().strip()
+        threading.Thread(target=self._approval_worker, args=(model,), daemon=True).start()
+
+    def _approval_worker(self, model):
+        try:
+            result, state, raw = request_approval(self.ui, model=model)
+            self.result_queue.put(('approval', (result, state, raw)))
+        except Exception as e:  # network, parsing and validation errors alike
+            self.result_queue.put(('approval_error', f"{type(e).__name__}: {e}"))
+
+    def _handle_approval(self, result, state, raw):
+        self.approval_button.configure(state='normal')
+        self.ui.llm_tracker.log_response("approval", raw)
+        feedback = result.feedback or "no feedback given."
+        if result.approved:
+            self.ui.plot.commit_approved_2d_points()
+            self.approval_status_var.set(f"Approved: {feedback}")
+            self.approval_status_label.configure(style='Success.TLabel')
+            self.ui.update_log(f"LLM: approved current 2D layout. {feedback}")
+        else:
+            self.approval_status_var.set(f"Not approved: {feedback}")
+            self.approval_status_label.configure(style='Danger.TLabel')
+            self.ui.update_log(f"LLM: did not approve current 2D layout. {feedback}")
 
     def _build_global_card(self, global_summary):
         if global_summary.is_empty():
             return
-        card = ttk.LabelFrame(self.suggestion_frame, text="Overall assessment")
+        card = ttk.LabelFrame(self.suggestion_frame, text="Overall assessment",
+                              padding=(ui_theme.PAD_M, ui_theme.PAD_S))
         card.pack(fill=tk.X, expand=True, padx=5, pady=6)
 
         if global_summary.issue:
             ttk.Label(card, text=f"Issue: {global_summary.issue}", wraplength=WRAP_LENGTH,
-                      justify=tk.LEFT).pack(anchor=tk.W, padx=8, pady=(4, 0))
+                      justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
         if global_summary.strategy:
             ttk.Label(card, text=f"Strategy: {global_summary.strategy}", wraplength=WRAP_LENGTH,
-                      justify=tk.LEFT).pack(anchor=tk.W, padx=8, pady=(4, 6))
+                      justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 6))
 
-    def _build_card(self, index, suggestion):
+    def _build_card(self, index, suggestion, strategy):
         title = f"{index + 1}. {suggestion.class_i_name} <-> {suggestion.class_j_name}"
-        card = ttk.LabelFrame(self.suggestion_frame, text=title)
+        card = ttk.LabelFrame(self.suggestion_frame, text=title,
+                              padding=(ui_theme.PAD_M, ui_theme.PAD_S))
         card.pack(fill=tk.X, expand=True, padx=5, pady=6)
 
         ttk.Label(card, text=suggestion.suggestion, wraplength=WRAP_LENGTH,
-                  justify=tk.LEFT).pack(anchor=tk.W, padx=8, pady=(4, 0))
+                  justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
 
         movement_text = _describe_movement(suggestion)
         ttk.Label(card, text=movement_text, wraplength=WRAP_LENGTH, justify=tk.LEFT,
-                  font=('TkDefaultFont', 9, 'italic')).pack(anchor=tk.W, padx=8, pady=(2, 6))
+                  style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 6))
+
+        if strategy.llm_auto_apply:
+            # Already counted: 2D strategies (3, 4) applied it to the plot
+            # above; high-dim strategies (2, 6) already drive the loss
+            # directly via latest_llm_suggestions. No manual action needed.
+            ttk.Label(card, text="(applied automatically)",
+                      style='Muted.TLabel').pack(anchor=tk.W, pady=(0, 6))
+            return
 
         status_var = tk.StringVar(value="")
         buttons = ttk.Frame(card)
-        buttons.pack(anchor=tk.W, padx=8, pady=(0, 6))
-        apply_button = ttk.Button(buttons, text="Apply")
+        buttons.pack(anchor=tk.W, pady=(0, 6))
+        apply_button = ttk.Button(buttons, text="Apply", style='Primary.TButton')
         apply_button.pack(side=tk.LEFT)
         dismiss_button = ttk.Button(buttons, text="Dismiss")
-        dismiss_button.pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Label(buttons, textvariable=status_var).pack(side=tk.LEFT, padx=5)
+        dismiss_button.pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
+        ttk.Label(buttons, textvariable=status_var, style='Muted.TLabel').pack(side=tk.LEFT, padx=ui_theme.PAD_S)
 
         def _retire(label, drop_from_pool):
             status_var.set(label)
@@ -283,13 +400,12 @@ class LLMSuggestionsWindow(tk.Toplevel):
             if apply_llm_suggestion(self.ui, suggestion):
                 self.ui.llm_tracker.log_applied(suggestion)
                 self.ui.update_log(f"LLM: applied - {_describe_movement(suggestion)}")
-                # Applying only moves the 2D scatter plot (the human/alpha loss's
-                # view). The beta/LLM loss targets the model's real, pre-projection
-                # latent space, which the drag never touches - so an applied
-                # suggestion must stay in latest_llm_suggestions to keep driving
-                # it; only Dismiss should drop it from that pool. It's marked
-                # "applied" so the overlay stops drawing it - the operator already
-                # saw it enacted - even though it's still live for beta.
+                # Only reached for strategy 5 here (llm_auto_apply strategies
+                # return early above): applying moves the 2D scatter plot
+                # exactly like a manual drag would, so it still needs the
+                # operator to request LLM approval before it counts towards
+                # the loss. Marked "applied" so the overlay stops drawing it -
+                # the operator already saw it enacted.
                 self.ui.applied_llm_suggestion_ids.add(id(suggestion))
                 _retire("applied", drop_from_pool=False)
             else:
@@ -307,7 +423,8 @@ class LLMSuggestionsWindow(tk.Toplevel):
             widget.destroy()
 
     def _clear_all(self):
-        """'Clear' button: also drops the overlay arrows and the beta loss target."""
+        """'Clear' button: also drops the overlay arrows and, for the high-dim
+        strategies (2, 6), the loss target they're built from."""
         self._clear_suggestions()
         self.ui.latest_llm_suggestions = []
         self.ui.applied_llm_suggestion_ids = set()

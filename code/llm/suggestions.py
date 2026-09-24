@@ -97,6 +97,31 @@ class GlobalSummary:
 
 
 @dataclass
+class ApprovalResult:
+    approved: bool = False
+    feedback: str = ''
+
+
+APPROVAL_PROMPT_HEADER = """\
+You review a human operator's proposed rearrangement of a classifier's 2D
+latent-space visualization for a human-in-the-loop training tool (Strategy 5:
+the operator drags class clusters on a 2D scatter plot, then needs your
+approval before the layout counts towards training). You are shown only
+categorical signals about the resulting layout (no coordinates), the same
+kind used for latent-space suggestions elsewhere in this tool.
+"""
+
+APPROVAL_FOOTER = """\
+Output MUST be strict JSON with exactly this shape and no extra keys:
+{ "approved": true | false, "feedback": "string" }
+Approve only if the layout looks like a genuine improvement (better class
+separation, more reasonable spreads) and not, e.g., classes piled on top of
+each other or pushed to nonsensical extremes. Keep "feedback" to one or two
+sentences explaining the verdict.
+"""
+
+
+@dataclass
 class PairSuggestion:
     class_i: int
     class_j: int
@@ -158,6 +183,49 @@ def request_suggestions(ui, model=None, user_goal=None):
 
     global_summary, suggestions = parse_suggestions(content, class_names, set(class_indices))
     return global_summary, suggestions, state, content
+
+
+def request_approval(ui, model=None):
+    """Strategy 5's gate: ask the LLM whether the operator's current 2D drag
+    positions should be committed to drive the interaction loss. Unlike
+    ``request_suggestions``, this reasons about the 2D scatter-plot positions
+    themselves (the thing being approved), not the model's high-dim latent
+    space - dragging only exists in 2D for this strategy.
+
+    Returns ``(ApprovalResult, state, raw_content)``."""
+    points = np.asarray(ui.plot.get_moved_2d_points(), dtype=float)
+    labels = np.asarray(ui.plot.selected_labels)
+    class_names = get_class_names(ui.plot)
+    class_indices = sorted(int(c) for c in np.unique(labels))
+
+    centroids = compute_centroids(points, labels, class_indices)
+    distances = pairwise_distances(centroids)
+    thresholds = compute_thresholds(distances)
+
+    pairs_summary = build_pair_summary_semantic(
+        points, labels, centroids, distances, *thresholds,
+        max_pairs=MAX_PAIRS, class_names=class_names,
+    )
+    global_metrics = build_global_summary_semantic(
+        points, labels, centroids, distances, *thresholds,
+    )
+    state = {'global_metrics': global_metrics, 'pairs': pairs_summary}
+
+    prompt = (APPROVAL_PROMPT_HEADER +
+             f"\nProposed layout (JSON):\n{json.dumps(state, indent=2)}\n" +
+             APPROVAL_FOOTER)
+    messages = [
+        {'role': 'system', 'content': 'Return only JSON that matches the requested schema.'},
+        {'role': 'user', 'content': prompt},
+    ]
+    content, _ = openrouter.chat_completion(messages, model=model)
+
+    payload = _extract_json(content)
+    result = ApprovalResult(
+        approved=bool(payload.get('approved')),
+        feedback=str(payload.get('feedback') or '').strip(),
+    )
+    return result, state, content
 
 
 def _build_prompt(ui, state, user_goal):

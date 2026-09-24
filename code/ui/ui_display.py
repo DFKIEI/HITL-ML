@@ -6,6 +6,25 @@ import tkinter as tk
 from matplotlib.patches import Circle
 
 from llm.movement import compute_class_movements, compute_class_tighten_factors, suggestion_vectors, TIGHTEN_FACTOR
+from ui import ui_theme
+
+
+def _style_figure(fig, *axes):
+    """Match a matplotlib figure's chrome (not the data colors - the class
+    color-coding stays untouched) to the app's theme, so the plot tabs don't
+    look like a visually disconnected, old-fashioned insert."""
+    fig.patch.set_facecolor(ui_theme.SURFACE)
+    for ax in axes:
+        ax.set_facecolor(ui_theme.SURFACE)
+        ax.tick_params(colors=ui_theme.TEXT_MUTED)
+        ax.title.set_color(ui_theme.TEXT)
+        if hasattr(ax, 'spines'):
+            for spine in ax.spines.values():
+                spine.set_color(ui_theme.BORDER_STRONG)
+        if hasattr(ax, 'xaxis') and ax.xaxis.label:
+            ax.xaxis.label.set_color(ui_theme.TEXT)
+        if hasattr(ax, 'yaxis') and ax.yaxis.label:
+            ax.yaxis.label.set_color(ui_theme.TEXT)
 
 
 def get_label_names(dataset):
@@ -37,6 +56,7 @@ def display_scatter_plot(self, data, tab):
     fig, ax = plt.subplots(figsize=(20, 15))
     self.ax = ax
     self.scatter_fig = fig
+    _style_figure(fig, ax)
 
     unique_labels = np.unique(data['labels'])
     num_classes = len(unique_labels)
@@ -95,6 +115,8 @@ def display_scatter_plot(self, data, tab):
 
     def on_press(event):
         if event.inaxes is None:
+            return
+        if not getattr(self, 'dragging_enabled', True):
             return
         self.points_last_step = self.moved_points.copy()  # backup current points
         self.last_centers = data['centers'].copy()
@@ -174,6 +196,8 @@ def display_scatter_plot(self, data, tab):
     def on_double_click(event):
         if event.inaxes is None:
             return
+        if not getattr(self, 'dragging_enabled', True):
+            return
         for i, artist in enumerate(self.center_artists):
             if artist.contains(event)[0]:
                 self.points_last_step = self.moved_points.copy()  # backup current points
@@ -231,8 +255,9 @@ def refresh_llm_overlay(self):
     all_suggestions = getattr(self, 'latest_llm_suggestions', None)
     applied_ids = getattr(self, 'applied_llm_suggestion_ids', None) or set()
     # Applied suggestions stay in latest_llm_suggestions to keep driving the
-    # beta/LLM loss, but the operator already saw them enacted on the scatter
-    # plot - redrawing their arrow/circle here would look like nothing happened.
+    # high-dim strategies' loss (2, 6), but the operator already saw them
+    # enacted on the scatter plot - redrawing their arrow/circle here would
+    # look like nothing happened.
     suggestions = [s for s in all_suggestions if id(s) not in applied_ids] if all_suggestions else all_suggestions
     data = getattr(self, 'data', None)
     unique_labels = getattr(self, 'unique_labels', None)
@@ -394,6 +419,7 @@ def display_radar_plot(self, data, tab):
 
     self.radar_lines = ax.lines[1:]  # Store lines for later highlighting
     self.radar_fig = fig
+    _style_figure(fig, ax)
 
     # Display the plot on the provided tab
     display_plot(self, fig, tab)
@@ -445,6 +471,7 @@ def display_parallel_plot(self, data, tab):
 
     self.parallel_lines = ax.lines  # Store lines for later highlighting
     self.parallel_fig = fig
+    _style_figure(fig, ax)
 
     display_plot(self, fig, tab)
 
@@ -457,6 +484,12 @@ def display_plot(self, fig, tab):
 
     toolbar = NavigationToolbar2Tk(canvas, tab)
     toolbar.update()
+    try:
+        toolbar.configure(background=ui_theme.SURFACE)
+        for child in toolbar.winfo_children():
+            child.configure(background=ui_theme.SURFACE)
+    except tk.TclError:
+        pass  # some toolbar children (e.g. separators) don't take a background color
 
     canvas_widget = canvas.get_tk_widget()
     canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)

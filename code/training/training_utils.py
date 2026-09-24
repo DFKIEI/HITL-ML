@@ -8,7 +8,7 @@ from datetime import datetime
 from llm.movement import compute_class_movements, compute_class_tighten_factors
 
 def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_val,
-                interaction_loss, ce_loss, beta_val=0.0, llm_loss=0.0):
+                interaction_loss, ce_loss, strategy_id=1):
     if not os.path.exists(report_dir):
         os.makedirs(report_dir)
 
@@ -18,12 +18,12 @@ def save_report(epoch, train_loss, val_accuracy, loss_type, report_dir, alpha_va
         with open(report_path, mode='w', newline='') as file:
             writer = csv.writer(file)
             writer.writerow(["Epoch", "Train Loss", "Validation Accuracy", "Loss Type", "Alpha", "interaction Loss",
-                             "CE loss", "Beta", "LLM loss"])  # add parameters, loss, part losses as well
+                             "CE loss", "Strategy"])  # add parameters, loss, part losses as well
 
     with open(report_path, mode='a', newline='') as file:
         writer = csv.writer(file)
         writer.writerow([epoch + 1, train_loss, val_accuracy, loss_type, alpha_val, interaction_loss, ce_loss,
-                         beta_val, llm_loss])
+                         strategy_id])
 
 def compute_ideal_structure(moved_points, samples_per_class, num_classes):
     """Extract mean and spread of each class"""
@@ -37,12 +37,12 @@ def compute_llm_ideal_structure(reference_points, samples_per_class, num_classes
     """Like ``compute_ideal_structure``, but each class center is nudged by
     the movement vector implied by the LLM's direction/scale suggestions, and
     a class flagged with ``tighten_i``/``tighten_j`` gets a smaller target
-    spread too - this is what turns the beta term into the LLM closing the
-    loop on training, instead of being purely advisory. Returns None when
-    there are no usable suggestions yet, so training can fall back to CE +
-    human loss.
+    spread too - this is what the high-dim strategies (2 and 6, see
+    ``llm/strategies.py``) use as the single loss's target structure. Returns
+    None when there are no usable suggestions yet, so training falls back to
+    CE only until the operator requests suggestions.
 
-    Unlike the human loss's ``ideal_structure``, ``reference_points`` here is
+    Unlike the 2D strategies' ``ideal_structure``, ``reference_points`` here is
     expected to be the model's full, pre-projection latent features (not the
     2D scatter-plot points) - the same space the LLM's suggestions were
     reasoned about in (see ``llm/suggestions.py``), and dimension-agnostic
@@ -72,6 +72,31 @@ def compute_llm_ideal_structure(reference_points, samples_per_class, num_classes
         structure[c] = {'center': center, 'spread': spread}
     return structure
 
+
+def compute_structure_for_strategy(strategy, plot, device, llm_suggestions):
+    """Build the single ideal_structure the interaction loss is pulled
+    towards, sourced from wherever ``strategy`` (see ``llm/strategies.py``)
+    says it should come from:
+
+    - high-dim strategies (2, 6): the model's real latent space, nudged by
+      the LLM's suggestions (``compute_llm_ideal_structure``). None until the
+      operator has requested at least one round of suggestions.
+    - 2D strategies (1, 3, 4, 5): the operator's dragged/LLM-applied 2D
+      scatter-plot positions (``compute_ideal_structure``). For strategy 5,
+      only the layout the LLM has actually approved counts - see
+      ``InteractivePlot.get_approved_2d_points``.
+    """
+    if strategy.space == 'high_dim':
+        latent_ref_points = torch.tensor(plot.latent_features, dtype=torch.float32, device=device)
+        return compute_llm_ideal_structure(
+            latent_ref_points, plot.samples_per_class, plot.num_classes, llm_suggestions)
+
+    if strategy.approval_required:
+        points_2d = plot.get_approved_2d_points()
+    else:
+        points_2d = plot.get_moved_2d_points()
+    moved_2d_points = torch.tensor(points_2d, dtype=torch.float32, device=device)
+    return compute_ideal_structure(moved_2d_points, plot.samples_per_class, plot.num_classes)
 
 
 def find_latest_checkpoint(checkpoint_dir):
