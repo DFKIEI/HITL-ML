@@ -19,6 +19,10 @@ class PAMAP2(Dataset):
         dir = Path(dir)
     else:
         dir = Path(__file__).parent.joinpath('dataset')
+        if dir.is_file():
+            # data/dataset is a git symlink (-> ../../dataset); on Windows git
+            # checks it out as a plain text file holding the target path.
+            dir = (dir.parent / dir.read_text().strip()).resolve()
     dir.mkdir(parents=True, exist_ok=True)
     print(dir)
 

@@ -37,7 +37,7 @@ def compute_llm_ideal_structure(reference_points, samples_per_class, num_classes
     """Like ``compute_ideal_structure``, but each class center is nudged by
     the movement vector implied by the LLM's direction/scale suggestions, and
     a class flagged with ``tighten_i``/``tighten_j`` gets a smaller target
-    spread too - this is what the high-dim strategies (2 and 6, see
+    spread too - this is what the high-dim strategy (2, see
     ``llm/strategies.py``) use as the single loss's target structure. Returns
     None when there are no usable suggestions yet, so training falls back to
     CE only until the operator requests suggestions.
@@ -78,24 +78,18 @@ def compute_structure_for_strategy(strategy, plot, device, llm_suggestions):
     towards, sourced from wherever ``strategy`` (see ``llm/strategies.py``)
     says it should come from:
 
-    - high-dim strategies (2, 6): the model's real latent space, nudged by
+    - high-dim strategy (2): the model's real latent space, nudged by
       the LLM's suggestions (``compute_llm_ideal_structure``). None until the
       operator has requested at least one round of suggestions.
-    - 2D strategies (1, 3, 4, 5): the operator's dragged/LLM-applied 2D
-      scatter-plot positions (``compute_ideal_structure``). For strategy 5,
-      only the layout the LLM has actually approved counts - see
-      ``InteractivePlot.get_approved_2d_points``.
+    - 2D strategies (1, 3, 4): the operator's dragged/LLM-applied 2D
+      scatter-plot positions (``compute_ideal_structure``).
     """
     if strategy.space == 'high_dim':
         latent_ref_points = torch.tensor(plot.latent_features, dtype=torch.float32, device=device)
         return compute_llm_ideal_structure(
             latent_ref_points, plot.samples_per_class, plot.num_classes, llm_suggestions)
 
-    if strategy.approval_required:
-        points_2d = plot.get_approved_2d_points()
-    else:
-        points_2d = plot.get_moved_2d_points()
-    moved_2d_points = torch.tensor(points_2d, dtype=torch.float32, device=device)
+    moved_2d_points = torch.tensor(plot.get_moved_2d_points(), dtype=torch.float32, device=device)
     return compute_ideal_structure(moved_2d_points, plot.samples_per_class, plot.num_classes)
 
 

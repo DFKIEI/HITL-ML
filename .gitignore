@@ -216,3 +216,7 @@ TODO.txt
 
 ## LLM API key - keep it out of the repository
 llm_config.txt
+
+## Generated outputs
+reports/
+user_study_logs/

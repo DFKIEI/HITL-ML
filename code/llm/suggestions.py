@@ -25,7 +25,7 @@ from llm.latent_state import (
     pairwise_distances,
 )
 
-MAX_SUGGESTIONS = 8
+MAX_SUGGESTIONS = 5
 MAX_PAIRS = 100
 
 PROMPT_HEADER = """\
@@ -62,11 +62,18 @@ Output MUST be strict JSON with exactly this shape and no extra keys:
                      "direction": "toward_j" | "away_from_j" | "toward_empty_space",
                      "scale": "small" | "medium" | "large",
                      "tighten_i": true | false, "tighten_j": true | false } ] }
-The "global.issue" should summarize the main latent-space problem overall.
-The "global.strategy" should give one overall latent-space movement strategy (not implementation details).
-The "suggestion" field must include both:
-1) a latent-space movement intention for this pair (e.g., move closer, move farther, tighten or separate overlap region), and
-2) the reason why this movement is needed based on the provided signals.
+Write every text field for a non-technical reader: plain everyday words, short
+sentences, and the class NAMES (never indices, metric names, level names such as
+"very_high", or words like latent, centroid, embedding, vector or cluster
+metrics). Think "the cat and dog groups overlap a lot, so push them apart".
+The "global.issue" should summarize the main problem in one short sentence.
+The "global.strategy" should give the overall plan in one short sentence.
+The "suggestion" field must be one or two short sentences that say both:
+1) what to do with this pair, naming both classes (e.g. "Move cat away from dog",
+   "Pull the truck group tighter together"), and
+2) why, in plain words (e.g. "they are easily confused and sit on top of each other").
+Order suggestions from most to least important: the first one should be the
+change that would help the classifier most.
 The "direction" field states which way class_i should move: "toward_j" (towards
 class_j), "away_from_j" (away from class_j), or "toward_empty_space" when
 neither applies - e.g. class_i's problem is not localized to class_j, or it is
@@ -97,31 +104,6 @@ class GlobalSummary:
 
 
 @dataclass
-class ApprovalResult:
-    approved: bool = False
-    feedback: str = ''
-
-
-APPROVAL_PROMPT_HEADER = """\
-You review a human operator's proposed rearrangement of a classifier's 2D
-latent-space visualization for a human-in-the-loop training tool (Strategy 5:
-the operator drags class clusters on a 2D scatter plot, then needs your
-approval before the layout counts towards training). You are shown only
-categorical signals about the resulting layout (no coordinates), the same
-kind used for latent-space suggestions elsewhere in this tool.
-"""
-
-APPROVAL_FOOTER = """\
-Output MUST be strict JSON with exactly this shape and no extra keys:
-{ "approved": true | false, "feedback": "string" }
-Approve only if the layout looks like a genuine improvement (better class
-separation, more reasonable spreads) and not, e.g., classes piled on top of
-each other or pushed to nonsensical extremes. Keep "feedback" to one or two
-sentences explaining the verdict.
-"""
-
-
-@dataclass
 class PairSuggestion:
     class_i: int
     class_j: int
@@ -132,6 +114,13 @@ class PairSuggestion:
     scale: str = 'medium'
     tighten_i: bool = False
     tighten_j: bool = False
+    source: str = 'llm'  # 'llm', or 'human' for one the operator added
+    edited: bool = False  # the operator changed it after it arrived
+
+    def set_classes(self, class_i, class_j, class_names):
+        self.class_i, self.class_j = int(class_i), int(class_j)
+        self.class_i_name = class_names.get(self.class_i, f"class_{self.class_i}")
+        self.class_j_name = class_names.get(self.class_j, f"class_{self.class_j}")
 
     def as_log_dict(self):
         return {
@@ -144,7 +133,40 @@ class PairSuggestion:
             'scale': self.scale,
             'tighten_i': self.tighten_i,
             'tighten_j': self.tighten_j,
+            'source': self.source,
+            'edited': self.edited,
         }
+
+
+# Plain-language wording for the categorical fields, used by the suggestion
+# cards (dropdown values) and by describe_movement.
+DIRECTION_LABELS = {
+    'away_from_j': 'away from',
+    'toward_j': 'closer to',
+    'toward_empty_space': 'into open space',
+}
+SCALE_LABELS = {'small': 'a little', 'medium': 'moderately', 'large': 'a lot'}
+
+
+def describe_movement(suggestion):
+    """One plain sentence for what a suggestion will do on the plot, e.g.
+    "Move cat a lot away from dog. Also pull cat tighter together." """
+    how_much = SCALE_LABELS.get(suggestion.scale, suggestion.scale)
+    if suggestion.direction == 'toward_j':
+        text = f"Move {suggestion.class_i_name} {how_much} closer to {suggestion.class_j_name}."
+    elif suggestion.direction == 'away_from_j':
+        text = f"Move {suggestion.class_i_name} {how_much} away from {suggestion.class_j_name}."
+    else:
+        text = f"Move {suggestion.class_i_name} {how_much} into open space."
+
+    tighten_names = []
+    if suggestion.tighten_i:
+        tighten_names.append(suggestion.class_i_name)
+    if suggestion.tighten_j:
+        tighten_names.append(suggestion.class_j_name)
+    if tighten_names:
+        text += f" Also pull {' and '.join(tighten_names)} tighter together."
+    return text
 
 
 def request_suggestions(ui, model=None, user_goal=None):
@@ -185,54 +207,11 @@ def request_suggestions(ui, model=None, user_goal=None):
     return global_summary, suggestions, state, content
 
 
-def request_approval(ui, model=None):
-    """Strategy 5's gate: ask the LLM whether the operator's current 2D drag
-    positions should be committed to drive the interaction loss. Unlike
-    ``request_suggestions``, this reasons about the 2D scatter-plot positions
-    themselves (the thing being approved), not the model's high-dim latent
-    space - dragging only exists in 2D for this strategy.
-
-    Returns ``(ApprovalResult, state, raw_content)``."""
-    points = np.asarray(ui.plot.get_moved_2d_points(), dtype=float)
-    labels = np.asarray(ui.plot.selected_labels)
-    class_names = get_class_names(ui.plot)
-    class_indices = sorted(int(c) for c in np.unique(labels))
-
-    centroids = compute_centroids(points, labels, class_indices)
-    distances = pairwise_distances(centroids)
-    thresholds = compute_thresholds(distances)
-
-    pairs_summary = build_pair_summary_semantic(
-        points, labels, centroids, distances, *thresholds,
-        max_pairs=MAX_PAIRS, class_names=class_names,
-    )
-    global_metrics = build_global_summary_semantic(
-        points, labels, centroids, distances, *thresholds,
-    )
-    state = {'global_metrics': global_metrics, 'pairs': pairs_summary}
-
-    prompt = (APPROVAL_PROMPT_HEADER +
-             f"\nProposed layout (JSON):\n{json.dumps(state, indent=2)}\n" +
-             APPROVAL_FOOTER)
-    messages = [
-        {'role': 'system', 'content': 'Return only JSON that matches the requested schema.'},
-        {'role': 'user', 'content': prompt},
-    ]
-    content, _ = openrouter.chat_completion(messages, model=model)
-
-    payload = _extract_json(content)
-    result = ApprovalResult(
-        approved=bool(payload.get('approved')),
-        feedback=str(payload.get('feedback') or '').strip(),
-    )
-    return result, state, content
-
-
 def _build_prompt(ui, state, user_goal):
     dataset_name = getattr(ui.plot, 'dataset_name', 'the current')
     parts = [
         PROMPT_HEADER,
-        f'Return up to {MAX_SUGGESTIONS} freeform suggestions to improve the '
+        f'Return only the {MAX_SUGGESTIONS} most important suggestions (or fewer) to improve the '
         f'latent space of this {dataset_name} classifier.\n',
         PROMPT_FOOTER,
     ]

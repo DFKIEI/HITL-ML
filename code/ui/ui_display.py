@@ -1,8 +1,10 @@
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
 import tkinter as tk
 
+from matplotlib import patheffects
 from matplotlib.patches import Circle
 
 from llm.movement import compute_class_movements, compute_class_tighten_factors, suggestion_vectors, TIGHTEN_FACTOR
@@ -71,16 +73,24 @@ def display_scatter_plot(self, data, tab):
     # Create a normalized colormap that maps each label to a color index between 0 and 1
     norm = plt.Normalize(vmin=-0.5, vmax=num_classes - 0.5)
 
+    # Explicit per-point RGBA colors (not c=labels + cmap) so
+    # highlight_classes can fade individual classes; the colorbar below uses
+    # its own ScalarMappable with the same cmap/norm, so it still matches.
+    self.class_colors = {int(label): cmap(norm(label)) for label in unique_labels}
+    self.point_colors = np.array([self.class_colors[int(label)] for label in data['labels']])
+    self.point_colors[:, 3] = 0.6
+
     scatter = ax.scatter(data['features'][:, 0], data['features'][:, 1],
-                         c=data['labels'], cmap=cmap, norm=norm, alpha=0.6, s=50)
+                         c=self.point_colors, s=50)
     self.scatter = scatter
 
     incorrect_mask = data['predicted_labels'] != data['labels']
     self.unique_labels = unique_labels
     self.incorrect_mask = incorrect_mask
-    ax.scatter(data['features'][incorrect_mask, 0], data['features'][incorrect_mask, 1],
-               c=data['labels'][incorrect_mask], cmap=cmap, alpha=0.8, s=50,
-               edgecolor='black', linewidth=2.0)
+    self.incorrect_colors = self.point_colors[incorrect_mask].copy()
+    self.incorrect_colors[:, 3] = 0.8
+    self.incorrect_scatter = ax.scatter(data['features'][incorrect_mask, 0], data['features'][incorrect_mask, 1],
+                                        c=self.incorrect_colors, s=50, edgecolor='black', linewidth=2.0)
 
     self.original_points = data['features'].copy()
     self.moved_points = data['features'].copy()
@@ -91,7 +101,7 @@ def display_scatter_plot(self, data, tab):
     self.center_artists = []
     for i, label in enumerate(unique_labels):
         center = data['centers'][i]
-        center_artist = ax.scatter(center[0], center[1], color=cmap(i),
+        center_artist = ax.scatter(center[0], center[1], color=self.class_colors[int(label)],
                                    marker='x', s=100, linewidths=2, picker=5)
         self.center_artists.append(center_artist)
 
@@ -232,17 +242,79 @@ def display_scatter_plot(self, data, tab):
     fig.canvas.mpl_connect('button_press_event', lambda event: on_double_click(event) if event.dblclick else None)
 
     self.llm_overlay_artists = []
+    self.highlighted_classes = None
     refresh_llm_overlay(self)
 
     display_plot(self, fig, tab)
 
+    # The plot was just redrawn from scratch, so the suggestion cards' class
+    # color dots need the (possibly new) class colors.
+    panel = getattr(self, 'llm_panel', None)
+    if panel is not None:
+        panel.refresh_class_colors()
+
+
+def class_color_hex(self, class_index, default='#98A1AD'):
+    """Scatter-plot color of a class as '#rrggbb', for Tk widgets that
+    mirror it (the suggestion cards)."""
+    colors = getattr(self, 'class_colors', None) or {}
+    color = colors.get(int(class_index))
+    return matplotlib.colors.to_hex(color) if color is not None else default
+
+
+def highlight_classes(self, class_indices=None):
+    """Fade every class except ``class_indices`` on the scatter plot (points,
+    misclassified markers, centers, and the LLM overlay), or restore all of
+    them when ``class_indices`` is empty/None. Driven by hovering a
+    suggestion card, so the operator sees which clusters it talks about."""
+    scatter = getattr(self, 'scatter', None)
+    base = getattr(self, 'point_colors', None)
+    data = getattr(self, 'data', None)
+    if scatter is None or base is None or data is None:
+        return
+    keep = set(int(c) for c in class_indices) if class_indices else None
+    if keep == getattr(self, 'highlighted_classes', None):
+        return
+    self.highlighted_classes = keep
+
+    faded_alpha = 0.06
+    colors = base.copy()
+    incorrect_colors = self.incorrect_colors.copy()
+    if keep:
+        in_focus = np.isin(data['labels'], list(keep))
+        colors[~in_focus, 3] = faded_alpha
+        incorrect_colors[~in_focus[self.incorrect_mask], 3] = faded_alpha
+    scatter.set_facecolors(colors)
+    scatter.set_edgecolors(colors)
+    self.incorrect_scatter.set_facecolors(incorrect_colors)
+    edge_alpha = np.where(incorrect_colors[:, 3] > faded_alpha, 1.0, faded_alpha)
+    self.incorrect_scatter.set_edgecolors([(0, 0, 0, a) for a in edge_alpha])
+
+    for label, artist in zip(self.unique_labels, self.center_artists):
+        focused = keep is None or int(label) in keep
+        artist.set_alpha(1.0 if focused else 0.15)
+        artist.set_sizes([220 if keep and focused else 100])
+
+    for artist, class_index in getattr(self, 'llm_overlay_classes', []):
+        artist.set_alpha(0.9 if keep is None or class_index in keep else 0.1)
+
+    self.scatter_fig.canvas.draw_idle()
+
 
 def refresh_llm_overlay(self):
-    """Draw an arrow per class showing the movement (direction + scale) the
-    LLM last suggested for it, and a shrinking dashed circle for any class it
-    flagged as too spread out (tighten_i/tighten_j), so the operator can
-    compare both against what they actually do. Advisory only - purely
-    visual, applied for real only via the "Apply" button."""
+    """Draw the LLM's pending suggestions on the scatter plot, in each class's
+    own color:
+
+    - a dashed arrow from a class center showing where the suggestion would
+      move that class (direction + size), and
+    - a dashed circle for a class the LLM flagged as too spread out
+      (tighten_i/tighten_j): its radius is the size the class would shrink
+      to (TIGHTEN_FACTOR x its current average distance to its center), so
+      the gap between the circle and the class's points shows how much
+      tighter the suggestion wants it.
+
+    Advisory only - the plot changes for real only when a suggestion is
+    applied."""
     ax = getattr(self, 'ax', None)
     fig = getattr(self, 'scatter_fig', None)
     if ax is None or fig is None:
@@ -251,16 +323,18 @@ def refresh_llm_overlay(self):
     for artist in getattr(self, 'llm_overlay_artists', []):
         artist.remove()
     self.llm_overlay_artists = []
+    self.llm_overlay_classes = []  # (artist, class_index) for highlight_classes
 
     all_suggestions = getattr(self, 'latest_llm_suggestions', None)
     applied_ids = getattr(self, 'applied_llm_suggestion_ids', None) or set()
     # Applied suggestions stay in latest_llm_suggestions to keep driving the
-    # high-dim strategies' loss (2, 6), but the operator already saw them
+    # high-dim strategy's loss (2), but the operator already saw them
     # enacted on the scatter plot - redrawing their arrow/circle here would
     # look like nothing happened.
     suggestions = [s for s in all_suggestions if id(s) not in applied_ids] if all_suggestions else all_suggestions
     data = getattr(self, 'data', None)
     unique_labels = getattr(self, 'unique_labels', None)
+    outline = [patheffects.withStroke(linewidth=4.5, foreground='white')]
     if suggestions and data is not None and unique_labels is not None:
         centroids = {int(label): np.asarray(data['centers'][i], dtype=float)
                      for i, label in enumerate(unique_labels)}
@@ -273,31 +347,38 @@ def refresh_llm_overlay(self):
             end = start + vector
             arrow = ax.annotate(
                 '', xy=tuple(end), xytext=tuple(start),
-                arrowprops=dict(arrowstyle='-|>', color='black', lw=2,
-                                alpha=0.85, linestyle='--'),
+                arrowprops=dict(arrowstyle='-|>', color=self.class_colors[class_index], lw=2.5,
+                                alpha=0.9, linestyle='--', mutation_scale=22,
+                                path_effects=outline),
                 zorder=10,
             )
             self.llm_overlay_artists.append(arrow)
+            self.llm_overlay_classes.append((arrow.arrow_patch, class_index))
 
         tighten_factors = compute_class_tighten_factors(suggestions)
-        if tighten_factors:
-            for i, label in enumerate(unique_labels):
-                class_index = int(label)
-                if class_index not in tighten_factors:
-                    continue
-                center = centroids[class_index]
-                mask = data['labels'] == class_index
-                points = data['features'][mask]
-                if points.shape[0] == 0:
-                    continue
-                radius = float(np.linalg.norm(points - center, axis=1).mean())
-                target_radius = radius * tighten_factors[class_index]
-                if target_radius <= 1e-8:
-                    continue
-                circle = Circle(tuple(center), target_radius, fill=False, linestyle='--',
-                                edgecolor='purple', linewidth=2, alpha=0.85, zorder=9)
-                ax.add_patch(circle)
-                self.llm_overlay_artists.append(circle)
+        points_now = getattr(self, 'moved_points', data['features'])
+        for class_index, factor in tighten_factors.items():
+            center = centroids.get(class_index)
+            if center is None:
+                continue
+            points = points_now[data['labels'] == class_index]
+            if points.shape[0] == 0:
+                continue
+            target_radius = float(np.linalg.norm(points - center, axis=1).mean()) * factor
+            if target_radius <= 1e-8:
+                continue
+            circle = Circle(tuple(center), target_radius, fill=False, linestyle='--',
+                            edgecolor=self.class_colors[class_index], linewidth=2.5,
+                            alpha=0.9, zorder=9, path_effects=outline)
+            ax.add_patch(circle)
+            self.llm_overlay_artists.append(circle)
+            self.llm_overlay_classes.append((circle, class_index))
+
+    # Keep a hover highlight that was active before the redraw.
+    keep = getattr(self, 'highlighted_classes', None)
+    if keep:
+        for artist, class_index in self.llm_overlay_classes:
+            artist.set_alpha(0.9 if class_index in keep else 0.1)
 
     fig.canvas.draw_idle()
 

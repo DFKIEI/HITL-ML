@@ -105,7 +105,3 @@ def create_visualization_controls(self):
     self.layer_var = tk.StringVar(value="final")
     ttk.Button(viz_section, text="Undo Last Change", command=self.undo_last_step).pack(fill=tk.X)
 
-    llm_section = _section(self.control_panel, "LLM")
-    self.llm_suggestions_button = ttk.Button(llm_section, text="LLM Suggestions", style='Primary.TButton',
-                                             command=self.show_llm_suggestions)
-    self.llm_suggestions_button.pack(fill=tk.X)

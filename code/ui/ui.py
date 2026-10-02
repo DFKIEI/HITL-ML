@@ -10,12 +10,16 @@ import os
 
 matplotlib.use('TkAgg')
 
+# Radar / parallel-coordinates tabs - not needed for the current study, so
+# hidden; flip to True to bring them back.
+SHOW_EXTRA_PLOTS = False
+
 from plots.plots import InteractivePlot
 from training.training import train_model
 from ui.ui_control import create_info_labels, create_training_controls, create_visualization_controls
 from ui.ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
 from training.training_utils import find_latest_checkpoint, load_checkpoint
-from ui.ui_llm import open_llm_suggestions
+from ui.ui_llm import LLMSuggestionsPanel
 from llm.strategies import get_strategy, id_from_label
 from ui import ui_theme
 from ui.ui_theme import apply_theme
@@ -75,7 +79,7 @@ class UI:
 
         self.plot = None
 
-        self.llm_window = None
+        self.llm_panel = None
         self.latest_metrics = {}
         self.latest_llm_suggestions = []
         # ids of suggestions that were applied - still in latest_llm_suggestions
@@ -155,6 +159,11 @@ class UI:
 
         ttk.Separator(main_frame, orient=tk.VERTICAL).pack(side="left", fill="y", padx=ui_theme.PAD_M)
 
+        # LLM suggestions docked right of the plot; shown only for strategies
+        # that use the LLM (see on_strategy_change).
+        self.llm_panel = LLMSuggestionsPanel(main_frame, self)
+        self.llm_panel.pack(side=tk.RIGHT, fill=tk.Y)
+
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
@@ -163,8 +172,9 @@ class UI:
         self.parallel_tab = ttk.Frame(self.notebook)
 
         self.notebook.add(self.scatter_tab, text="Scatter Plot")
-        self.notebook.add(self.radar_tab, text="Radar Chart")
-        self.notebook.add(self.parallel_tab, text="Parallel Coordinates")
+        if SHOW_EXTRA_PLOTS:
+            self.notebook.add(self.radar_tab, text="Radar Chart")
+            self.notebook.add(self.parallel_tab, text="Parallel Coordinates")
 
         self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_change)
 
@@ -223,34 +233,27 @@ class UI:
         self.latest_metrics = metrics
 
     def get_latest_llm_suggestions(self):
-        """Read by the training loop to build the high-dim strategies' (2, 6)
+        """Read by the training loop to build the high-dim strategy's (2)
         loss target - the LLM closing the loop on top of the CE loss."""
         return self.latest_llm_suggestions
 
-    def show_llm_suggestions(self):
-        open_llm_suggestions(self)
-
     def on_strategy_change(self, event=None):
         """Sync UI state to the active strategy (see llm/strategies.py):
-        which drags are allowed, whether the LLM Suggestions button is even
-        usable, and (if open) the LLM Suggestions window's own controls."""
+        which drags are allowed, and whether/how the LLM suggestions panel
+        is shown."""
         strategy_id = id_from_label(self.strategy_display_var.get())
         self.strategy_var.set(strategy_id)
         strategy = get_strategy(strategy_id)
         self.strategy_desc_var.set(strategy.description)
         self.dragging_enabled = strategy.human_drag
 
-        if self.plot is not None:
-            # A pending (un-approved) drag from a previous strategy should
-            # never silently start counting under a new one.
-            self.plot.approved_2d_points = None
-
-        if hasattr(self, 'llm_suggestions_button'):
-            self.llm_suggestions_button.configure(
-                state='normal' if strategy.llm_suggestions else 'disabled')
-
-        if self.llm_window is not None and self.llm_window.winfo_exists():
-            self.llm_window.refresh_for_strategy()
+        if self.llm_panel is not None:
+            if strategy.llm_suggestions:
+                if not self.llm_panel.winfo_ismapped():
+                    self.llm_panel.pack(side=tk.RIGHT, fill=tk.Y, before=self.notebook)
+                self.llm_panel.refresh_for_strategy()
+            else:
+                self.llm_panel.pack_forget()
 
         self.update_log(f"Strategy set to: {strategy.label}")
 
