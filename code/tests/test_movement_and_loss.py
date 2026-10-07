@@ -64,7 +64,7 @@ def fake_ui(points, labels):
     return SimpleNamespace(
         data={'centers': np.array([points[labels == c].mean(axis=0) for c in unique]), 'labels': labels},
         unique_labels=unique,
-        ax=MagicMock(),
+        ax=MagicMock(**{'get_xlim.return_value': (-100.0, 100.0), 'get_ylim.return_value': (-100.0, 100.0)}),
         moved_points=points.copy(),
         center_artists=[MagicMock() for _ in unique],
         plot=MagicMock(),
@@ -220,6 +220,16 @@ def test_apply_custom_angle_moves_up():
     assert delta[1] > 0 and abs(delta[0]) < 1e-9
 
 
+def test_apply_grows_axes_to_keep_moved_class_visible():
+    points, labels = make_points()
+    ui = fake_ui(points, labels)
+    ui.ax.get_xlim.return_value = (points[:, 0].min(), points[:, 0].max())
+    ui.ax.get_ylim.return_value = (points[:, 1].min(), points[:, 1].max())
+    apply_llm_suggestion(ui, suggestion(direction='away_from_j', scale='large'))
+    x_low, x_high = ui.ax.set_xlim.call_args.args
+    assert x_low <= ui.moved_points[:, 0].min() and x_high >= ui.moved_points[:, 0].max()
+
+
 # ------------------------------------------------- the interaction loss target
 def gradient_steps(points, labels, ideal_structure, steps=1000, lr=5.0):
     """Optimise the features against the interaction loss alone - a proxy
@@ -307,3 +317,22 @@ def test_high_dim_target_follows_suggestion():
 
 
 LABELS = np.repeat(np.arange(3), PER_CLASS)
+
+
+def test_center_pull_keeps_its_2d_weight_in_high_dim():
+    """Moving a class's target by its own spread must cost about the same,
+    relative to that spread (the scale of the distance-based terms), in the
+    512-dim latent space as in 2D. F.mse_loss averaged over the dimensions
+    and made it ~15x weaker there."""
+    def center_cost_per_spread(dim):
+        points, labels = make_points(dim=dim)
+        features, label_t = torch.tensor(points, dtype=torch.float32), torch.tensor(labels)
+        ideal = compute_ideal_structure(features, PER_CLASS, 3)
+        class_spread = float(ideal[2]['spread'])
+        moved = {c: dict(v) for c, v in ideal.items()}
+        moved[2]['center'] = moved[2]['center'] + class_spread / np.sqrt(dim)
+        cost = (relative_distance_loss(features, label_t, moved)
+                - relative_distance_loss(features, label_t, ideal)).item()
+        return cost / class_spread
+
+    assert center_cost_per_spread(512) == pytest.approx(center_cost_per_spread(2), rel=0.5)

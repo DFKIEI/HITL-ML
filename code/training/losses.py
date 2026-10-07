@@ -25,8 +25,15 @@ def relative_distance_loss(features_2d, labels, ideal_structure):
             current_dists = torch.norm(points - current_center, dim=1)
             current_spread = current_dists.mean()
 
-            # Loss 1: Distance to ideal center
-            center_loss = F.mse_loss(current_center, ideal_centers[label])
+            # Loss 1: Distance to ideal center. F.mse_loss averages over the
+            # dimensions while the spread/separation terms below are norms
+            # that grow with sqrt(dim), so in the 512-1024 dim latent space
+            # (strategy 2) the pull towards the suggested center was ~20x
+            # weaker relative to them than in 2D. Scaling the squared distance
+            # by sqrt(2 / dim) keeps the 2D balance in any dimension, and is
+            # identical to F.mse_loss in 2D.
+            squared_distance = torch.sum((current_center - ideal_centers[label]) ** 2)
+            center_loss = 0.5 * squared_distance * (2.0 / points.size(1)) ** 0.5
 
             # Loss 2: Maintain spread
             spread_loss = torch.abs(current_spread - ideal_spreads[label])

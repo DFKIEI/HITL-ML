@@ -46,3 +46,37 @@ def test_overlap_levels_are_absolute():
     levels = overlap_levels(points, np.repeat(np.arange(6), per_class))
     assert levels[(0, 1)] == 'very_high'
     assert levels[(2, 3)] in ('medium', 'high')
+
+
+def class_levels(points, labels):
+    state, _ = build_semantic_state(points, labels, NAMES)
+    levels = {}
+    for p in state['pairs']:
+        levels[p['class_i']] = (p['spread_i_level'], p['outlier_i_level'])
+        levels[p['class_j']] = (p['spread_j_level'], p['outlier_j_level'])
+    return state['global_metrics'], levels
+
+
+def test_equal_spreads_are_all_medium():
+    # Quintile levels used to call two of six identical classes very_spread,
+    # and the model then "fixed" a healthy space.
+    _, levels = class_levels(*space(overlapping_pair=False))
+    assert {spread for spread, _ in levels.values()} == {'medium'}
+
+
+def test_diffuse_class_is_spread():
+    points, labels = space(overlapping_pair=False)
+    mask = labels == 2
+    points[mask] = points[mask].mean(axis=0) + 4 * (points[mask] - points[mask].mean(axis=0))
+    _, levels = class_levels(points, labels)
+    assert levels[2][0] == 'very_spread'
+    assert all(levels[c][0] == 'medium' for c in levels if c != 2)
+
+
+def test_global_levels_follow_the_worst_pair():
+    overlapping, _ = class_levels(*space())
+    healthy, _ = class_levels(*space(overlapping_pair=False))
+    assert overlapping['separation_health'] == 'very_poor'
+    assert overlapping['overall_overlap_level'] != 'very_low'
+    assert healthy['separation_health'] == 'very_good'
+    assert healthy['overall_overlap_level'] == 'very_low'

@@ -15,6 +15,7 @@ pipeline: the LLM reasons about the real geometry the classifier head sees,
 independent of the lossy 2D visualization.
 """
 
+from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -37,6 +38,13 @@ LEVEL_LABELS = ["very_low", "low", "medium", "high", "very_high"]
 # overall_overlap_level.
 OVERLAP_CUTS = (0.10, 0.20, 0.35, 0.50)
 SPREAD_LABELS = ["very_compact", "compact", "medium", "spread", "very_spread"]
+
+# A class's spread as a multiple of the median class spread. Absolute cuts,
+# not quintiles: with quintiles two classes are always "very_spread" even when
+# every class is equally tight, and the model then "fixes" a healthy space.
+SPREAD_RATIO_CUTS = (0.6, 0.85, 1.2, 1.6)
+# Share of a class's points far from its center (see _compute_class_stats).
+OUTLIER_CUTS = (0.05, 0.10, 0.20, 0.35)
 
 
 def get_class_names(plot):
@@ -100,28 +108,6 @@ def classify_distance(d: float, t_very_close: float, t_close: float,
     if d < t_very_far:
         return "far"
     return "very_far"
-
-
-def _quintile_thresholds(values: List[float]) -> Optional[Tuple[float, float, float, float]]:
-    if not values:
-        return None
-    arr = np.asarray(values, dtype=float)
-    if np.isclose(arr.min(), arr.max()):
-        return None
-    q = np.quantile(arr, [0.2, 0.4, 0.6, 0.8])
-    return float(q[0]), float(q[1]), float(q[2]), float(q[3])
-
-
-def _categorize_by_quintiles(value: float,
-                              thresholds: Optional[Tuple[float, float, float, float]],
-                              labels: List[str]) -> str:
-    if thresholds is None or len(labels) != 5:
-        return labels[2]
-    # Bin = how many cuts the value is strictly above. A value equal to a cut
-    # goes to the lower bin: when most pairs share the same value (typically
-    # zero overlap, so every cut is 0.0) they must land in the lowest bin,
-    # not the highest.
-    return labels[sum(value > t for t in thresholds)]
 
 
 def _categorize_level(value: float, cuts: Tuple[float, float, float, float],
@@ -210,10 +196,7 @@ def build_pair_summary_semantic(
         distances_sorted = distances_sorted[:max_pairs]
 
     class_vectors, class_stats = _compute_class_stats(points, labels, centroids)
-    spread_values = [stats["spread"] for stats in class_stats.values()]
-    outlier_values = [stats["outlier_rate"] for stats in class_stats.values()]
-    spread_thresholds = _quintile_thresholds(spread_values)
-    outlier_thresholds = _quintile_thresholds(outlier_values)
+    median_spread = max(float(np.median([stats["spread"] for stats in class_stats.values()])), 1e-8)
 
     overlap_scores: Dict[Tuple[int, int], float] = {}
     for (i, j), _ in distances_sorted:
@@ -221,6 +204,12 @@ def build_pair_summary_semantic(
 
     def name(index):
         return class_names.get(index, f"class_{index}")
+
+    def spread_level(stats):
+        return _categorize_level(stats["spread"] / median_spread, SPREAD_RATIO_CUTS, SPREAD_LABELS)
+
+    def outlier_level(stats):
+        return _categorize_level(stats["outlier_rate"], OUTLIER_CUTS, LEVEL_LABELS)
 
     summary = []
     for (i, j), d in distances_sorted:
@@ -235,10 +224,10 @@ def build_pair_summary_semantic(
             "class_j_name": name(j),
             "distance_relation": classify_distance(d, t_very_close, t_close, t_far, t_very_far),
             "overlap_level": _categorize_level(overlap, OVERLAP_CUTS, LEVEL_LABELS),
-            "spread_i_level": _categorize_by_quintiles(stats_i["spread"], spread_thresholds, SPREAD_LABELS),
-            "spread_j_level": _categorize_by_quintiles(stats_j["spread"], spread_thresholds, SPREAD_LABELS),
-            "outlier_i_level": _categorize_by_quintiles(stats_i["outlier_rate"], outlier_thresholds, LEVEL_LABELS),
-            "outlier_j_level": _categorize_by_quintiles(stats_j["outlier_rate"], outlier_thresholds, LEVEL_LABELS),
+            "spread_i_level": spread_level(stats_i),
+            "spread_j_level": spread_level(stats_j),
+            "outlier_i_level": outlier_level(stats_i),
+            "outlier_j_level": outlier_level(stats_j),
         })
     return summary
 
@@ -274,33 +263,28 @@ def build_global_summary_semantic(
     spread_std = float(np.std(spread_values)) if len(spread_values) > 1 else 0.0
     spread_cv = spread_std / max(mean_spread, 1e-8)
 
-    overlap_scores = [
-        _compute_pair_overlap(i, j, centroids, class_vectors, class_stats)
+    overlap_scores = {
+        (i, j): _compute_pair_overlap(i, j, centroids, class_vectors, class_stats)
         for (i, j), _ in distances
-    ]
-    mean_overlap = float(np.mean(overlap_scores)) if overlap_scores else 0.0
-
-    close_count = sum(
-        1 for _, d in distances
-        if classify_distance(d, t_very_close, t_close, t_far, t_very_far) in {"very_close", "close"}
-    )
-    close_ratio = close_count / max(len(distances), 1)
+    }
+    # Each class's worst overlap with any other class, averaged over classes:
+    # a plain mean over all pairs drowns one badly confused pair among the
+    # dozens of well separated ones (one pair at 60% out of 45 is ~1%).
+    worst_per_class = defaultdict(float)
+    for (i, j), overlap in overlap_scores.items():
+        worst_per_class[i] = max(worst_per_class[i], overlap)
+        worst_per_class[j] = max(worst_per_class[j], overlap)
+    mean_overlap = float(np.mean(list(worst_per_class.values()))) if worst_per_class else 0.0
+    worst_overlap = max(overlap_scores.values(), default=0.0)
 
     overlap_level = _categorize_level(mean_overlap, OVERLAP_CUTS, LEVEL_LABELS)
     spread_level = _categorize_level(spread_ratio, (0.10, 0.20, 0.35, 0.50), SPREAD_LABELS)
     imbalance_level = _categorize_level(spread_cv, (0.10, 0.20, 0.35, 0.50), LEVEL_LABELS)
-    outlier_level = _categorize_level(mean_outlier, (0.05, 0.10, 0.20, 0.35), LEVEL_LABELS)
-
-    if close_ratio >= 0.60:
-        separation_health = "very_poor"
-    elif close_ratio >= 0.45:
-        separation_health = "poor"
-    elif close_ratio >= 0.30:
-        separation_health = "medium"
-    elif close_ratio >= 0.15:
-        separation_health = "good"
-    else:
-        separation_health = "very_good"
+    outlier_level = _categorize_level(mean_outlier, OUTLIER_CUTS, LEVEL_LABELS)
+    # From the worst pair's overlap, not from how many pairs are "close":
+    # distance_relation is quantile based, so that share was always ~30%.
+    separation_health = _categorize_level(
+        worst_overlap, OVERLAP_CUTS, ["very_good", "good", "medium", "poor", "very_poor"])
 
     return {
         "overall_overlap_level": overlap_level,

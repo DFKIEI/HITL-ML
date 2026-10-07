@@ -41,16 +41,19 @@ you are not given exact coordinates, only how the classes relate to each other.
 We provide only 5-level categorical latent signals (no numeric values):
 Global semantic metrics:
 - overall_overlap_level: very_low | low | medium | high | very_high
+  (each class's worst overlap with another class, averaged over classes)
 - overall_spread_level: very_compact | compact | medium | spread | very_spread
 - spread_imbalance_level: very_low | low | medium | high | very_high
 - outlier_burden_level: very_low | low | medium | high | very_high
 - separation_health: very_poor | poor | medium | good | very_good
+  (set by the single worst overlapping pair)
 Pairwise semantic metrics:
 - distance_relation: very_close | close | medium | far | very_far
 - overlap_level: very_low | low | medium | high | very_high
   (absolute: under 10% / 10-20% / 20-35% / 35-50% / over 50% of the two
   classes' points sit inside each other's area)
 - spread_i_level, spread_j_level: very_compact | compact | medium | spread | very_spread
+  (compared with the typical class here: medium = about as spread as most)
 - outlier_i_level, outlier_j_level: very_low | low | medium | high | very_high
 """
 
