@@ -570,6 +570,23 @@ def _tighten_class_in_place(self, data, unique_labels, class_index, factor):
     return True
 
 
+def _fit_axes_to_points(ax, points, margin=0.05):
+    """Grow the axis limits (never shrink them) so every point stays visible.
+    set_offsets does not autoscale, so a class moved past the current limits
+    would otherwise just disappear off the plot."""
+    points = np.asarray(points, dtype=float)
+    if points.size == 0:
+        return
+    for get_lim, set_lim, values in ((ax.get_xlim, ax.set_xlim, points[:, 0]),
+                                     (ax.get_ylim, ax.set_ylim, points[:, 1])):
+        low, high = get_lim()
+        pad = margin * (high - low)
+        new_low = min(low, values.min() - pad)
+        new_high = max(high, values.max() + pad)
+        if (new_low, new_high) != (low, high):
+            set_lim(new_low, new_high)
+
+
 def apply_llm_suggestion(self, suggestion):
     """Apply one suggestion's direction/scale (and tighten_i/tighten_j) to the
     2D scatter plot for real, right now - moving/condensing exactly like an
@@ -622,6 +639,8 @@ def apply_llm_suggestion(self, suggestion):
     incorrect_mask = getattr(self, 'incorrect_mask', None)
     if incorrect_mask is not None:
         self.ax.collections[1].set_offsets(self.moved_points[incorrect_mask])
+
+    _fit_axes_to_points(self.ax, np.vstack([self.moved_points, data['centers']]))
 
     self.plot.update_latent_space(self.moved_points)
     self.plot.moved_2d_points = self.moved_points

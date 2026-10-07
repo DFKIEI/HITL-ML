@@ -13,6 +13,10 @@ import urllib.request
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 KEY_ENV_VAR = "OPENROUTER_API_KEY"
 MODEL_ENV_VAR = "OPENROUTER_MODEL"
+# Optional reasoning effort for thinking models (e.g. openai/gpt-5-mini):
+# none, minimal, low, medium, high. Unset means the model's own default,
+# which for the GPT-5 family is medium - noticeably slow for this task.
+REASONING_ENV_VAR = "OPENROUTER_REASONING_EFFORT"
 
 # Any OpenRouter model id can be used; this is only the default shown in the UI.
 DEFAULT_MODEL = "anthropic/claude-opus-5"
@@ -110,6 +114,13 @@ def get_default_model():
     return (read_config().get(MODEL_ENV_VAR) or DEFAULT_MODEL).strip()
 
 
+def get_reasoning_effort():
+    effort = (os.environ.get(REASONING_ENV_VAR) or "").strip()
+    if effort:
+        return effort.lower()
+    return (read_config().get(REASONING_ENV_VAR) or "").strip().lower()
+
+
 def chat_completion(messages, model=None, temperature=0.2, max_tokens=4000,
                     json_mode=True, timeout=120):
     """Send a chat completion request and return (content, raw_response_dict)."""
@@ -128,6 +139,9 @@ def chat_completion(messages, model=None, temperature=0.2, max_tokens=4000,
         'temperature': temperature,
         'max_tokens': max_tokens,
     }
+    effort = get_reasoning_effort()
+    if effort:
+        payload['reasoning'] = {'effort': effort, 'exclude': True}
     if json_mode:
         payload['response_format'] = {'type': 'json_object'}
 

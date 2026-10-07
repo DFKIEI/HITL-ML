@@ -33,7 +33,13 @@ listed there can be used. Put the key in `llm_config.txt` (copy
 ```
 OPENROUTER_API_KEY=sk-or-...
 OPENROUTER_MODEL=anthropic/claude-opus-5
+# Optional, for thinking models such as openai/gpt-5-mini
+OPENROUTER_REASONING_EFFORT=low
 ```
+
+`OPENROUTER_REASONING_EFFORT` (none, minimal, low, medium, high) is sent as
+OpenRouter's `reasoning.effort`. Leave it out to use the model's own default -
+for the GPT-5 family that is `medium`, which makes each request noticeably slow.
 
 The file is searched in the project root, in `code/` and next to this module, in
 that order, and it is re-read on every request - so the key or the model can be

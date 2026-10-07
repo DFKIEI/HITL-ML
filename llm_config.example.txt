@@ -7,3 +7,7 @@ OPENROUTER_API_KEY=
 
 # Any model id from https://openrouter.ai/models
 OPENROUTER_MODEL=anthropic/claude-opus-5
+
+# Optional: reasoning effort for thinking models (none, minimal, low, medium, high).
+# GPT-5 models default to medium, which is slow; low is much faster.
+# OPENROUTER_REASONING_EFFORT=low
