@@ -11,7 +11,7 @@ operator reads the suggestions and rearranges the plot themselves.
 import json
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -48,6 +48,8 @@ Global semantic metrics:
 Pairwise semantic metrics:
 - distance_relation: very_close | close | medium | far | very_far
 - overlap_level: very_low | low | medium | high | very_high
+  (absolute: under 10% / 10-20% / 20-35% / 35-50% / over 50% of the two
+  classes' points sit inside each other's area)
 - spread_i_level, spread_j_level: very_compact | compact | medium | spread | very_spread
 - outlier_i_level, outlier_j_level: very_low | low | medium | high | very_high
 """
@@ -85,6 +87,18 @@ to true when class_i's own cluster is too spread out / diffuse and should be
 condensed around its own center (and likewise "tighten_j" for class_j) -
 overlap is often caused by spread, not just distance, and moving centers apart
 alone will not fix that.
+Only suggest a change for a real problem: a pair whose overlap_level is medium
+or higher, or a class that is spread / very_spread AND overlaps another class.
+distance_relation is relative to the other pairs, so the nearest pairs are
+always called "close" even in a healthy space - a close pair with very_low or
+low overlap is fine and needs no suggestion. If nothing has a real problem,
+return an empty "suggestions" list and say in "global" that the layout looks
+healthy. Fewer, correct suggestions are better than filling the list.
+The text and the fields must describe the same move, because the operator may
+edit the text and it is then read back into the fields: set "tighten_i" (or
+"tighten_j") to true exactly when the "suggestion" text says, by name, to
+tighten / pull together that class; match "scale" to the wording ("a little"
+= small, "a lot" = large); and name class_i first, as the class that moves.
 Use class_i and class_j as the integer class indices given in the data below.
 Do NOT provide algorithmic or implementation instructions. Keep suggestions
 focused on semantic movement in latent space. No text outside the JSON object.
@@ -116,6 +130,17 @@ class PairSuggestion:
     tighten_j: bool = False
     source: str = 'llm'  # 'llm', or 'human' for one the operator added
     edited: bool = False  # the operator changed it after it arrived
+    # Operator-set geometry from dragging the overlay arrow/circle on the
+    # scatter plot, used instead of the categorical presets above (see
+    # llm/movement.py): move_amount when scale == 'custom' (fraction of the
+    # typical class-to-class distance), move_angle when direction ==
+    # 'custom_angle' (degrees on the 2D plot, 0 = right, 90 = up), and
+    # tighten_amount_i / tighten_amount_j for tighten_i / tighten_j
+    # (fraction of the current size to shrink to). None = use the preset.
+    move_amount: Optional[float] = None
+    move_angle: Optional[float] = None
+    tighten_amount_i: Optional[float] = None
+    tighten_amount_j: Optional[float] = None
 
     def set_classes(self, class_i, class_j, class_names):
         self.class_i, self.class_j = int(class_i), int(class_j)
@@ -135,37 +160,64 @@ class PairSuggestion:
             'tighten_j': self.tighten_j,
             'source': self.source,
             'edited': self.edited,
+            'move_amount': self.move_amount,
+            'move_angle': self.move_angle,
+            'tighten_amount_i': self.tighten_amount_i,
+            'tighten_amount_j': self.tighten_amount_j,
         }
 
 
 # Plain-language wording for the categorical fields, used by the suggestion
-# cards (dropdown values) and by describe_movement.
+# cards (dropdown values) and by describe_movement. 'custom_angle' and
+# 'custom' are operator-only (the LLM is never offered them, see DIRECTIONS
+# and SCALES) and switch the card to its sliders.
 DIRECTION_LABELS = {
     'away_from_j': 'away from',
     'toward_j': 'closer to',
     'toward_empty_space': 'into open space',
+    'custom_angle': 'in a custom direction',
 }
-SCALE_LABELS = {'small': 'a little', 'medium': 'moderately', 'large': 'a lot'}
+SCALE_LABELS = {'small': 'a little', 'medium': 'moderately', 'large': 'a lot', 'custom': 'custom amount'}
+
+COMPASS_WORDS = ('right', 'up and right', 'up', 'up and left', 'left', 'down and left', 'down', 'down and right')
+
+
+def compass_word(angle_degrees):
+    """Nearest of 8 plain directions on the plot (0 = right, 90 = up)."""
+    return COMPASS_WORDS[int(round((angle_degrees % 360) / 45.0)) % 8]
 
 
 def describe_movement(suggestion):
     """One plain sentence for what a suggestion will do on the plot, e.g.
     "Move cat a lot away from dog. Also pull cat tighter together." """
-    how_much = SCALE_LABELS.get(suggestion.scale, suggestion.scale)
+    if suggestion.scale == 'custom' and suggestion.move_amount is not None:
+        how_much = f"by a custom amount ({suggestion.move_amount:.0%})"
+    else:
+        how_much = SCALE_LABELS.get(suggestion.scale, suggestion.scale)
     if suggestion.direction == 'toward_j':
         text = f"Move {suggestion.class_i_name} {how_much} closer to {suggestion.class_j_name}."
     elif suggestion.direction == 'away_from_j':
         text = f"Move {suggestion.class_i_name} {how_much} away from {suggestion.class_j_name}."
+    elif suggestion.direction == 'custom_angle' and suggestion.move_angle is not None:
+        text = (f"Move {suggestion.class_i_name} {how_much} {compass_word(suggestion.move_angle)} "
+                f"({suggestion.move_angle:.0f}°).")
     else:
         text = f"Move {suggestion.class_i_name} {how_much} into open space."
 
-    tighten_names = []
-    if suggestion.tighten_i:
-        tighten_names.append(suggestion.class_i_name)
-    if suggestion.tighten_j:
-        tighten_names.append(suggestion.class_j_name)
+    if suggestion.scale == 'custom' and suggestion.move_amount == 0:
+        text = f"Keep {suggestion.class_i_name} where it is."
+
+    tighten_names, shrink = [], []
+    for flag, name, amount in ((suggestion.tighten_i, suggestion.class_i_name, suggestion.tighten_amount_i),
+                               (suggestion.tighten_j, suggestion.class_j_name, suggestion.tighten_amount_j)):
+        if flag and amount is not None:
+            shrink.append(f"{name} to {amount:.0%}")
+        elif flag:
+            tighten_names.append(name)
     if tighten_names:
         text += f" Also pull {' and '.join(tighten_names)} tighter together."
+    if shrink:
+        text += f" Shrink {' and '.join(shrink)} of its current size."
     return text
 
 
@@ -178,11 +230,30 @@ def request_suggestions(ui, model=None, user_goal=None):
     head sees), not the 2D scatter-plot positions. The 2D projection is a lossy
     visualization for the human; the LLM reasons about the real geometry, same
     as the offline pipeline in ``llm_integration/``."""
-    points = np.asarray(ui.plot.latent_features, dtype=float)
-    labels = np.asarray(ui.plot.selected_labels)
-    class_names = get_class_names(ui.plot)
-    class_indices = sorted(int(c) for c in np.unique(labels))
+    return ask_for_suggestions(
+        np.asarray(ui.plot.latent_features, dtype=float), np.asarray(ui.plot.selected_labels),
+        get_class_names(ui.plot), getattr(ui.plot, 'dataset_name', 'the current'),
+        model=model, user_goal=user_goal)
 
+
+def ask_for_suggestions(points, labels, class_names, dataset_name, model=None, user_goal=None):
+    """``request_suggestions`` without the UI: also used by
+    ``tests/llm_eval.py`` to check the answers on known latent spaces."""
+    state, class_indices = build_semantic_state(points, labels, class_names)
+    messages = [
+        {'role': 'system', 'content': 'Return only JSON that matches the requested schema.'},
+        {'role': 'user', 'content': build_prompt(state, dataset_name, user_goal)},
+    ]
+    content, _ = openrouter.chat_completion(messages, model=model)
+
+    global_summary, suggestions = parse_suggestions(content, class_names, set(class_indices))
+    return global_summary, suggestions, state, content
+
+
+def build_semantic_state(points, labels, class_names):
+    """The categorical description of the latent space sent to the model,
+    plus the class indices present."""
+    class_indices = sorted(int(c) for c in np.unique(labels))
     centroids = compute_centroids(points, labels, class_indices)
     distances = pairwise_distances(centroids)
     thresholds = compute_thresholds(distances)
@@ -194,21 +265,10 @@ def request_suggestions(ui, model=None, user_goal=None):
     global_metrics = build_global_summary_semantic(
         points, labels, centroids, distances, *thresholds,
     )
-    state = {'global_metrics': global_metrics, 'pairs': pairs_summary}
-
-    prompt = _build_prompt(ui, state, user_goal)
-    messages = [
-        {'role': 'system', 'content': 'Return only JSON that matches the requested schema.'},
-        {'role': 'user', 'content': prompt},
-    ]
-    content, _ = openrouter.chat_completion(messages, model=model)
-
-    global_summary, suggestions = parse_suggestions(content, class_names, set(class_indices))
-    return global_summary, suggestions, state, content
+    return {'global_metrics': global_metrics, 'pairs': pairs_summary}, class_indices
 
 
-def _build_prompt(ui, state, user_goal):
-    dataset_name = getattr(ui.plot, 'dataset_name', 'the current')
+def build_prompt(state, dataset_name, user_goal=None):
     parts = [
         PROMPT_HEADER,
         f'Return only the {MAX_SUGGESTIONS} most important suggestions (or fewer) to improve the '

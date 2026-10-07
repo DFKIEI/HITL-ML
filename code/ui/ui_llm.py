@@ -5,13 +5,17 @@ add and apply them.
 
 Hovering a card highlights the classes it talks about on the scatter plot."""
 
+import dataclasses
 import queue
 import threading
 import tkinter as tk
 from tkinter import ttk
 
+import numpy as np
+
 from llm import openrouter
 from llm.latent_state import get_class_names
+from llm.movement import move_fraction, suggestion_vectors
 from llm.strategies import get_strategy
 from llm.suggestions import (DIRECTION_LABELS, SCALE_LABELS, PairSuggestion,
                              describe_movement, request_suggestions)
@@ -85,7 +89,8 @@ class LLMSuggestionsPanel(ttk.Frame):
             row=4, column=0, columnspan=2, sticky=tk.W, pady=(ui_theme.PAD_S, 0))
         ttk.Label(frame, text="On the plot: dashed arrow = suggested move; dashed circle = the "
                               "tighter size suggested for that class. Hover a card to highlight "
-                              "its classes.",
+                              "its classes. Drag an arrow's tip or a circle's edge (the white "
+                              "handles) to reshape that suggestion.",
                   wraplength=WRAP_LENGTH, justify=tk.LEFT, style='Status.TLabel').grid(
             row=5, column=0, columnspan=2, sticky=tk.W, pady=(2, ui_theme.PAD_S))
 
@@ -251,6 +256,14 @@ class LLMSuggestionsPanel(ttk.Frame):
             names = {int(i): names.get(int(i), f"class_{int(i)}") for i in on_plot}
         return names
 
+    def refresh_cards(self):
+        """Rebuild the cards after a suggestion changed elsewhere (dragged on
+        the plot), keeping the scroll position."""
+        top = self.canvas.yview()[0]
+        self._render_cards()
+        self.canvas.update_idletasks()
+        self.canvas.yview_moveto(top)
+
     def _render_cards(self):
         """(Re)build every card from ui.latest_llm_suggestions - the cards are
         just views of those objects, edited in place."""
@@ -349,6 +362,23 @@ class LLMSuggestionsPanel(ttk.Frame):
         ttk.Label(card, text=describe_movement(suggestion), wraplength=WRAP_LENGTH - 20,
                   justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 2))
 
+    def _current_angle(self, suggestion):
+        """Angle (degrees, 0 = right, 90 = up) of the arrow this suggestion
+        currently draws on the plot - the starting point when the operator
+        switches it to a custom direction."""
+        data = getattr(self.ui, 'data', None)
+        unique_labels = getattr(self.ui, 'unique_labels', None)
+        if data is None or unique_labels is None:
+            return 0.0
+        centroids = {int(label): np.asarray(data['centers'][i], dtype=float)
+                     for i, label in enumerate(unique_labels)}
+        preset = dataclasses.replace(suggestion, direction=suggestion.direction
+                                     if suggestion.direction != 'custom_angle' else 'away_from_j')
+        vector = suggestion_vectors(preset, centroids).get(suggestion.class_i)
+        if vector is None or np.shape(vector) != (2,) or not np.any(vector):
+            return 0.0
+        return float(np.degrees(np.arctan2(vector[1], vector[0])) % 360)
+
     def _build_editable_body(self, card, suggestion):
         """Strategy 4: the free text and the structured fields are both
         editable. Typing in the text re-reads it (llm/text_to_movement.py) and
@@ -394,7 +424,6 @@ class LLMSuggestionsPanel(ttk.Frame):
         tighten_i_check.pack(side=tk.LEFT, padx=(4, 0))
         tighten_j_check = ttk.Checkbutton(row3, variable=tighten_j_var, text=suggestion.class_j_name)
         tighten_j_check.pack(side=tk.LEFT, padx=(4, 0))
-
         text = tk.Text(card, height=3, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1,
                        font=ui_theme.fonts()['body'], bg=ui_theme.SURFACE, fg=ui_theme.TEXT,
                        highlightthickness=0, padx=4, pady=3)
@@ -427,11 +456,18 @@ class LLMSuggestionsPanel(ttk.Frame):
             if class_i == class_j:
                 sync_widgets()  # a class can't move relative to itself
                 return
+            # Switching to "custom" starts from the arrow drawn right now.
+            preset_fraction = move_fraction(suggestion)
+            preset_angle = self._current_angle(suggestion)
             suggestion.set_classes(class_i, class_j, class_names)
             suggestion.direction = direction_of.get(direction_var.get(), suggestion.direction)
             suggestion.scale = scale_of.get(scale_var.get(), suggestion.scale)
             suggestion.tighten_i = bool(tighten_i_var.get())
             suggestion.tighten_j = bool(tighten_j_var.get())
+            if suggestion.scale == 'custom' and suggestion.move_amount is None:
+                suggestion.move_amount = preset_fraction
+            if suggestion.direction == 'custom_angle' and suggestion.move_angle is None:
+                suggestion.move_angle = preset_angle
             changed()
 
         for combo in (class_i_combo, class_j_combo, direction_combo, scale_combo):

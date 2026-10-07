@@ -29,6 +29,13 @@ Q_FAR = 0.7
 Q_VERY_FAR = 0.9
 
 LEVEL_LABELS = ["very_low", "low", "medium", "high", "very_high"]
+
+# Fixed cut-offs for a pair's overlap (the share of each class's points that
+# sit inside the other class's area, 0..1) - absolute, not relative to the
+# other pairs, so 85% and 35% shared never get the same level just because
+# they are the only two overlapping pairs. Same cuts as the global
+# overall_overlap_level.
+OVERLAP_CUTS = (0.10, 0.20, 0.35, 0.50)
 SPREAD_LABELS = ["very_compact", "compact", "medium", "spread", "very_spread"]
 
 
@@ -110,16 +117,11 @@ def _categorize_by_quintiles(value: float,
                               labels: List[str]) -> str:
     if thresholds is None or len(labels) != 5:
         return labels[2]
-    t1, t2, t3, t4 = thresholds
-    if value < t1:
-        return labels[0]
-    if value < t2:
-        return labels[1]
-    if value < t3:
-        return labels[2]
-    if value < t4:
-        return labels[3]
-    return labels[4]
+    # Bin = how many cuts the value is strictly above. A value equal to a cut
+    # goes to the lower bin: when most pairs share the same value (typically
+    # zero overlap, so every cut is 0.0) they must land in the lowest bin,
+    # not the highest.
+    return labels[sum(value > t for t in thresholds)]
 
 
 def _categorize_level(value: float, cuts: Tuple[float, float, float, float],
@@ -216,7 +218,6 @@ def build_pair_summary_semantic(
     overlap_scores: Dict[Tuple[int, int], float] = {}
     for (i, j), _ in distances_sorted:
         overlap_scores[(i, j)] = _compute_pair_overlap(i, j, centroids, class_vectors, class_stats)
-    overlap_thresholds = _quintile_thresholds(list(overlap_scores.values()))
 
     def name(index):
         return class_names.get(index, f"class_{index}")
@@ -233,7 +234,7 @@ def build_pair_summary_semantic(
             "class_i_name": name(i),
             "class_j_name": name(j),
             "distance_relation": classify_distance(d, t_very_close, t_close, t_far, t_very_far),
-            "overlap_level": _categorize_by_quintiles(overlap, overlap_thresholds, LEVEL_LABELS),
+            "overlap_level": _categorize_level(overlap, OVERLAP_CUTS, LEVEL_LABELS),
             "spread_i_level": _categorize_by_quintiles(stats_i["spread"], spread_thresholds, SPREAD_LABELS),
             "spread_j_level": _categorize_by_quintiles(stats_j["spread"], spread_thresholds, SPREAD_LABELS),
             "outlier_i_level": _categorize_by_quintiles(stats_i["outlier_rate"], outlier_thresholds, LEVEL_LABELS),
@@ -285,7 +286,7 @@ def build_global_summary_semantic(
     )
     close_ratio = close_count / max(len(distances), 1)
 
-    overlap_level = _categorize_level(mean_overlap, (0.10, 0.20, 0.35, 0.50), LEVEL_LABELS)
+    overlap_level = _categorize_level(mean_overlap, OVERLAP_CUTS, LEVEL_LABELS)
     spread_level = _categorize_level(spread_ratio, (0.10, 0.20, 0.35, 0.50), SPREAD_LABELS)
     imbalance_level = _categorize_level(spread_cv, (0.10, 0.20, 0.35, 0.50), LEVEL_LABELS)
     outlier_level = _categorize_level(mean_outlier, (0.05, 0.10, 0.20, 0.35), LEVEL_LABELS)

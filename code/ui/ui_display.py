@@ -5,10 +5,17 @@ import numpy as np
 import tkinter as tk
 
 from matplotlib import patheffects
+from matplotlib.backend_tools import Cursors
 from matplotlib.patches import Circle
 
-from llm.movement import compute_class_movements, compute_class_tighten_factors, suggestion_vectors, TIGHTEN_FACTOR
+from llm.movement import (CUSTOM_TIGHTEN_RANGE, compute_class_movements, compute_class_tighten_factors,
+                          fit_suggestion_to_vector, suggestion_vectors, tighten_factor)
+from llm.strategies import get_strategy
 from ui import ui_theme
+
+# How close (screen pixels) the pointer must be to an arrow tip or a circle
+# edge to grab it.
+HANDLE_PIXELS = 10
 
 
 def _style_figure(fig, *axes):
@@ -126,6 +133,8 @@ def display_scatter_plot(self, data, tab):
     def on_press(event):
         if event.inaxes is None:
             return
+        if llm_overlay_press(self, event):
+            return
         if not getattr(self, 'dragging_enabled', True):
             return
         self.points_last_step = self.moved_points.copy()  # backup current points
@@ -145,6 +154,8 @@ def display_scatter_plot(self, data, tab):
             print(f"Selected point {self.dragging_point}")
 
     def on_release(event):
+        if llm_overlay_release(self, event):
+            return
         if self.dragging is not None:
             old_center = self.last_centers[self.dragging]
             new_center = data['centers'][self.dragging]
@@ -170,6 +181,10 @@ def display_scatter_plot(self, data, tab):
             self.dragging_point = None  # Reset dragging for point
 
     def on_motion(event):
+        if llm_overlay_motion(self, event):
+            return
+        if self.dragging is None and self.dragging_point is None:
+            llm_overlay_hover(self, event)
         if self.dragging is not None and event.inaxes is not None:
             old_center = np.array(data['centers'][self.dragging])
             new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
@@ -242,6 +257,8 @@ def display_scatter_plot(self, data, tab):
     fig.canvas.mpl_connect('button_press_event', lambda event: on_double_click(event) if event.dblclick else None)
 
     self.llm_overlay_artists = []
+    self.llm_handles = []
+    self.llm_drag = None
     self.highlighted_classes = None
     refresh_llm_overlay(self)
 
@@ -309,9 +326,14 @@ def refresh_llm_overlay(self):
       move that class (direction + size), and
     - a dashed circle for a class the LLM flagged as too spread out
       (tighten_i/tighten_j): its radius is the size the class would shrink
-      to (TIGHTEN_FACTOR x its current average distance to its center), so
+      to (its tighten factor x its current average distance to its center), so
       the gap between the circle and the class's points shows how much
       tighter the suggestion wants it.
+
+    When the strategy lets the operator edit suggestions (4), arrow tips and
+    circles get a round handle and can be dragged to reshape the suggestion
+    (see llm_overlay_press/motion/release); ``self.llm_handles`` records
+    where they are.
 
     Advisory only - the plot changes for real only when a suggestion is
     applied."""
@@ -324,14 +346,10 @@ def refresh_llm_overlay(self):
         artist.remove()
     self.llm_overlay_artists = []
     self.llm_overlay_classes = []  # (artist, class_index) for highlight_classes
+    self.llm_handles = []
 
-    all_suggestions = getattr(self, 'latest_llm_suggestions', None)
-    applied_ids = getattr(self, 'applied_llm_suggestion_ids', None) or set()
-    # Applied suggestions stay in latest_llm_suggestions to keep driving the
-    # high-dim strategy's loss (2), but the operator already saw them
-    # enacted on the scatter plot - redrawing their arrow/circle here would
-    # look like nothing happened.
-    suggestions = [s for s in all_suggestions if id(s) not in applied_ids] if all_suggestions else all_suggestions
+    suggestions = _pending_suggestions(self)
+    editable = _overlay_editable(self)
     data = getattr(self, 'data', None)
     unique_labels = getattr(self, 'unique_labels', None)
     outline = [patheffects.withStroke(linewidth=4.5, foreground='white')]
@@ -342,7 +360,7 @@ def refresh_llm_overlay(self):
 
         for class_index, vector in movements.items():
             start = centroids.get(class_index)
-            if start is None:
+            if start is None or not np.any(vector):
                 continue
             end = start + vector
             arrow = ax.annotate(
@@ -355,6 +373,14 @@ def refresh_llm_overlay(self):
             self.llm_overlay_artists.append(arrow)
             self.llm_overlay_classes.append((arrow.arrow_patch, class_index))
 
+            # Draggable when a suggestion moves this class itself; a class
+            # only pushed away as another's class_j follows that suggestion.
+            owner = next((s for s in suggestions if s.class_i == class_index), None) if editable else None
+            if owner is not None:
+                _draw_handle(self, ax, end, class_index, outline)
+                self.llm_handles.append({'kind': 'arrow', 'class': class_index, 'start': start,
+                                         'end': end, 'owner': owner})
+
         tighten_factors = compute_class_tighten_factors(suggestions)
         points_now = getattr(self, 'moved_points', data['features'])
         for class_index, factor in tighten_factors.items():
@@ -364,7 +390,8 @@ def refresh_llm_overlay(self):
             points = points_now[data['labels'] == class_index]
             if points.shape[0] == 0:
                 continue
-            target_radius = float(np.linalg.norm(points - center, axis=1).mean()) * factor
+            mean_radius = float(np.linalg.norm(points - center, axis=1).mean())
+            target_radius = mean_radius * factor
             if target_radius <= 1e-8:
                 continue
             circle = Circle(tuple(center), target_radius, fill=False, linestyle='--',
@@ -373,6 +400,10 @@ def refresh_llm_overlay(self):
             ax.add_patch(circle)
             self.llm_overlay_artists.append(circle)
             self.llm_overlay_classes.append((circle, class_index))
+            if editable:
+                _draw_handle(self, ax, center + np.array([target_radius, 0.0]), class_index, outline)
+                self.llm_handles.append({'kind': 'circle', 'class': class_index, 'center': center,
+                                         'radius': target_radius, 'mean_radius': mean_radius})
 
     # Keep a hover highlight that was active before the redraw.
     keep = getattr(self, 'highlighted_classes', None)
@@ -383,14 +414,147 @@ def refresh_llm_overlay(self):
     fig.canvas.draw_idle()
 
 
+def _pending_suggestions(self):
+    """Suggestions not yet applied. Applied ones stay in
+    latest_llm_suggestions to keep driving the high-dim strategy's loss (2),
+    but the operator already saw them enacted on the scatter plot - drawing
+    their arrow/circle again would look like nothing happened."""
+    applied_ids = getattr(self, 'applied_llm_suggestion_ids', None) or set()
+    return [s for s in getattr(self, 'latest_llm_suggestions', None) or [] if id(s) not in applied_ids]
+
+
+def _overlay_editable(self):
+    strategy_var = getattr(self, 'strategy_var', None)
+    return strategy_var is not None and get_strategy(strategy_var.get()).suggestions_editable
+
+
+def _current_centroids(self):
+    return {int(label): np.asarray(self.data['centers'][i], dtype=float)
+            for i, label in enumerate(self.unique_labels)}
+
+
+def _draw_handle(self, ax, position, class_index, outline):
+    handle = ax.scatter([position[0]], [position[1]], s=90, facecolor='white', zorder=12,
+                        edgecolor=self.class_colors[class_index], linewidths=2.5, path_effects=outline)
+    self.llm_overlay_artists.append(handle)
+    self.llm_overlay_classes.append((handle, class_index))
+
+
+def _llm_handle_at(self, event):
+    """The arrow tip or circle edge under the pointer (within
+    HANDLE_PIXELS), or None. A circle can be grabbed anywhere on its edge."""
+    handles = getattr(self, 'llm_handles', None)
+    if not handles or event.inaxes is not getattr(self, 'ax', None) or event.xdata is None:
+        return None
+    to_pixels = self.ax.transData.transform
+    pointer = np.array([event.x, event.y], dtype=float)
+    cursor = np.array([event.xdata, event.ydata], dtype=float)
+    best = None
+    for handle in handles:
+        if handle['kind'] == 'arrow':
+            point = handle['end']
+        else:
+            offset = cursor - handle['center']
+            norm = float(np.linalg.norm(offset))
+            point = handle['center'] + (offset / norm if norm > 1e-12 else np.array([1.0, 0.0])) * handle['radius']
+        distance = float(np.linalg.norm(to_pixels(point) - pointer))
+        if distance <= HANDLE_PIXELS and (best is None or distance < best[0]):
+            best = (distance, handle)
+    return best[1] if best else None
+
+
+def llm_overlay_press(self, event):
+    """Start dragging an arrow tip / circle edge. True if one was grabbed
+    (the press is then not a center/point drag)."""
+    handle = _llm_handle_at(self, event)
+    if handle is None:
+        return False
+    drag = dict(handle)
+    if handle['kind'] == 'arrow':
+        # Keep the grab point under the pointer instead of jumping the tip to it.
+        drag['grab_offset'] = handle['end'] - np.array([event.xdata, event.ydata])
+        drag['base_direction'] = handle['owner'].direction
+    self.llm_drag = drag
+    highlight_classes(self, {handle['class']})
+    return True
+
+
+def llm_overlay_motion(self, event):
+    """Reshape the dragged suggestion so its arrow tip / circle edge follows
+    the pointer. True while a drag is in progress."""
+    drag = getattr(self, 'llm_drag', None)
+    if drag is None:
+        return False
+    if event.inaxes is not self.ax or event.xdata is None:
+        return True
+    cursor = np.array([event.xdata, event.ydata], dtype=float)
+    class_index = drag['class']
+    pending = _pending_suggestions(self)
+
+    if drag['kind'] == 'arrow':
+        centroids = _current_centroids(self)
+        owner = drag['owner']
+        wanted = cursor + drag['grab_offset'] - drag['start']
+        # The drawn arrow is the mean of every suggestion moving this class,
+        # so solve for the dragged suggestion's share that puts the mean
+        # under the pointer.
+        others = [suggestion_vectors(s, centroids).get(class_index) for s in pending if s is not owner]
+        others = [v for v in others if v is not None]
+        own = wanted * (len(others) + 1) - np.sum(others, axis=0) if others else wanted
+        fit_suggestion_to_vector(owner, own, centroids, drag['base_direction'])
+        owner.edited = True
+    else:
+        factor = float(np.clip(np.linalg.norm(cursor - drag['center']) / max(drag['mean_radius'], 1e-12),
+                               *CUSTOM_TIGHTEN_RANGE))
+        for s in pending:
+            if s.tighten_i and s.class_i == class_index:
+                s.tighten_amount_i, s.edited = factor, True
+            if s.tighten_j and s.class_j == class_index:
+                s.tighten_amount_j, s.edited = factor, True
+
+    refresh_llm_overlay(self)
+    return True
+
+
+def llm_overlay_release(self, event):
+    """Finish a drag: log it and update the suggestion cards. True if a
+    drag was in progress."""
+    drag = getattr(self, 'llm_drag', None)
+    if drag is None:
+        return False
+    self.llm_drag = None
+    tracker = getattr(self, 'llm_tracker', None)
+    for s in _pending_suggestions(self):
+        if s.class_i == drag['class'] or s.class_j == drag['class']:
+            if tracker is not None and s.edited:
+                tracker.log_edited_on_plot(s)
+    panel = getattr(self, 'llm_panel', None)
+    if panel is not None:
+        panel.refresh_cards()
+    highlight_classes(self, None)
+    return True
+
+
+def llm_overlay_hover(self, event):
+    """Hand cursor over a draggable arrow tip / circle edge."""
+    over = _llm_handle_at(self, event) is not None
+    if over == getattr(self, 'llm_cursor_on_handle', False):
+        return
+    self.llm_cursor_on_handle = over
+    try:
+        self.scatter_fig.canvas.set_cursor(Cursors.HAND if over else Cursors.POINTER)
+    except Exception:  # backends without cursor support
+        pass
+
+
 def _class_position(unique_labels, class_index):
     matches = np.where(unique_labels == class_index)[0]
     return int(matches[0]) if len(matches) else None
 
 
-def _tighten_class_in_place(self, data, unique_labels, class_index):
+def _tighten_class_in_place(self, data, unique_labels, class_index, factor):
     """Pull class_index's points in towards its own (current) center by
-    TIGHTEN_FACTOR - the "condensation" a pure center-to-center move can never
+    ``factor`` - the "condensation" a pure center-to-center move can never
     produce, for a class the LLM flagged as too diffuse."""
     position = _class_position(unique_labels, class_index)
     if position is None:
@@ -401,8 +565,8 @@ def _tighten_class_in_place(self, data, unique_labels, class_index):
     if num_points == 0:
         return False
 
-    self.moved_points[mask] = center + (self.moved_points[mask] - center) * TIGHTEN_FACTOR
-    self.point_tracker.log_llm_class_scaling(class_index, center, TIGHTEN_FACTOR, num_points)
+    self.moved_points[mask] = center + (self.moved_points[mask] - center) * factor
+    self.point_tracker.log_llm_class_scaling(class_index, center, factor, num_points)
     return True
 
 
@@ -448,9 +612,11 @@ def apply_llm_suggestion(self, suggestion):
         self.point_tracker.log_llm_center_movement(class_index, old_center, new_center)
 
     if suggestion.tighten_i:
-        _tighten_class_in_place(self, data, unique_labels, suggestion.class_i)
+        _tighten_class_in_place(self, data, unique_labels, suggestion.class_i,
+                                tighten_factor(suggestion, suggestion.class_i))
     if suggestion.tighten_j:
-        _tighten_class_in_place(self, data, unique_labels, suggestion.class_j)
+        _tighten_class_in_place(self, data, unique_labels, suggestion.class_j,
+                                tighten_factor(suggestion, suggestion.class_j))
 
     self.scatter.set_offsets(self.moved_points)
     incorrect_mask = getattr(self, 'incorrect_mask', None)

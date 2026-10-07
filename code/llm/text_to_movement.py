@@ -20,7 +20,7 @@ TIGHTEN_PATTERNS = (
     r'concentrat\w*',
 )
 AWAY_PATTERNS = (
-    r'away', r'apart', r'separat\w*', r'further', r'farther', r'distance\w*',
+    r'away', r'apart', r'(?<!is\s)(?<!are\s)far\s+from', r'separat\w*', r'further', r'farther', r'distance\w*',
     r'push\w*', r'repel\w*', r'split\w*',
 )
 TOWARD_PATTERNS = (
@@ -33,10 +33,23 @@ EMPTY_PATTERNS = (
 )
 SMALL_PATTERNS = (r'slight\w*', r'a\s+little', r'a\s+bit', r'small', r'gentl\w*', r'somewhat', r'minor')
 LARGE_PATTERNS = (
-    r'a\s+lot', r'far', r'large', r'strong\w*', r'significant\w*', r'much',
+    r'a\s+lot', r'(?<!is\s)(?<!are\s)far', r'large', r'strong\w*', r'significant\w*', r'much',
     r'big', r'major', r'well\s+away', r'clearly', r'completely',
 )
 MEDIUM_PATTERNS = (r'moderat\w*', r'medium', r'some\s+distance')
+# The reason part of a suggestion ("... because they are far from
+# everything") describes the current layout, not the move; it is blanked out
+# before looking for direction/scale/tighten words. Ends at the next comma or
+# sentence break so "Because X, move cat away from dog" keeps its instruction.
+REASON_PATTERN = r'\b(?:because|since|given\s+that|due\s+to|as\s+(?:they|it))\b[^.,;!?\n]*'
+# "the horse group is already tight" describes, it does not ask to tighten.
+DESCRIBED_TIGHT_PATTERN = (r'\b(?:is|are|already|stays?|remains?)\s+'
+                           r'(?:(?:already|fairly|very|quite|pretty|nicely|still)\s+)*'
+                           r'(?:tight|compact|dense|condensed|concentrated)\w*')
+# "pull them tighter" / "make both groups tighter" - both classes of the pair.
+BOTH_PATTERN = r'\b(?:both|them|each|all|the\s+pair)\b'
+# "toward(s) (the) empty space" is the empty-space direction, not toward_j.
+TOWARD_EMPTY_GAP = r'^\s*(?:\w+\s+){0,2}$'
 
 
 def _find_any(patterns, text):
@@ -78,11 +91,15 @@ def interpret_text(text: str, class_names: Dict[int, str]) -> dict:
 
     The first class named is the one that moves (class_i), the second the one
     it moves relative to (class_j). Tightening applies to the classes named
-    in the same sentence/clause as the tighten wording (class_i if none)."""
+    in the same sentence/clause as the tighten wording (class_i if none).
+    Reason clauses (``REASON_PATTERN``) are ignored for everything but
+    finding the classes."""
     lowered = (text or '').lower()
     result = {}
 
     mentions = _class_mentions(lowered, class_names)
+    for pattern in (REASON_PATTERN, DESCRIBED_TIGHT_PATTERN):
+        lowered = re.sub(pattern, lambda m: ' ' * len(m.group(0)), lowered)
     ordered = []
     for _, index in mentions:
         if index not in ordered:
@@ -110,7 +127,7 @@ def interpret_text(text: str, class_names: Dict[int, str]) -> dict:
                 r'\b(?:' + '|'.join(TIGHTEN_PATTERNS) + r')\b', ' ', clause)) is not None
                 for patterns in (AWAY_PATTERNS, TOWARD_PATTERNS, EMPTY_PATTERNS))
             if not clause_mentions:
-                targets = ordered[:1]
+                targets = ordered[:2] if re.search(BOTH_PATTERN, clause) else ordered[:1]
             elif re.search(r'\b(?:both|each|all)\b', clause) or not has_direction:
                 # "pull cat and dog tighter" - every class named here
                 targets = [index for _, index in clause_mentions]
@@ -132,6 +149,9 @@ def interpret_text(text: str, class_names: Dict[int, str]) -> dict:
             hits = {key: pos for key, pos in hits.items() if pos is not None}
             if hits:
                 direction = min(hits, key=hits.get)
+                if (direction == 'toward_j' and 'toward_empty_space' in hits and re.match(
+                        TOWARD_EMPTY_GAP, re.sub(r'^\S+', '', clause[hits['toward_j']:hits['toward_empty_space']]))):
+                    direction = 'toward_empty_space'
 
     if direction is not None:
         if direction == 'toward_j' and len(ordered) < 2:

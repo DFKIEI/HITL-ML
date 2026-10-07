@@ -248,6 +248,12 @@ class LLMTracker:
             f"APPLIED, {self.iter_counter}, {json.dumps(suggestion.as_log_dict())}"
         )
 
+    def log_edited_on_plot(self, suggestion):
+        """Log a suggestion the participant reshaped by dragging its arrow or circle"""
+        self.logger.info(
+            f"EDITED_ON_PLOT, {self.iter_counter}, {json.dumps(suggestion.as_log_dict())}"
+        )
+
     def log_error(self, message: str):
         """Log a failed request or a failed execution"""
         self.logger.info(
