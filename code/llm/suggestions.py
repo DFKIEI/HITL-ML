@@ -8,9 +8,10 @@ and why it is needed. There is nothing numeric to apply automatically; the
 operator reads the suggestions and rearranges the plot themselves.
 """
 
+import itertools
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -59,6 +60,7 @@ Pairwise semantic metrics:
 
 DIRECTIONS = ('toward_j', 'away_from_j', 'toward_empty_space')
 SCALES = ('small', 'medium', 'large')
+BENEFITS = ('low', 'medium', 'high')
 
 PROMPT_FOOTER = """\
 Output MUST be strict JSON with exactly this shape and no extra keys:
@@ -66,7 +68,8 @@ Output MUST be strict JSON with exactly this shape and no extra keys:
   "suggestions": [ { "class_i": int, "class_j": int, "suggestion": "string",
                      "direction": "toward_j" | "away_from_j" | "toward_empty_space",
                      "scale": "small" | "medium" | "large",
-                     "tighten_i": true | false, "tighten_j": true | false } ] }
+                     "tighten_i": true | false, "tighten_j": true | false,
+                     "expected_benefit": "low" | "medium" | "high" } ] }
 Write every text field for a non-technical reader: plain everyday words, short
 sentences, and the class NAMES (never indices, metric names, level names such as
 "very_high", or words like latent, centroid, embedding, vector or cluster
@@ -90,6 +93,9 @@ to true when class_i's own cluster is too spread out / diffuse and should be
 condensed around its own center (and likewise "tighten_j" for class_j) -
 overlap is often caused by spread, not just distance, and moving centers apart
 alone will not fix that.
+"expected_benefit" is your own estimate of how much this one change would
+improve the classifier (how much easier the classes become to tell apart):
+"low", "medium" or "high". It is compared with the measured effect, so be honest.
 Only suggest a change for a real problem: a pair whose overlap_level is medium
 or higher, or a class that is spread / very_spread AND overlaps another class.
 distance_relation is relative to the other pairs, so the nearest pairs are
@@ -106,6 +112,9 @@ Use class_i and class_j as the integer class indices given in the data below.
 Do NOT provide algorithmic or implementation instructions. Keep suggestions
 focused on semantic movement in latent space. No text outside the JSON object.
 """
+
+
+_UIDS = itertools.count(1)
 
 
 @dataclass
@@ -132,6 +141,7 @@ class PairSuggestion:
     tighten_i: bool = False
     tighten_j: bool = False
     source: str = 'llm'  # 'llm', or 'human' for one the operator added
+    expected_benefit: Optional[str] = None  # the LLM's own estimate, see BENEFITS
     edited: bool = False  # the operator changed it after it arrived
     # Operator-set geometry from dragging the overlay arrow/circle on the
     # scatter plot, used instead of the categorical presets above (see
@@ -144,6 +154,8 @@ class PairSuggestion:
     move_angle: Optional[float] = None
     tighten_amount_i: Optional[float] = None
     tighten_amount_j: Optional[float] = None
+    # Stable id for the session log (id() is reused once an object is freed).
+    uid: str = field(default_factory=lambda: f"s{next(_UIDS)}")
 
     def set_classes(self, class_i, class_j, class_names):
         self.class_i, self.class_j = int(class_i), int(class_j)
@@ -152,6 +164,7 @@ class PairSuggestion:
 
     def as_log_dict(self):
         return {
+            'uid': self.uid,
             'class_i': self.class_i,
             'class_j': self.class_j,
             'class_i_name': self.class_i_name,
@@ -167,6 +180,7 @@ class PairSuggestion:
             'move_angle': self.move_angle,
             'tighten_amount_i': self.tighten_amount_i,
             'tighten_amount_j': self.tighten_amount_j,
+            'expected_benefit': self.expected_benefit,
         }
 
 
@@ -326,6 +340,7 @@ def parse_suggestions(content: str, class_names: Dict[int, str],
             scale = 'medium'
         tighten_i = bool(raw.get('tighten_i'))
         tighten_j = bool(raw.get('tighten_j'))
+        benefit = str(raw.get('expected_benefit') or '').strip().lower()
 
         suggestions.append(PairSuggestion(
             class_i=class_i,
@@ -337,6 +352,7 @@ def parse_suggestions(content: str, class_names: Dict[int, str],
             scale=scale,
             tighten_i=tighten_i,
             tighten_j=tighten_j,
+            expected_benefit=benefit if benefit in BENEFITS else None,
         ))
 
     if not suggestions and global_summary.is_empty():

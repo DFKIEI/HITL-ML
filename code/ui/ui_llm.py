@@ -1,19 +1,24 @@
 """LLM suggestions panel, docked in the main window next to the scatter plot:
-ask an LLM what to do with the latent space, show its (top 5) suggestions as
-plain-language cards, and - in strategy 4 - let the operator edit, remove,
-add and apply them.
+ask an LLM what to do with the latent space, show its (top 5) suggestions
+one at a time (Previous / Skip), with the measured impact of each on the
+latent space (llm/impact.py), and - in strategy 4 - let the operator edit
+(typing or dictating), remove, add and apply them.
 
-Hovering a card highlights the classes it talks about on the scatter plot."""
+Only the suggestion on screen is drawn on the scatter plot; hovering its
+card highlights the classes it talks about. Everything the operator does
+here is written to the session event log (custom_logging.SessionRecorder)."""
 
 import dataclasses
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk
 
 import numpy as np
 
-from llm import openrouter
+from llm import openrouter, voice
+from llm.impact import describe_impact, suggestion_impact
 from llm.latent_state import get_class_names
 from llm.movement import move_fraction, suggestion_vectors
 from llm.strategies import get_strategy
@@ -39,6 +44,9 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.plot_retries = 0
         self.global_summary = None
         self.color_dots = []  # (tk.Label, callable -> class index) to recolor on plot redraw
+        self.current_index = 0  # the one suggestion on screen
+        self.recorder = voice.Recorder()
+        self.dictation_target = None  # what the running recording is for, see _toggle_dictation
 
         ttk.Label(self, text="LLM Suggestions", style='Heading.TLabel').pack(anchor=tk.W, pady=(0, ui_theme.PAD_S))
         self._build_controls()
@@ -59,8 +67,11 @@ class LLMSuggestionsPanel(ttk.Frame):
             row=0, column=1, sticky=tk.EW, padx=5, pady=2)
 
         ttk.Label(frame, text="Focus (optional):").grid(row=1, column=0, sticky=tk.W)
+        focus_row = ttk.Frame(frame)
+        focus_row.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
         self.goal_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=self.goal_var).grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
+        ttk.Entry(focus_row, textvariable=self.goal_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._dictate_button(focus_row, 'focus').pack(side=tk.LEFT, padx=(4, 0))
 
         self.key_row = ttk.Frame(frame)
         self.key_row.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=2)
@@ -77,8 +88,6 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.request_button = ttk.Button(buttons, text="Get Suggestions", style='Primary.TButton',
                                          command=self.request_suggestions)
         self.request_button.pack(side=tk.LEFT)
-        self.apply_all_button = ttk.Button(buttons, text="Apply All", command=self._apply_all)
-        self.apply_all_button.pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
         self.add_button = ttk.Button(buttons, text="+ Add", command=self._add_suggestion)
         self.add_button.pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
         ttk.Button(buttons, text="Clear", command=self._clear_all).pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
@@ -87,16 +96,25 @@ class LLMSuggestionsPanel(ttk.Frame):
         ttk.Label(frame, textvariable=self.status_var, wraplength=WRAP_LENGTH,
                   justify=tk.LEFT, style='Muted.TLabel').grid(
             row=4, column=0, columnspan=2, sticky=tk.W, pady=(ui_theme.PAD_S, 0))
-        ttk.Label(frame, text="On the plot: dashed arrow = suggested move; dashed circle = the "
-                              "tighter size suggested for that class. Hover a card to highlight "
-                              "its classes. Drag an arrow's tip or a circle's edge (the white "
-                              "handles) to reshape that suggestion.",
+        ttk.Label(frame, text="On the plot: dashed arrow = the shown suggestion's move; dashed "
+                              "circle = the tighter size it suggests for that class. Hover the card "
+                              "to highlight its classes. Drag an arrow's tip or a circle's edge (the "
+                              "white handles) to reshape it. Skip moves on to the next one.",
                   wraplength=WRAP_LENGTH, justify=tk.LEFT, style='Status.TLabel').grid(
             row=5, column=0, columnspan=2, sticky=tk.W, pady=(2, ui_theme.PAD_S))
 
         frame.columnconfigure(1, weight=1)
 
     def _build_suggestion_area(self):
+        nav = ttk.Frame(self)
+        nav.pack(fill=tk.X, pady=(0, ui_theme.PAD_S))
+        self.prev_button = ttk.Button(nav, text="‹ Previous", command=lambda: self._step(-1))
+        self.prev_button.pack(side=tk.LEFT)
+        self.skip_button = ttk.Button(nav, text="Skip ›", command=lambda: self._step(1))
+        self.skip_button.pack(side=tk.RIGHT)
+        self.position_var = tk.StringVar(value="No suggestions yet")
+        ttk.Label(nav, textvariable=self.position_var, style='Muted.TLabel').pack(side=tk.LEFT, expand=True)
+
         container = ttk.Frame(self)
         container.pack(fill=tk.BOTH, expand=True)
 
@@ -133,12 +151,22 @@ class LLMSuggestionsPanel(ttk.Frame):
             step = int(-1 * (event.delta / 60)) or (-1 if event.delta > 0 else 1)
         self.canvas.yview_scroll(step, "units")
 
+    def on_visibility_change(self):
+        """The panel was shown/hidden (strategy change, collapsed sidebar):
+        time on the shown suggestion only counts while it can be seen."""
+        events = getattr(self.ui, 'events', None)
+        if events is None:
+            return
+        self.update_idletasks()
+        current = self.current_suggestion()
+        visible = self.winfo_ismapped() and 'llm' not in getattr(self.ui, 'collapsed_sidebars', ())
+        events.enter('suggestion', current.uid if visible and current is not None else None)
+
     def refresh_for_strategy(self):
         """Called whenever the operator changes strategy in the main window,
         so the panel's controls and cards match it (see llm/strategies.py)."""
         strategy = get_strategy(self.ui.strategy_var.get())
         state = 'normal' if strategy.suggestions_editable else 'disabled'
-        self.apply_all_button.configure(state=state)
         self.add_button.configure(state=state)
         self._render_cards()
 
@@ -189,13 +217,16 @@ class LLMSuggestionsPanel(ttk.Frame):
 
         model = self.model_var.get().strip()
         goal = self.goal_var.get().strip() or None
+        self._log('LLM_REQUEST', model=model, goal=goal, strategy=self.ui.strategy_var.get())
         threading.Thread(target=self._worker, args=(model, goal), daemon=True).start()
 
     def _worker(self, model, goal):
+        started = time.monotonic()
         try:
             global_summary, suggestions, state, raw = request_suggestions(
                 self.ui, model=model, user_goal=goal)
-            self.result_queue.put(('ok', (global_summary, suggestions, state, raw, model, goal)))
+            latency = time.monotonic() - started
+            self.result_queue.put(('ok', (global_summary, suggestions, state, raw, model, goal, latency)))
         except Exception as e:  # network, parsing and validation errors alike
             self.result_queue.put(('error', f"{type(e).__name__}: {e}"))
 
@@ -203,11 +234,15 @@ class LLMSuggestionsPanel(ttk.Frame):
         try:
             while True:
                 status, payload = self.result_queue.get_nowait()
+                if status == 'voice':
+                    self._dictation_done(*payload)
+                    continue
                 self.request_running = False
                 self.request_button.configure(state='normal')
                 if status == 'error':
                     self.status_var.set(payload)
                     self.ui.llm_tracker.log_error(payload)
+                    self._log('LLM_ERROR', message=payload)
                 elif status == 'ok':
                     self._show_suggestions(*payload)
         except queue.Empty:
@@ -215,24 +250,28 @@ class LLMSuggestionsPanel(ttk.Frame):
         finally:
             self.after(200, self._process_queue)
 
-    def _show_suggestions(self, global_summary, suggestions, state, raw, model, goal):
+    def _show_suggestions(self, global_summary, suggestions, state, raw, model, goal, latency=None):
         strategy = get_strategy(self.ui.strategy_var.get())
         self.ui.llm_tracker.log_request(model, goal, state)
         self.ui.llm_tracker.log_response(model, raw)
         self.ui.llm_tracker.log_suggestions(global_summary, suggestions)
+        self._log('LLM_RESPONSE', model=model, goal=goal, latency_s=latency, state=state, raw=raw)
+        self._log('SUGGESTIONS_SHOWN', model=model, strategy=strategy.id,
+                  global_summary=global_summary.as_log_dict(),
+                  suggestions=[dict(s.as_log_dict(), impact=self._impacts(s)) for s in suggestions])
 
         self.global_summary = global_summary
         self.ui.latest_llm_suggestions = list(suggestions)
         self.ui.applied_llm_suggestion_ids = set()
+        self.current_index = 0
 
         if strategy.llm_auto_apply and strategy.space == '2d':
             # Strategy 3: the LLM is the only actor in 2D - apply every
             # suggestion to the scatter plot immediately, no manual click.
             for suggestion in suggestions:
-                if apply_llm_suggestion(self.ui, suggestion):
+                if apply_llm_suggestion(self.ui, suggestion, source='auto'):
                     self.ui.applied_llm_suggestion_ids.add(id(suggestion))
 
-        refresh_llm_overlay(self.ui)
         self._render_cards()
 
         if strategy.space == 'high_dim':
@@ -240,7 +279,7 @@ class LLMSuggestionsPanel(ttk.Frame):
         elif strategy.llm_auto_apply:
             note = "Applied to the plot automatically."
         else:
-            note = "Edit, remove or add suggestions, then Apply them to the plot."
+            note = "Edit, remove or add suggestions, then Apply them to the plot one by one."
         self.status_var.set(f"{len(suggestions)} suggestion(s) from {model}. {note}")
         self.ui.update_log(f"LLM: {len(suggestions)} suggestion(s) received.")
 
@@ -257,27 +296,73 @@ class LLMSuggestionsPanel(ttk.Frame):
         return names
 
     def refresh_cards(self):
-        """Rebuild the cards after a suggestion changed elsewhere (dragged on
+        """Rebuild the card after a suggestion changed elsewhere (dragged on
         the plot), keeping the scroll position."""
         top = self.canvas.yview()[0]
-        self._render_cards()
+        self._render_cards(keep_scroll=True)
         self.canvas.update_idletasks()
         self.canvas.yview_moveto(top)
 
-    def _render_cards(self):
-        """(Re)build every card from ui.latest_llm_suggestions - the cards are
-        just views of those objects, edited in place."""
+    def _suggestions(self):
+        return getattr(self.ui, 'latest_llm_suggestions', None) or []
+
+    def current_suggestion(self):
+        suggestions = self._suggestions()
+        if not suggestions:
+            return None
+        self.current_index = max(0, min(self.current_index, len(suggestions) - 1))
+        return suggestions[self.current_index]
+
+    def _step(self, delta, via=None):
+        suggestions = self._suggestions()
+        if not suggestions:
+            return
+        new_index = max(0, min(self.current_index + delta, len(suggestions) - 1))
+        if new_index == self.current_index:
+            return
+        self.current_index = new_index
+        self._render_cards(via=via or ('skip' if delta > 0 else 'previous'))
+
+    def _render_cards(self, keep_scroll=False, via='render'):
+        """(Re)build the overall card and the card of the current suggestion
+        from ui.latest_llm_suggestions - the cards are just views of those
+        objects, edited in place. Only that suggestion is drawn on the plot."""
         highlight_classes(self.ui, None)
         for widget in self.suggestion_frame.winfo_children():
             widget.destroy()
         self.color_dots = []
 
         strategy = get_strategy(self.ui.strategy_var.get())
+        suggestions = self._suggestions()
+        current = self.current_suggestion()
+        previous_focus = getattr(self.ui, 'llm_focus_suggestion', None)
+        self.ui.llm_focus_suggestion = current
+
         if self.global_summary is not None and not self.global_summary.is_empty():
             self._build_global_card(self.global_summary)
-        for index, suggestion in enumerate(getattr(self.ui, 'latest_llm_suggestions', []) or []):
-            self._build_card(index, suggestion, strategy)
-        self.canvas.yview_moveto(0)
+        if current is not None:
+            self._build_card(self.current_index, current, strategy)
+
+        if suggestions:
+            self.position_var.set(f"Suggestion {self.current_index + 1} of {len(suggestions)}")
+        else:
+            self.position_var.set("No suggestions")
+        self.prev_button.configure(state='normal' if self.current_index > 0 else 'disabled')
+        self.skip_button.configure(
+            state='normal' if self.current_index < len(suggestions) - 1 else 'disabled')
+
+        events = getattr(self.ui, 'events', None)
+        if events is not None:
+            visible = self.winfo_ismapped() and 'llm' not in getattr(self.ui, 'collapsed_sidebars', ())
+            shown = current.uid if current is not None and visible else None
+            events.enter('suggestion', shown)
+            if current is not None and current is not previous_focus:
+                events.log('SUGGESTION_VIEWED', uid=current.uid, index=self.current_index,
+                           count=len(suggestions), via=via)
+
+        refresh_llm_overlay(self.ui)
+        if not keep_scroll:
+            self.canvas.yview_moveto(0)
 
     def refresh_class_colors(self):
         for dot, class_of in self.color_dots:
@@ -300,6 +385,14 @@ class LLMSuggestionsPanel(ttk.Frame):
         if global_summary.strategy:
             ttk.Label(card, text=f"Plan: {global_summary.strategy}", wraplength=WRAP_LENGTH - 20,
                       justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(4, 2))
+        pending = self._pending()
+        impact = self._impact(pending) if len(pending) > 1 else None
+        if impact:
+            ttk.Label(card, text=(f"All {len(pending)} open suggestions together: separation "
+                                  f"{impact['silhouette_before']:+.2f} → {impact['silhouette_after']:+.2f}, "
+                                  f"shift {impact['shift_ratio']:.2f}x typical class gap"),
+                      wraplength=WRAP_LENGTH - 20, justify=tk.LEFT, style='Status.TLabel').pack(
+                anchor=tk.W, pady=(2, 0))
 
     def _bind_hover(self, card, suggestion):
         """Highlight the card's classes on the plot while the pointer is
@@ -327,10 +420,12 @@ class LLMSuggestionsPanel(ttk.Frame):
         card.pack(fill=tk.X, padx=(0, 5), pady=(0, 6))
         self._bind_hover(card, suggestion)
 
+        impact_var = tk.StringVar()
         if editable:
-            self._build_editable_body(card, suggestion)
+            self._build_editable_body(card, suggestion, impact_var)
         else:
             self._build_readonly_body(card, suggestion)
+        self._build_impact(card, suggestion, impact_var, strategy)
 
         if not strategy.suggestions_editable:
             if strategy.llm_auto_apply:
@@ -346,6 +441,68 @@ class LLMSuggestionsPanel(ttk.Frame):
             ttk.Button(buttons, text="Remove",
                        command=lambda: self._remove(suggestion)).pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
         ttk.Label(buttons, textvariable=status_var, style='Status.TLabel').pack(side=tk.LEFT, padx=ui_theme.PAD_S)
+
+    def _pending(self):
+        applied = getattr(self.ui, 'applied_llm_suggestion_ids', None) or set()
+        return [s for s in self._suggestions() if id(s) not in applied]
+
+    def _impact_spaces(self):
+        """(name, points, labels) of the spaces impact is measured in: the
+        model's real latent features and the 2D plot as it is now."""
+        plot = getattr(self.ui, 'plot', None)
+        data = getattr(self.ui, 'data', None)
+        spaces = []
+        if plot is not None and getattr(plot, 'latent_features', None) is not None:
+            spaces.append(('latent', np.asarray(plot.latent_features, dtype=float),
+                           np.asarray(plot.selected_labels)))
+        if data is not None:
+            points = getattr(self.ui, 'moved_points', None)
+            spaces.append(('plot', np.asarray(points if points is not None else data['features'], dtype=float),
+                           np.asarray(data['labels'])))
+        return spaces
+
+    def _impacts(self, suggestions):
+        """Impact in every space, for the log. Never raises - a metric
+        failing must not cost the participant their suggestions."""
+        result = {}
+        for name, points, labels in self._impact_spaces():
+            try:
+                result[name] = suggestion_impact(points, labels, suggestions)
+            except Exception as e:
+                result[name] = {'error': f"{type(e).__name__}: {e}"}
+        return result
+
+    def _impact(self, suggestions, space=None):
+        """Impact in ``space`` ('latent' or 'plot'; default the first one
+        available), or None."""
+        for name, points, labels in self._impact_spaces():
+            if space is None or name == space:
+                try:
+                    return suggestion_impact(points, labels, suggestions)
+                except Exception as e:
+                    print(f"Impact metrics failed: {type(e).__name__}: {e}")
+                    return None
+        return None
+
+    def _build_impact(self, card, suggestion, impact_var, strategy):
+        """Measured effect of this suggestion, in the space the active
+        strategy changes: the real latent space for strategy 2, the 2D plot
+        otherwise (see llm/impact.py)."""
+        space = 'latent' if strategy.space == 'high_dim' else 'plot'
+        title = "Impact on the model's latent space" if space == 'latent' else "Impact on the 2D plot"
+
+        def update():
+            impact = self._impact(suggestion, space)
+            impact_var.set(describe_impact(impact, suggestion.expected_benefit) if impact
+                           else "(impact shows once the scatter plot is ready)")
+
+        update()
+        impact_var.update_impact = update  # called after edits, see _build_editable_body
+        box = ttk.Frame(card)
+        box.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
+        ttk.Label(box, text=title, style='Status.TLabel').pack(anchor=tk.W)
+        ttk.Label(box, textvariable=impact_var, wraplength=WRAP_LENGTH - 20, justify=tk.LEFT,
+                  style='Muted.TLabel').pack(anchor=tk.W)
 
     def _build_readonly_body(self, card, suggestion):
         header = ttk.Frame(card)
@@ -379,7 +536,7 @@ class LLMSuggestionsPanel(ttk.Frame):
             return 0.0
         return float(np.degrees(np.arctan2(vector[1], vector[0])) % 360)
 
-    def _build_editable_body(self, card, suggestion):
+    def _build_editable_body(self, card, suggestion, impact_var):
         """Strategy 4: the free text and the structured fields are both
         editable. Typing in the text re-reads it (llm/text_to_movement.py) and
         updates the fields, which are what actually gets applied - and hence
@@ -424,11 +581,14 @@ class LLMSuggestionsPanel(ttk.Frame):
         tighten_i_check.pack(side=tk.LEFT, padx=(4, 0))
         tighten_j_check = ttk.Checkbutton(row3, variable=tighten_j_var, text=suggestion.class_j_name)
         tighten_j_check.pack(side=tk.LEFT, padx=(4, 0))
-        text = tk.Text(card, height=3, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1,
+        text_row = ttk.Frame(card)
+        text_row.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
+        text = tk.Text(text_row, height=3, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1,
                        font=ui_theme.fonts()['body'], bg=ui_theme.SURFACE, fg=ui_theme.TEXT,
                        highlightthickness=0, padx=4, pady=3)
         text.insert('1.0', suggestion.suggestion)
-        text.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
+        text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._dictate_button(text_row, suggestion).pack(side=tk.LEFT, anchor=tk.N, padx=(4, 0))
         ttk.Label(card, textvariable=summary_var, wraplength=WRAP_LENGTH - 20,
                   justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 0))
 
@@ -443,12 +603,16 @@ class LLMSuggestionsPanel(ttk.Frame):
             tighten_j_check.configure(text=suggestion.class_j_name)
             summary_var.set(describe_movement(suggestion))
             self.refresh_class_colors()
+            update = getattr(impact_var, 'update_impact', None)
+            if update is not None:
+                update()
 
-        def changed():
+        def changed(via):
             suggestion.edited = True
             sync_widgets()
             refresh_llm_overlay(self.ui)
             highlight_classes(self.ui, {suggestion.class_i, suggestion.class_j})
+            self._log('SUGGESTION_EDITED', uid=suggestion.uid, via=via, suggestion=suggestion.as_log_dict())
 
         def on_fields(_event=None):
             class_i = index_of.get(class_i_var.get(), suggestion.class_i)
@@ -468,7 +632,7 @@ class LLMSuggestionsPanel(ttk.Frame):
                 suggestion.move_amount = preset_fraction
             if suggestion.direction == 'custom_angle' and suggestion.move_angle is None:
                 suggestion.move_angle = preset_angle
-            changed()
+            changed('fields')
 
         for combo in (class_i_combo, class_j_combo, direction_combo, scale_combo):
             combo.bind("<<ComboboxSelected>>", on_fields)
@@ -484,24 +648,111 @@ class LLMSuggestionsPanel(ttk.Frame):
 
         def read_text():
             pending['job'] = None
-            suggestion.suggestion = text.get('1.0', 'end-1c').strip()
-            understood = interpret_text(suggestion.suggestion, class_names)
-            class_i = understood.get('class_i', suggestion.class_i)
-            class_j = understood.get('class_j', suggestion.class_j)
-            if class_j == class_i:
-                class_j = suggestion.class_j if suggestion.class_j != class_i else suggestion.class_i
-            if class_i != class_j:
-                suggestion.set_classes(class_i, class_j, class_names)
-            for field in ('direction', 'scale', 'tighten_i', 'tighten_j'):
-                if field in understood:
-                    setattr(suggestion, field, understood[field])
-            changed()
+            self._set_text(suggestion, text.get('1.0', 'end-1c'), class_names)
+            changed('text')
 
         text.bind("<KeyRelease>", on_text_edit)
 
+    def _set_text(self, suggestion, new_text, class_names=None):
+        """Store a typed or dictated suggestion text and read it back into
+        the fields (llm/text_to_movement.py)."""
+        class_names = class_names or self._class_names()
+        suggestion.suggestion = new_text.strip()
+        understood = interpret_text(suggestion.suggestion, class_names)
+        class_i = understood.get('class_i', suggestion.class_i)
+        class_j = understood.get('class_j', suggestion.class_j)
+        if class_j == class_i:
+            class_j = suggestion.class_j if suggestion.class_j != class_i else suggestion.class_i
+        if class_i != class_j:
+            suggestion.set_classes(class_i, class_j, class_names)
+        for name in ('direction', 'scale', 'tighten_i', 'tighten_j'):
+            if name in understood:
+                setattr(suggestion, name, understood[name])
+
+    # -------------------------------------------------------------- dictation
+    def _dictate_button(self, parent, target):
+        """Mic button: click to start recording, click again to stop and
+        transcribe into ``target`` - a suggestion's text, or 'focus' for the
+        Focus field."""
+        button = ttk.Button(parent, text="Dictate", width=8)
+        button.configure(command=lambda: self._toggle_dictation(button, target))
+        if self.recorder.recording and self.dictation_target is target:
+            button.configure(text="Stop")
+        return button
+
+    def _toggle_dictation(self, button, target):
+        if not voice.available():
+            self.status_var.set(voice.unavailable_reason())
+            return
+        if self.recorder.recording:
+            wav, seconds = self.recorder.stop()
+            target = self.dictation_target
+            try:
+                button.configure(text="Dictate")
+            except tk.TclError:  # the card was rebuilt meanwhile
+                pass
+            if seconds < 0.3:
+                self.status_var.set("Nothing recorded.")
+                return
+            self.status_var.set(f"Transcribing {seconds:.0f}s of audio...")
+            threading.Thread(target=self._transcribe_worker, args=(wav, seconds, target), daemon=True).start()
+            return
+        if not openrouter.get_api_key():
+            self.key_row.grid()
+            self.status_var.set(self._key_status())
+            return
+        try:
+            self.recorder.start()
+        except Exception as e:
+            self.status_var.set(f"Could not open the microphone: {e}")
+            return
+        self.dictation_target = target
+        button.configure(text="Stop")
+        self.status_var.set("Recording... click Stop when you are done.")
+
+    def _transcribe_worker(self, wav, seconds, target):
+        started = time.monotonic()
+        try:
+            transcript, model = voice.transcribe(wav)
+            error = None
+        except Exception as e:
+            transcript, model, error = '', voice.get_transcribe_model(), f"{type(e).__name__}: {e}"
+        self.result_queue.put(('voice', (target, wav, seconds, transcript, model, error,
+                                         time.monotonic() - started)))
+
+    def _dictation_done(self, target, wav, seconds, transcript, model, error, latency):
+        audio_file = None
+        events = getattr(self.ui, 'events', None)
+        if events is not None:
+            audio_file = events.audio_path()
+            with open(audio_file, 'wb') as f:
+                f.write(wav)
+        target_name = 'focus' if target == 'focus' else getattr(target, 'uid', None)
+        self._log('VOICE_DICTATION', target=target_name, audio_file=audio_file, seconds=round(seconds, 2),
+                  model=model, latency_s=round(latency, 2), transcript=transcript, error=error)
+        if error or not transcript:
+            self.status_var.set(f"Transcription failed: {error or 'empty answer'}")
+            return
+        if target == 'focus':
+            self.goal_var.set(transcript)
+        elif target in self._suggestions():
+            self._set_text(target, transcript)
+            target.edited = True
+            self._log('SUGGESTION_EDITED', uid=target.uid, via='voice', suggestion=target.as_log_dict())
+            self.refresh_cards()
+        else:
+            self.status_var.set(f"Heard: \"{transcript}\" (that suggestion is gone).")
+            return
+        self.status_var.set(f"Heard: \"{transcript}\"")
+
     # ---------------------------------------------------------------- actions
+    def _log(self, event_type, **payload):
+        events = getattr(self.ui, 'events', None)
+        if events is not None:
+            events.log(event_type, **payload)
+
     def _apply(self, suggestion, status_var=None):
-        if apply_llm_suggestion(self.ui, suggestion):
+        if apply_llm_suggestion(self.ui, suggestion, source='participant'):
             self.ui.llm_tracker.log_applied(suggestion)
             self.ui.update_log(f"LLM: applied - {describe_movement(suggestion)}")
             # Marked "applied" so the overlay stops drawing it - the
@@ -514,25 +765,20 @@ class LLMSuggestionsPanel(ttk.Frame):
 
     def _apply_one(self, suggestion, status_var):
         if self._apply(suggestion, status_var):
-            refresh_llm_overlay(self.ui)
-            self._render_cards()
-
-    def _apply_all(self):
-        applied_ids = self.ui.applied_llm_suggestion_ids
-        pending = [s for s in self.ui.latest_llm_suggestions if id(s) not in applied_ids]
-        count = sum(1 for s in pending if self._apply(s))
-        refresh_llm_overlay(self.ui)
-        self._render_cards()
-        self.status_var.set(f"Applied {count} suggestion(s) to the plot. You can drag further, "
-                            "or Undo Last Change for the last one.")
+            # Move on to the next one, like Skip.
+            if self.current_index < len(self._suggestions()) - 1:
+                self.current_index += 1
+                self._render_cards(via='after_apply')
+            else:
+                self._render_cards()
 
     def _remove(self, suggestion):
         self.ui.llm_tracker.log_dismissed(suggestion)
+        self._log('SUGGESTION_REMOVED', uid=suggestion.uid, suggestion=suggestion.as_log_dict())
         # By identity: PairSuggestion is a dataclass, so == would also match
-        # an identical twin.
+        # an identical twin. The next one slides into the same position.
         self.ui.latest_llm_suggestions = [s for s in self.ui.latest_llm_suggestions if s is not suggestion]
-        refresh_llm_overlay(self.ui)
-        self._render_cards()
+        self._render_cards(via='after_remove')
 
     def _add_suggestion(self):
         class_names = self._class_names()
@@ -544,18 +790,18 @@ class LLMSuggestionsPanel(ttk.Frame):
                                     suggestion='', direction='away_from_j', scale='medium', source='human')
         suggestion.set_classes(first, second, class_names)
         self.ui.latest_llm_suggestions.append(suggestion)
-        refresh_llm_overlay(self.ui)
-        self._render_cards()
-        self.canvas.update_idletasks()
-        self.canvas.yview_moveto(1.0)
-        self.status_var.set("New suggestion added at the bottom - type what you want "
+        self._log('SUGGESTION_ADDED', uid=suggestion.uid, suggestion=suggestion.as_log_dict())
+        self.current_index = len(self.ui.latest_llm_suggestions) - 1
+        self._render_cards(via='added')
+        self.status_var.set("New suggestion added - type or dictate what you want "
                             "(e.g. \"move cat away from dog\") or use the dropdowns.")
 
     def _clear_all(self):
         """'Clear' button: also drops the overlay arrows and, for the high-dim
         strategy (2), the loss target they're built from."""
+        self._log('SUGGESTIONS_CLEARED', uids=[s.uid for s in self._suggestions()])
         self.global_summary = None
         self.ui.latest_llm_suggestions = []
         self.ui.applied_llm_suggestion_ids = set()
-        refresh_llm_overlay(self.ui)
+        self.current_index = 0
         self._render_cards()

@@ -1,0 +1,42 @@
+{
+  "latest": {
+    "session": "18_test new",
+    "segment": 1,
+    "source": "user_study_logs/18_test new/model_scores_id_18_scenario_test new.log",
+    "first_epoch": 1,
+    "last_epoch": 3,
+    "first_test": 20.44,
+    "last_test": 35.8,
+    "change_pp": 15.36,
+    "best_test": 35.8,
+    "llm_applied_records": 10
+  },
+  "historical": {
+    "llm": {
+      "session": "12_test_cifar_llm_loss",
+      "segment": 1,
+      "source": "user_study_logs/12_test_cifar_llm_loss/model_scores_id_12_scenario_test_cifar_llm_loss.log",
+      "first_epoch": 1,
+      "last_epoch": 29,
+      "first_test": 25.04,
+      "last_test": 67.56,
+      "change_pp": 42.52,
+      "best_test": 67.56,
+      "llm_applied_records": 40
+    },
+    "ce": {
+      "session": "13_ce_loss",
+      "segment": 1,
+      "source": "user_study_logs/13_ce_loss/model_scores_id_13_scenario_ce_loss.log",
+      "first_epoch": 1,
+      "last_epoch": 29,
+      "first_test": 23.64,
+      "last_test": 68.92,
+      "change_pp": 45.28,
+      "best_test": 70.12,
+      "llm_applied_records": 0
+    },
+    "final_test_difference_pp": -1.36
+  },
+  "controlled_strategy_results_found": false
+}

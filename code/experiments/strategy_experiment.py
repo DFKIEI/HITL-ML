@@ -24,6 +24,7 @@ simply be started again with the same command.
 
 import argparse
 import json
+import hashlib
 import os
 import random
 import sys
@@ -110,8 +111,13 @@ def run(condition, seed, args, loaders, llm_model, log):
     plot.prepare_data()
     names = get_class_names(plot)
     state = {'suggestions': None, 'requests': []}
+    initial_weights_sha256 = hashlib.sha256(b''.join(
+        value.detach().cpu().numpy().tobytes() for value in model.state_dict().values())).hexdigest()
 
     def on_pause():
+        # A final-epoch request cannot affect this run's accuracy.
+        if len(epochs) >= args.epochs:
+            return
         plot.prepare_data()  # what update_visualization does after a pause
         if not config['llm']:
             return
@@ -134,6 +140,14 @@ def run(condition, seed, args, loaders, llm_model, log):
                             for s in suggestions]})
 
     epochs = []
+    def record_epoch(metrics):
+        epochs.append(metrics)
+        progress = dict(condition=condition, seed=seed, dataset=args.dataset, **metrics)
+        if args.out:
+            with open(args.out + '.progress.jsonl', 'a') as progress_file:
+                progress_file.write(json.dumps(progress) + '\n')
+        log(f"PROGRESS {condition} seed {seed} epoch {metrics['epoch']}/{args.epochs}: "
+            f"val {metrics['val_accuracy']:.2f}% test {metrics['test_accuracy']:.2f}%")
     report_dir = tempfile.mkdtemp(prefix='strategy_experiment_')
     started = time.time()
     with open(os.devnull, 'w') as devnull:
@@ -142,11 +156,15 @@ def run(condition, seed, args, loaders, llm_model, log):
             train_model(model, optimizer, trainloader, valloader, testloader, dev, args.epochs, 10 ** 9,
                         Value(config['alpha']), report_dir, epoch_end_callback=on_pause,
                         pause_after_n_epochs=args.pause, plot=plot, logger=MagicMock(),
-                        metrics_callback=epochs.append, strategy_var=Value(config['strategy']),
+                        metrics_callback=record_epoch, strategy_var=Value(config['strategy']),
                         llm_suggestions_callback=lambda: state['suggestions'])
         finally:
             sys.stdout = stdout
     result = {'condition': condition, 'seed': seed, 'dataset': args.dataset, 'epochs': epochs,
+              'protocol': {'epochs': args.epochs, 'pause': args.pause, 'batch': args.batch,
+                           'split_seed': args.split_seed, 'version': 2},
+              'initial_weights_sha256': initial_weights_sha256,
+              'llm_model': llm_model if config['llm'] else None,
               'llm_requests': state['requests'], 'minutes': (time.time() - started) / 60}
     final = epochs[-1] if epochs else {}
     log(f"{condition:13s} seed {seed}: val {final.get('val_accuracy', float('nan')):.2f}%  "
@@ -188,6 +206,8 @@ def main():
     parser.add_argument('--epochs', type=int, default=60)
     parser.add_argument('--pause', type=int, default=5)
     parser.add_argument('--batch', type=int, default=512)
+    parser.add_argument('--split-seed', type=int, default=20261028,
+                        help='fixed validation/test split, shared by all conditions and seeds')
     parser.add_argument('--llm-model', default=None, dest='llm_model')
     parser.add_argument('--out', default=None, help='append one JSON line per run here; runs already in it '
                                                      'are skipped')
@@ -204,15 +224,38 @@ def main():
     os.chdir(PROJECT_DIR)  # the loaders read 'dataset/...' relative to the project root
     print(f"{args.dataset}, {args.epochs} epochs, pause every {args.pause}, LLM {llm_model}, device {device()}",
           flush=True)
+    random.seed(args.split_seed)
+    np.random.seed(args.split_seed)
+    torch.manual_seed(args.split_seed)
     loaders = load_dataset(args.dataset, args.batch)
+    if args.out:
+        os.makedirs(os.path.dirname(args.out), exist_ok=True)
+        split_path = args.out + '.splits.npz'
+        split_data = {name: np.asarray(loader.dataset.indices)
+                      for name, loader in zip(('train', 'validation', 'test'), loaders[:3])
+                      if hasattr(loader.dataset, 'indices')}
+        if os.path.exists(split_path):
+            with np.load(split_path) as saved:
+                if set(saved.files) != set(split_data) or any(
+                        not np.array_equal(saved[k], v) for k, v in split_data.items()):
+                    raise ValueError('Saved split differs from this run; use a new --out path.')
+        else:
+            np.savez_compressed(split_path, **split_data)
     results = load_results(args.out)
+    expected_protocol = dict(epochs=args.epochs, pause=args.pause, batch=args.batch,
+                             split_seed=args.split_seed, version=2)
+    if any(r.get('protocol') != expected_protocol or
+           (CONDITIONS[r['condition']]['llm'] and r.get('llm_model') != llm_model)
+           for r in results):
+        raise ValueError('Existing results use a different protocol; use a new --out path.')
     done = {(r['condition'], r['seed'], r['dataset'], len(r['epochs'])) for r in results}
     for seed in args.seeds:  # seed-major, so partial runs still compare conditions
         for condition in args.conditions:
             if (condition, seed, args.dataset, args.epochs) in done:
                 print(f"{condition:13s} seed {seed}: already in {args.out}, skipped", flush=True)
                 continue
-            result = run(condition, seed, args, loaders, llm_model, lambda m: print(m, flush=True))
+            result = run(condition, seed, args, loaders, llm_model,
+                         lambda m: print(m, file=sys.__stdout__, flush=True))
             results.append(result)
             if args.out:
                 os.makedirs(os.path.dirname(args.out), exist_ok=True)

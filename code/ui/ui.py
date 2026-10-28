@@ -5,7 +5,7 @@ import queue
 import matplotlib
 from matplotlib import pyplot as plt
 from torch.utils import data
-from custom_logging import PointTracker, AllDataPointsTracker, ModelTracker, LLMTracker
+from custom_logging import PointTracker, AllDataPointsTracker, ModelTracker, LLMTracker, SessionRecorder
 import os
 
 matplotlib.use('TkAgg')
@@ -17,7 +17,8 @@ SHOW_EXTRA_PLOTS = False
 from plots.plots import InteractivePlot
 from training.training import train_model
 from ui.ui_control import create_info_labels, create_training_controls, create_visualization_controls
-from ui.ui_display import display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names
+from ui.ui_display import (display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names,
+                           log_modification)
 from training.training_utils import find_latest_checkpoint, load_checkpoint
 from ui.ui_llm import LLMSuggestionsPanel
 from llm.strategies import get_strategy, id_from_label
@@ -50,6 +51,13 @@ class UI:
         self.all_datapoints_tracker = AllDataPointsTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
         self.model_tracker = ModelTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
         self.llm_tracker = LLMTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
+        # Structured, timestamped log of everything - enough to rebuild the
+        # session (tools/reconstruct_session.py) and to time each space.
+        self.events = SessionRecorder(self.probant_id, self.scenario, self.probant_scenario_dir)
+        self.events.log('SESSION_CONFIG', dataset=dataset_name, model=model_name, loss=loss_type,
+                        visualization=visualization, device=str(device),
+                        llm_model=os.environ.get('OPENROUTER_MODEL'))
+        self.events.enter('phase', 'setup')
 
         #if checkpoint and os.path.exists(checkpoint):
         #    try:
@@ -86,8 +94,12 @@ class UI:
         # (so high-dim strategies keep using them) but hidden from the overlay
         # since the operator already saw them enacted on the scatter plot.
         self.applied_llm_suggestion_ids = set()
+        # The one suggestion shown in the panel - the only one drawn on the plot.
+        self.llm_focus_suggestion = None
 
         self.create_ui()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self._tick_session_clock()
 
     def create_ui(self):
         apply_theme(self.root)
@@ -105,9 +117,18 @@ class UI:
 
         # Scrollable control panel: a themed canvas + scrollbar hosting the
         # actual (ttk) control_panel frame, so the panel can grow taller than
-        # the window without the window itself growing.
-        canvas = tk.Canvas(main_frame, bg=ui_theme.BG, highlightthickness=0, width=360)
-        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        # the window without the window itself growing. It sits in a
+        # collapsible sidebar (toggle strip next to it).
+        self.left_sidebar = tk.Frame(main_frame, bg=ui_theme.BG)
+        self.left_sidebar.pack(side="left", fill="y")
+        left_strip = tk.Frame(main_frame, bg=ui_theme.BG)
+        left_strip.pack(side="left", fill="y")
+        self.left_toggle = ttk.Button(left_strip, text="«", width=2,
+                                      command=lambda: self.toggle_sidebar('controls'))
+        self.left_toggle.pack(side=tk.TOP, pady=(0, ui_theme.PAD_S))
+
+        canvas = tk.Canvas(self.left_sidebar, bg=ui_theme.BG, highlightthickness=0, width=360)
+        scrollbar = ttk.Scrollbar(self.left_sidebar, orient="vertical", command=canvas.yview)
         self.control_panel = ttk.Frame(canvas, padding=(ui_theme.PAD_M, ui_theme.PAD_M))
 
         # Configure the canvas
@@ -159,10 +180,18 @@ class UI:
 
         ttk.Separator(main_frame, orient=tk.VERTICAL).pack(side="left", fill="y", padx=ui_theme.PAD_M)
 
-        # LLM suggestions docked right of the plot; shown only for strategies
-        # that use the LLM (see on_strategy_change).
-        self.llm_panel = LLMSuggestionsPanel(main_frame, self)
-        self.llm_panel.pack(side=tk.RIGHT, fill=tk.Y)
+        # LLM suggestions docked right of the plot, in a collapsible sidebar;
+        # shown only for strategies that use the LLM (see on_strategy_change).
+        self.llm_sidebar = tk.Frame(main_frame, bg=ui_theme.BG)
+        self.llm_sidebar.pack(side=tk.RIGHT, fill=tk.Y)
+        right_strip = tk.Frame(self.llm_sidebar, bg=ui_theme.BG)
+        right_strip.pack(side=tk.LEFT, fill=tk.Y)
+        self.right_toggle = ttk.Button(right_strip, text="»", width=2,
+                                       command=lambda: self.toggle_sidebar('llm'))
+        self.right_toggle.pack(side=tk.TOP, pady=(0, ui_theme.PAD_S))
+        self.llm_panel = LLMSuggestionsPanel(self.llm_sidebar, self)
+        self.llm_panel.pack(side=tk.LEFT, fill=tk.Y)
+        self.collapsed_sidebars = set()
 
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -181,8 +210,61 @@ class UI:
         self.root.after(100, self.process_visualization_queue)
         self.on_strategy_change()
 
+    def toggle_sidebar(self, side):
+        """Collapse/expand the controls ('controls', left) or the LLM
+        suggestions ('llm', right) to give the plot more room."""
+        frame, button, shown_text, hidden_text = (
+            (self.left_sidebar, self.left_toggle, "«", "»") if side == 'controls'
+            else (self.llm_panel, self.right_toggle, "»", "«"))
+        if side in self.collapsed_sidebars:
+            self.collapsed_sidebars.discard(side)
+            if side == 'controls':
+                frame.pack(side="left", fill="y", before=button.master)
+            else:
+                frame.pack(side=tk.LEFT, fill=tk.Y)
+            button.configure(text=shown_text)
+        else:
+            self.collapsed_sidebars.add(side)
+            frame.pack_forget()
+            button.configure(text=hidden_text)
+        collapsed = side in self.collapsed_sidebars
+        self.events.log('SIDEBAR_TOGGLED', side=side, collapsed=collapsed)
+        if side == 'llm':
+            self.llm_panel.on_visibility_change()
+
+    def _tick_session_clock(self):
+        if self.events.closed:
+            return
+        self.session_time_var.set(
+            f"Session {_clock(self.events.elapsed())}  ·  this space {_clock(self.events.time_in('space'))}")
+        self.root.after(1000, self._tick_session_clock)
+
+    def on_close(self):
+        self.events.log('WINDOW_CLOSED')
+        self.stop_training.set()
+        self.pause_event.clear()
+        self.events.close()
+        # pyplot's figures have Tk windows of their own that would keep
+        # mainloop running after the main window is gone.
+        plt.close('all')
+        self.root.quit()
+        self.root.destroy()
+
+    def stop_training_clicked(self):
+        self.stop_training.set()
+        self.events.log('TRAINING_STOPPED')
+        self.events.enter('phase', 'stopped')
+
+    def _training_settings(self):
+        return {'epochs': self.epoch_var.get(), 'pause_every': self.pause_epochs_var.get(),
+                'alpha': self.alpha_var.get(), 'strategy': self.strategy_var.get(),
+                'eval_frequency': self.freq_var.get(),
+                'llm_model': self.llm_panel.model_var.get() if self.llm_panel is not None else None}
+
     def toggle_training(self):
         if self.training_thread is None or not self.training_thread.is_alive():
+            self.events.log('TRAINING_STARTED', **self._training_settings())
+            self.events.enter('phase', 'training')
             self.pause_event.clear()
             self.stop_training.clear()
             pause_after_n_epochs = self.pause_epochs_var.get()
@@ -196,6 +278,8 @@ class UI:
             self.strategy_combo.configure(state='disabled')
         else:
             if self.pause_event.is_set():
+                self.events.log('TRAINING_RESUMED', **self._training_settings())
+                self.events.enter('phase', 'training')
                 self.pause_event.clear()
                 self.training_button.config(text="Pause Training")
                 self.status_var.set("Training...")
@@ -204,6 +288,8 @@ class UI:
                 self.alpha_entry.configure(state='disabled')
                 self.strategy_combo.configure(state='disabled')
             else:
+                self.events.log('TRAINING_PAUSED', by='participant')
+                self.events.enter('phase', 'paused')
                 self.pause_event.set()
                 self.training_button.config(text="Resume Training")
                 self.status_var.set("Paused")
@@ -227,10 +313,13 @@ class UI:
                     metrics_callback=self.record_metrics,
                     strategy_var=self.strategy_var,
                     llm_suggestions_callback=self.get_latest_llm_suggestions)
+        self.events.log('TRAINING_FINISHED', stopped=self.stop_training.is_set())
+        self.events.enter('phase', 'finished')
 
     def record_metrics(self, metrics):
         """Keep the newest scores so the LLM sees how the model is doing."""
         self.latest_metrics = metrics
+        self.events.log('EPOCH_END', **metrics)
 
     def get_latest_llm_suggestions(self):
         """Read by the training loop to build the high-dim strategy's (2)
@@ -249,15 +338,19 @@ class UI:
 
         if self.llm_panel is not None:
             if strategy.llm_suggestions:
-                if not self.llm_panel.winfo_ismapped():
-                    self.llm_panel.pack(side=tk.RIGHT, fill=tk.Y, before=self.notebook)
+                if not self.llm_sidebar.winfo_ismapped():
+                    self.llm_sidebar.pack(side=tk.RIGHT, fill=tk.Y, before=self.notebook)
                 self.llm_panel.refresh_for_strategy()
             else:
-                self.llm_panel.pack_forget()
+                self.llm_sidebar.pack_forget()
+            self.llm_panel.on_visibility_change()
 
+        self.events.log('STRATEGY_CHANGED', strategy=strategy.id, label=strategy.label)
         self.update_log(f"Strategy set to: {strategy.label}")
 
     def on_epoch_end(self):
+        self.events.log('TRAINING_PAUSED', by='schedule', epoch=self.latest_metrics.get('epoch'))
+        self.events.enter('phase', 'paused')
         self.pause_event.set()
         self.update_visualization()
         self.training_button.config(text="Resume Training")
@@ -281,6 +374,7 @@ class UI:
 
         new_selected_classes = dropdown.selected_options
         if new_selected_classes != self.get_selected_classes():
+            self.events.log('CLASSES_SELECTED', classes=list(new_selected_classes))
             self.selected_classes_var.set(", ".join(map(str, new_selected_classes)))
             self.plot.selected_classes = new_selected_classes
             self.update_visualization()
@@ -306,11 +400,13 @@ class UI:
 
             # Log Undoing
             self.point_tracker.undo_last_step()
+            log_modification(self, 'undo')
 
             # Redraw the canvas to reflect the changes
             self.scatter_fig.canvas.draw_idle()
             print("Undo performed successfully.")
         else:
+            self.events.log('UNDO_NOTHING')
             print("Nothing to undo.")
 
     def get_selected_classes(self):
@@ -345,6 +441,7 @@ class UI:
     def on_tab_change(self, event):
         selected_tab = self.notebook.index(self.notebook.select())
         self.current_plot_type = ['scatter', 'radar', 'parallel'][selected_tab]
+        self.events.log('TAB_CHANGED', plot_type=self.current_plot_type)
         self.update_visualization()
 
     def on_layer_change(self, event):
@@ -398,6 +495,12 @@ class UI:
                 line.set_alpha(1.0)
                 line.set_linewidth(3)
             self.parallel_fig.canvas.draw()
+
+
+def _clock(seconds):
+    seconds = int(seconds)
+    hours, rest = divmod(seconds, 3600)
+    return f"{hours}:{rest // 60:02d}:{rest % 60:02d}" if hours else f"{rest // 60:02d}:{rest % 60:02d}"
 
 
 class Pause(threading.Event):

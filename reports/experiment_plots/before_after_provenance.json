@@ -1,0 +1,32 @@
+{
+  "snapshot": "user_study_logs/18_test new/spaces/round_002.npz",
+  "source_checkpoint": "saved_checkpoints/CIFAR10/checkpoint_epoch_20.pt",
+  "source_draw": 1,
+  "model": "openai/gpt-5-mini",
+  "suggestion": {
+    "class_i": 1,
+    "class_j": 0,
+    "pair": "automobile/airplane",
+    "confusion_rank": 22,
+    "direction": "toward_empty_space",
+    "scale": "large",
+    "tighten_i": true,
+    "tighten_j": false,
+    "expected_benefit": "high",
+    "measured_benefit": "high",
+    "text": "Pull the automobile group tighter and move it toward empty space away from other groups because automobiles are very scattered and confuse many other classes.",
+    "impact": {
+      "separation_gain": 0.056074941592303924,
+      "shift_ratio": 0.09752832076671673,
+      "knn_preserved": 0.9460000000000001,
+      "fisher_before": 0.5798775166371032,
+      "fisher_after": 1.0230059033853174,
+      "subspace_rotation_deg": 18.979737569169018,
+      "loss_target": 5.205979824066162,
+      "pair_overlap_before": 0.45,
+      "pair_overlap_after": 0.0
+    }
+  },
+  "silhouette_2d_before": -0.2130766063928604,
+  "silhouette_2d_after": -0.1595340469815982
+}

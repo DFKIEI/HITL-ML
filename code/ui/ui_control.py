@@ -24,6 +24,8 @@ def create_info_labels(self):
     ttk.Label(header, text="HITL-ML", style='Title.TLabel').pack(anchor=tk.W)
     ttk.Label(header, text=f"{self.model_name}  ·  {self.dataset_name}",
              style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 0))
+    self.session_time_var = tk.StringVar(value="Session 00:00")
+    ttk.Label(header, textvariable=self.session_time_var, style='Status.TLabel').pack(anchor=tk.W, pady=(2, 0))
 
 
 def create_training_controls(self):
@@ -81,7 +83,7 @@ def create_training_controls(self):
                                       command=self.toggle_training)
     self.training_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, ui_theme.PAD_S))
     ttk.Button(buttons_row, text="Stop", style='Danger.TButton',
-              command=self.stop_training.set).pack(side=tk.LEFT)
+              command=self.stop_training_clicked).pack(side=tk.LEFT)
 
     self.status_var = tk.StringVar(value="Not started")
     ttk.Label(training_section, textvariable=self.status_var, style='Status.TLabel').pack(

@@ -259,3 +259,141 @@ class LLMTracker:
         self.logger.info(
             f"ERROR, {self.iter_counter}, {message}"
         )
+
+
+def _to_jsonable(value):
+    """numpy/torch values -> plain JSON types, so every event can be dumped."""
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_to_jsonable(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if hasattr(value, 'detach'):  # torch tensor
+        return value.detach().cpu().tolist()
+    return value
+
+
+class SessionRecorder:
+    """One structured, timestamped event stream per participant/scenario -
+    everything needed to reconstruct the session afterwards (see
+    ``tools/reconstruct_session.py``): settings, training phases, every shown
+    latent space (saved as .npz next to the log), every modification with the
+    2D state after it, every LLM request/answer/suggestion and what the
+    participant did with it, and how long they spent on each space,
+    phase and suggestion.
+
+    Each line of ``session_events_id_<id>_scenario_<scenario>.jsonl`` is
+    ``{"seq", "time" (ISO, ms), "elapsed_s" (since session start), "type", ...}``.
+    Thread-safe: the training thread logs epochs while the UI logs drags.
+    """
+
+    def __init__(self, probant_id: str = 'test', scenario: str = 'A1', log_path: str = ''):
+        import threading
+        import time
+        self._time = time
+        self._lock = threading.Lock()
+        self.log_path = log_path
+        self.path = os.path.join(log_path, f'session_events_id_{probant_id}_scenario_{scenario}.jsonl')
+        self.spaces_dir = os.path.join(log_path, 'spaces')
+        self.audio_dir = os.path.join(log_path, 'audio')
+        self._file = open(self.path, 'a', encoding='utf-8')
+        self._start = time.monotonic()
+        self.seq = 0
+        self.round = 0  # index of the latent space currently shown
+        # kind -> (key, start elapsed_s); kind -> key -> total seconds
+        self._open_segments = {}
+        self.totals = {}
+        self.closed = False
+        self.log('SESSION_START', probant_id=probant_id, scenario=scenario, log_path=log_path,
+                 wall_clock=self._time.strftime('%Y-%m-%d %H:%M:%S %z'))
+
+    def elapsed(self):
+        return self._time.monotonic() - self._start
+
+    def log(self, event_type: str, **payload):
+        with self._lock:
+            if self.closed:
+                return None
+            self.seq += 1
+            now = self._time.time()
+            record = {
+                'seq': self.seq,
+                'time': self._time.strftime('%Y-%m-%dT%H:%M:%S', self._time.localtime(now))
+                + f'.{int(now * 1000) % 1000:03d}',
+                'elapsed_s': round(self.elapsed(), 3),
+                'round': self.round,
+                'type': event_type,
+            }
+            record.update(_to_jsonable(payload))
+            self._file.write(json.dumps(record) + '\n')
+            self._file.flush()
+            return self.seq
+
+    # ------------------------------------------------------------- snapshots
+    def save_space(self, **arrays):
+        """Start a new round: store the arrays of the latent space just shown
+        (2D points, high-dim features, labels, ...) and return the file path,
+        relative to the log directory."""
+        os.makedirs(self.spaces_dir, exist_ok=True)
+        with self._lock:
+            self.round += 1
+            name = f'round_{self.round:03d}.npz'
+        np.savez_compressed(os.path.join(self.spaces_dir, name),
+                            **{k: np.asarray(v) for k, v in arrays.items() if v is not None})
+        return os.path.join('spaces', name)
+
+    def audio_path(self):
+        os.makedirs(self.audio_dir, exist_ok=True)
+        return os.path.join(self.audio_dir, f'dictation_{self.seq + 1:05d}.wav')
+
+    # ----------------------------------------------------------- time spent
+    def enter(self, kind: str, key):
+        """Switch the open time segment of ``kind`` (e.g. 'space', 'phase',
+        'suggestion') to ``key``; the previous one is closed and logged as
+        TIME_SEGMENT. ``key=None`` just closes it."""
+        key = None if key is None else str(key)
+        current = self._open_segments.get(kind)
+        if current is not None and current[0] == key:
+            return
+        now = self.elapsed()
+        if current is not None:
+            self._close_segment(kind, current, now)
+        if key is None:
+            self._open_segments.pop(kind, None)
+        else:
+            self._open_segments[kind] = (key, now)
+
+    def _close_segment(self, kind, segment, now):
+        key, start = segment
+        duration = now - start
+        self.totals.setdefault(kind, {})
+        self.totals[kind][key] = self.totals[kind].get(key, 0.0) + duration
+        self.log('TIME_SEGMENT', kind=kind, key=key, start_s=round(start, 3), end_s=round(now, 3),
+                 duration_s=round(duration, 3))
+
+    def time_in(self, kind: str, key=None):
+        """Seconds spent so far in ``kind``/``key`` (the open segment counts),
+        or in the open segment of ``kind`` when ``key`` is None."""
+        current = self._open_segments.get(kind)
+        if key is None:
+            return self.elapsed() - current[1] if current else 0.0
+        total = self.totals.get(kind, {}).get(str(key), 0.0)
+        if current is not None and current[0] == str(key):
+            total += self.elapsed() - current[1]
+        return total
+
+    def close(self):
+        if self.closed:
+            return
+        now = self.elapsed()
+        for kind, segment in list(self._open_segments.items()):
+            self._close_segment(kind, segment, now)
+        self._open_segments = {}
+        totals = {kind: {k: round(v, 3) for k, v in keys.items()} for kind, keys in self.totals.items()}
+        self.log('SESSION_END', duration_s=round(now, 3), time_spent=totals)
+        with self._lock:
+            self.closed = True
+            self._file.close()

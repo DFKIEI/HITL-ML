@@ -122,8 +122,10 @@ def get_reasoning_effort():
 
 
 def chat_completion(messages, model=None, temperature=0.2, max_tokens=4000,
-                    json_mode=True, timeout=120):
-    """Send a chat completion request and return (content, raw_response_dict)."""
+                    json_mode=True, timeout=120, extra=None):
+    """Send a chat completion request and return (content, raw_response_dict).
+    ``extra`` is merged into the request payload (e.g. ``{'usage': {'include':
+    True}}`` for token counts and cost in the response)."""
     api_key = get_api_key()
     if not api_key:
         raise OpenRouterError(
@@ -144,6 +146,8 @@ def chat_completion(messages, model=None, temperature=0.2, max_tokens=4000,
         payload['reasoning'] = {'effort': effort, 'exclude': True}
     if json_mode:
         payload['response_format'] = {'type': 'json_object'}
+    if extra:
+        payload.update(extra)
 
     try:
         return _post(payload, api_key, timeout)

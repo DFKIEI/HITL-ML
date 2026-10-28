@@ -56,6 +56,40 @@ def create_sequential_mapping(actions_idx):
     return sequential_mapping
 
 
+def _log_space_shown(self, data):
+    """Session log: a new latent space is on screen - store everything
+    needed to redraw it (and to replay the modifications made on it, see
+    tools/reconstruct_session.py) and start timing it."""
+    events = getattr(self, 'events', None)
+    if events is None:
+        return
+    plot = self.plot
+    space_file = events.save_space(
+        features_2d=data['features'], centers=data['centers'], labels=data['labels'],
+        predicted_labels=data['predicted_labels'],
+        latent_features=getattr(plot, 'latent_features', None),
+        samples=np.asarray(getattr(plot, 'samples_to_track', []) or []))
+    metrics = getattr(self, 'latest_metrics', None) or {}
+    events.log('SPACE_SHOWN', space_file=space_file, plot_type=getattr(self, 'current_plot_type', 'scatter'),
+               dataset=data.get('dataset_name'), epoch=metrics.get('epoch', 0),
+               classes=np.unique(data['labels']), num_points=len(data['labels']),
+               centers=data['centers'], strategy=self.strategy_var.get())
+    events.enter('space', events.round)
+
+
+def log_modification(self, kind, **payload):
+    """Session log: one change to the 2D plot, with the full 2D state after
+    it (points + centers - a few KB), so the session can be rebuilt and
+    every replayed step checked."""
+    events = getattr(self, 'events', None)
+    data = getattr(self, 'data', None)
+    if events is None or data is None:
+        return
+    events.log('MODIFICATION', kind=kind, **payload,
+               state_after={'points': getattr(self, 'moved_points', data['features']),
+                            'centers': data['centers']})
+
+
 def display_scatter_plot(self, data, tab):
     self.selected_point_index = None
     self.selected_point_label = None
@@ -129,6 +163,7 @@ def display_scatter_plot(self, data, tab):
     plt.ylabel('Feature 2')
 
     self.plot.update_original_2d_points(self.original_points)
+    _log_space_shown(self, data)
 
     def on_press(event):
         if event.inaxes is None:
@@ -166,6 +201,9 @@ def display_scatter_plot(self, data, tab):
                 new_center
             )
             print(f"Center moved: Class {unique_labels[self.dragging]} from {old_center} to {new_center}")
+            log_modification(self, 'center_drag', class_index=unique_labels[self.dragging],
+                             old_center=old_center, new_center=new_center,
+                             delta=np.asarray(new_center) - np.asarray(old_center))
             self.dragging = None
 
         elif self.dragging_point is not None and self.dragging is None:  # Logging for individual point movement
@@ -177,6 +215,9 @@ def display_scatter_plot(self, data, tab):
                 new_position,
                 data['labels'][self.dragging_point]
             )
+            log_modification(self, 'point_drag', point_index=self.dragging_point,
+                             class_index=data['labels'][self.dragging_point],
+                             old_position=old_position, new_position=new_position)
 
             self.dragging_point = None  # Reset dragging for point
 
@@ -239,6 +280,8 @@ def display_scatter_plot(self, data, tab):
                     center,
                     np.sum(mask)
                 )
+                log_modification(self, 'class_reset', class_index=unique_labels[i], center=center,
+                                 num_points=np.sum(mask))
 
                 # Update scatter plot
                 scatter.set_offsets(self.moved_points)
@@ -348,7 +391,7 @@ def refresh_llm_overlay(self):
     self.llm_overlay_classes = []  # (artist, class_index) for highlight_classes
     self.llm_handles = []
 
-    suggestions = _pending_suggestions(self)
+    suggestions = _shown_suggestions(self)
     editable = _overlay_editable(self)
     data = getattr(self, 'data', None)
     unique_labels = getattr(self, 'unique_labels', None)
@@ -423,6 +466,17 @@ def _pending_suggestions(self):
     return [s for s in getattr(self, 'latest_llm_suggestions', None) or [] if id(s) not in applied_ids]
 
 
+def _shown_suggestions(self):
+    """What the overlay draws (and lets the operator drag): only the
+    suggestion on screen in the suggestions panel (``llm_focus_suggestion``),
+    if it is still pending - else every pending one."""
+    pending = _pending_suggestions(self)
+    focus = getattr(self, 'llm_focus_suggestion', None)
+    if focus is None:
+        return pending
+    return [s for s in pending if s is focus]
+
+
 def _overlay_editable(self):
     strategy_var = getattr(self, 'strategy_var', None)
     return strategy_var is not None and get_strategy(strategy_var.get()).suggestions_editable
@@ -489,7 +543,7 @@ def llm_overlay_motion(self, event):
         return True
     cursor = np.array([event.xdata, event.ydata], dtype=float)
     class_index = drag['class']
-    pending = _pending_suggestions(self)
+    pending = _shown_suggestions(self)
 
     if drag['kind'] == 'arrow':
         centroids = _current_centroids(self)
@@ -524,10 +578,14 @@ def llm_overlay_release(self, event):
         return False
     self.llm_drag = None
     tracker = getattr(self, 'llm_tracker', None)
-    for s in _pending_suggestions(self):
+    events = getattr(self, 'events', None)
+    for s in _shown_suggestions(self):
         if s.class_i == drag['class'] or s.class_j == drag['class']:
             if tracker is not None and s.edited:
                 tracker.log_edited_on_plot(s)
+            if events is not None and s.edited:
+                events.log('SUGGESTION_EDITED', uid=s.uid, via='plot', handle=drag['kind'],
+                           suggestion=s.as_log_dict())
     panel = getattr(self, 'llm_panel', None)
     if panel is not None:
         panel.refresh_cards()
@@ -587,12 +645,13 @@ def _fit_axes_to_points(ax, points, margin=0.05):
             set_lim(new_low, new_high)
 
 
-def apply_llm_suggestion(self, suggestion):
+def apply_llm_suggestion(self, suggestion, source='auto'):
     """Apply one suggestion's direction/scale (and tighten_i/tighten_j) to the
     2D scatter plot for real, right now - moving/condensing exactly like an
     operator drag would, so it's immediately reflected in
     moved_points/data['centers'] (and therefore in the next human-loss
-    ideal_structure too). Returns True if anything was actually changed."""
+    ideal_structure too). Returns True if anything was actually changed.
+    ``source`` ('auto' or 'participant') goes to the session log."""
     data = getattr(self, 'data', None)
     unique_labels = getattr(self, 'unique_labels', None)
     if data is None or unique_labels is None or getattr(self, 'ax', None) is None:
@@ -628,12 +687,13 @@ def apply_llm_suggestion(self, suggestion):
         self.plot.update_center(position, new_center)
         self.point_tracker.log_llm_center_movement(class_index, old_center, new_center)
 
+    tightened = {}
     if suggestion.tighten_i:
-        _tighten_class_in_place(self, data, unique_labels, suggestion.class_i,
-                                tighten_factor(suggestion, suggestion.class_i))
+        tightened[suggestion.class_i] = tighten_factor(suggestion, suggestion.class_i)
+        _tighten_class_in_place(self, data, unique_labels, suggestion.class_i, tightened[suggestion.class_i])
     if suggestion.tighten_j:
-        _tighten_class_in_place(self, data, unique_labels, suggestion.class_j,
-                                tighten_factor(suggestion, suggestion.class_j))
+        tightened[suggestion.class_j] = tighten_factor(suggestion, suggestion.class_j)
+        _tighten_class_in_place(self, data, unique_labels, suggestion.class_j, tightened[suggestion.class_j])
 
     self.scatter.set_offsets(self.moved_points)
     incorrect_mask = getattr(self, 'incorrect_mask', None)
@@ -644,6 +704,11 @@ def apply_llm_suggestion(self, suggestion):
 
     self.plot.update_latent_space(self.moved_points)
     self.plot.moved_2d_points = self.moved_points
+
+    log_modification(self, 'llm_apply', source=source, uid=getattr(suggestion, 'uid', None),
+                     suggestion=suggestion.as_log_dict(),
+                     vectors={int(c): v for c, v in vectors.items()},
+                     tighten_factors={int(c): f for c, f in tightened.items()})
 
     self.scatter_fig.canvas.draw_idle()
     return True

@@ -69,19 +69,26 @@ def main():
     parser.add_argument('--pause', type=int, default=5)
     parser.add_argument('--seeds', nargs='*', type=int, default=[0, 1, 2])
     parser.add_argument('--conditions', nargs='*', default=['ce_only', 'no_moves', 'llm_high_dim', 'llm_2d'])
+    parser.add_argument('--llm-model', default=None, dest='llm_model',
+                        help='OpenRouter model id (default: OPENROUTER_MODEL / llm_config.txt)')
     parser.add_argument('--steps', nargs='*', type=int, default=[1, 2, 3], choices=[1, 2, 3])
     args = parser.parse_args()
 
     os.makedirs(os.path.join(CODE_DIR, RESULTS), exist_ok=True)
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     log = Tee(os.path.join(CODE_DIR, RESULTS, f'run_all_{stamp}.log'))
-    results = os.path.join(RESULTS, f'strategies_{args.dataset}_{args.epochs}ep.jsonl')
+    # One results file per explicitly chosen LLM, so runs of another model
+    # are never mistaken for done (strategy_experiment skips what is in it).
+    model_suffix = '_' + args.llm_model.replace('/', '_').replace(':', '_') if args.llm_model else ''
+    results = os.path.join(RESULTS, f'strategies_{args.dataset}_{args.epochs}ep{model_suffix}.jsonl')
     env = dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONUTF8='1', PYTHONUNBUFFERED='1')
+    if args.llm_model:
+        env['OPENROUTER_MODEL'] = args.llm_model  # read by every script through llm/openrouter.py
     py = [sys.executable, '-u']
 
     log(f"python: {sys.version.split()[0]}   dataset: {args.dataset}   epochs: {args.epochs}   "
         f"pause: {args.pause}   seeds: {args.seeds}")
-    log(f"conditions: {args.conditions}   steps: {args.steps}")
+    log(f"conditions: {args.conditions}   steps: {args.steps}   llm: {args.llm_model or 'from llm_config.txt'}")
     log(f"results: {results}")
 
     needs_llm = any(s in args.steps for s in (1, 3)) and (args.conditions != ['ce_only', 'no_moves'])

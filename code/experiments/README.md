@@ -51,7 +51,12 @@ Windows, macOS and Linux, from `code/`:
 python experiments/run_all.py
 python experiments/run_all.py --seeds 0 1 2 3 4        # more seeds
 python experiments/run_all.py --steps 3                # only the training comparison
+python experiments/run_all.py --llm-model openai/gpt-5-mini   # LLM for this run only
 ```
+
+The LLM comes from `OPENROUTER_MODEL` in `llm_config.txt` (project root), or
+`--llm-model` for one run; `OPENROUTER_REASONING_EFFORT` in the same file sets
+the reasoning effort. The network (`CNN_<dataset>`) is fixed.
 
 The log goes to `experiments/results/run_all_<time>.log`. On a new machine,
 first check that PyTorch sees the GPU (it is used automatically):
@@ -90,6 +95,31 @@ LLM answer, so learning curves can be plotted from it later.
 With 3 seeds, treat differences smaller than about two standard deviations as
 noise.
 
+## LLM comparison and prompt variants
+`llm_comparison.py` sends identical latent states to several models and
+measures the real effect of what they suggest (`llm/impact.py`):
+
+```
+python experiments/llm_comparison.py --draws 5                       # 5 models, the app's prompt
+python experiments/llm_comparison.py --draws 3 --models openai/gpt-5-mini google/gemini-2.5-flash \
+    --prompts baseline always_five diverse_moves plan_first terse goal_tighten goal_worst_pair goal_keep_layout \
+    --out experiments/results/llm_prompt_variants.jsonl             # what if the prompt changes?
+python experiments/llm_comparison.py --summarize experiments/results/llm_comparison.jsonl --strategies
+```
+
+Prompt variants live in `llm/prompt_variants.py`; the app always uses the
+default prompt. Re-running the same command skips answers already in `--out`.
+
 ## results/
 `real_latent.jsonl` - output of `real_latent_check.py` on the Mac
 (gpt-5-mini, reasoning effort low).
+`llm_comparison.jsonl` - 5 models x 4 checkpoints x 5 draws, default prompt.
+`llm_prompt_variants.jsonl` - 3 models x 8 prompts x 4 checkpoints x 3 draws.
+
+## Accuracy study handoff
+
+See [ACCURACY_STUDY_PLAN.md](ACCURACY_STUDY_PLAN.md) for the fixed 60-epoch,
+3-seed, 4-condition protocol, machine setup, exact launch command, recovery
+behaviour and analysis plan. The full study has not been launched locally.
+The plan distinguishes the saved descriptive accuracy curves from a controlled
+comparison of the LLM methods.

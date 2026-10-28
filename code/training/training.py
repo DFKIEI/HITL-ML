@@ -166,6 +166,11 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 'val_f1': val_f1,
                 'test_accuracy': test_accuracy,
                 'test_f1': test_f1,
+                'train_loss': epoch_loss_sum / len(trainloader),
+                'ce_loss': epoch_ce_loss_sum / len(trainloader),
+                'interaction_loss': epoch_interaction_loss_sum / len(trainloader),
+                'alpha': alpha_val,
+                'strategy': current_strategy.id,
             })
 
         save_report(epoch, epoch_loss_sum / len(trainloader), val_accuracy, "custom", report_dir,

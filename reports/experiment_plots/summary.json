@@ -1,0 +1,52 @@
+{
+  "anthropic/claude-opus-5": {
+    "valid": 20,
+    "attempted": 20,
+    "mean_combined_gain": 0.21542961377716147,
+    "gain_ci": [
+      0.19691651537033852,
+      0.23509544354429554
+    ],
+    "mean_cost_successful_answer": 0.068327
+  },
+  "openai/gpt-5-mini": {
+    "valid": 20,
+    "attempted": 20,
+    "mean_combined_gain": 0.19260879824487884,
+    "gain_ci": [
+      0.1750276162223674,
+      0.21170725723103212
+    ],
+    "mean_cost_successful_answer": 0.004106662500000001
+  },
+  "anthropic/claude-haiku-4.5": {
+    "valid": 20,
+    "attempted": 20,
+    "mean_combined_gain": 0.15652371531999826,
+    "gain_ci": [
+      0.14318461467559263,
+      0.17206121604171118
+    ],
+    "mean_cost_successful_answer": 0.0172619
+  },
+  "google/gemini-2.5-flash": {
+    "valid": 20,
+    "attempted": 20,
+    "mean_combined_gain": 0.14887495079237606,
+    "gain_ci": [
+      0.13451205916996034,
+      0.16352287220696482
+    ],
+    "mean_cost_successful_answer": 0.005835977000000001
+  },
+  "openai/gpt-5-nano": {
+    "valid": 20,
+    "attempted": 20,
+    "mean_combined_gain": 0.13261180237554548,
+    "gain_ci": [
+      0.11849805749659553,
+      0.1490838333699005
+    ],
+    "mean_cost_successful_answer": 0.0008002565000000001
+  }
+}
