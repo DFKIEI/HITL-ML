@@ -220,3 +220,6 @@ llm_config.txt
 ## Generated outputs
 reports/
 user_study_logs/
+
+# Local dictation model cache
+.voice_models/

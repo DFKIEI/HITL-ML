@@ -1,18 +1,14 @@
-"""Voice dictation for suggestion edits: record from the microphone, then
-transcribe through OpenRouter with an audio-capable model (same key as the
-suggestions, no extra service).
+"""Local voice dictation for suggestion edits.
 
-Recording needs the optional ``sounddevice`` package (``pip install
-sounddevice``); without it ``available()`` is False and the UI hides the
-dictate buttons' function behind a hint. On macOS the terminal / IDE that
-runs the tool needs microphone permission (System Settings > Privacy &
-Security > Microphone).
-
-The transcription model is ``OPENROUTER_TRANSCRIBE_MODEL`` from the
-environment or ``llm_config.txt`` (default ``DEFAULT_TRANSCRIBE_MODEL``).
+Install requirements-voice.txt and run `python -m llm.voice --download` from
+code/ once. Recording and transcription then run offline; audio is never
+sent to OpenRouter. HITL_WHISPER_MODEL selects a model name or local path.
 """
 
-import base64
+import argparse
+import importlib.util
+from functools import lru_cache
+from pathlib import Path
 import io
 import os
 import threading
@@ -20,18 +16,11 @@ import wave
 
 import numpy as np
 
-from llm import openrouter
-
 SAMPLE_RATE = 16000
 MAX_SECONDS = 120
-TRANSCRIBE_ENV_VAR = "OPENROUTER_TRANSCRIBE_MODEL"
-DEFAULT_TRANSCRIBE_MODEL = "google/gemini-2.5-flash"
-
-TRANSCRIBE_PROMPT = (
-    "Transcribe this short voice note exactly, in the language spoken. It is an "
-    "instruction for rearranging class clusters on a plot (e.g. \"move cat away from "
-    "dog a lot\"). Return only the transcript, no quotes or comments."
-)
+DEFAULT_TRANSCRIBE_MODEL = "base"
+MODEL_CACHE = Path(__file__).resolve().parents[2] / '.voice_models'
+_transcription_lock = threading.Lock()
 
 try:
     import sounddevice as _sd
@@ -40,20 +29,36 @@ except Exception:  # missing package or no PortAudio
 
 
 def available():
-    return _sd is not None
+    return unavailable_reason() is None
 
 
 def unavailable_reason():
     if _sd is None:
-        return "Dictation needs the sounddevice package: pip install sounddevice"
+        return "Local dictation needs sounddevice: python -m pip install -r requirements-voice.txt"
+    if importlib.util.find_spec('faster_whisper') is None:
+        return "Local dictation needs faster-whisper: python -m pip install -r requirements-voice.txt"
     return None
 
 
 def get_transcribe_model():
-    model = (os.environ.get(TRANSCRIBE_ENV_VAR) or "").strip()
-    if model:
-        return model
-    return (openrouter.read_config().get(TRANSCRIBE_ENV_VAR) or DEFAULT_TRANSCRIBE_MODEL).strip()
+    return os.environ.get('HITL_WHISPER_MODEL', '').strip() or DEFAULT_TRANSCRIBE_MODEL
+
+
+@lru_cache(maxsize=1)
+def _load_model(model_name, local_files_only=True):
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise RuntimeError("Install local dictation: python -m pip install -r requirements-voice.txt") from exc
+    try:
+        return WhisperModel(model_name, device='cpu', compute_type='int8',
+                            download_root=str(MODEL_CACHE), local_files_only=local_files_only)
+    except Exception as exc:
+        if local_files_only:
+            raise RuntimeError("Local speech model could not load. From code/, run "
+                               "python -m llm.voice --download once while online, then retry. "
+                               f"Details: {exc}") from exc
+        raise
 
 
 class Recorder:
@@ -103,17 +108,34 @@ def to_wav(samples):
 
 
 def transcribe(wav_bytes, model=None):
-    """Transcript of ``wav_bytes`` (a WAV file) via OpenRouter. Returns
-    (text, model)."""
-    model = model or get_transcribe_model()
-    messages = [{
-        'role': 'user',
-        'content': [
-            {'type': 'text', 'text': TRANSCRIBE_PROMPT},
-            {'type': 'input_audio',
-             'input_audio': {'data': base64.b64encode(wav_bytes).decode('ascii'), 'format': 'wav'}},
-        ],
-    }]
-    content, _ = openrouter.chat_completion(messages, model=model, temperature=0.0, max_tokens=500,
-                                            json_mode=False, timeout=60)
-    return content.strip().strip('"').strip(), model
+    """Transcribe WAV bytes on CPU, without network access. Return (text, model)."""
+    model_name = model or get_transcribe_model()
+    with _transcription_lock:
+        recognizer = _load_model(model_name)
+        segments, _ = recognizer.transcribe(io.BytesIO(wav_bytes), beam_size=5,
+                                            vad_filter=True, condition_on_previous_text=False,
+                                            initial_prompt="Class cluster editing: move, tighten, loosen, "
+                                                           "spread, separate, pull together, push apart.")
+        transcript = ' '.join(segment.text.strip() for segment in segments).strip()
+    return transcript, f'local-whisper:{model_name}'
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--download', action='store_true', help='download speech model for offline use')
+    parser.add_argument('--model', default=None, help='model name or local model directory')
+    parser.add_argument('--audio', type=Path, help='transcribe an existing WAV file locally')
+    args = parser.parse_args()
+    model = args.model or get_transcribe_model()
+    if args.download:
+        _load_model(model, local_files_only=False)
+        print(f'Local speech model ready: {model}; cache: {MODEL_CACHE}')
+    if args.audio:
+        text, used_model = transcribe(args.audio.read_bytes(), model=model)
+        print(f'{used_model}: {text}')
+    if not args.download and not args.audio:
+        parser.print_help()
+
+
+if __name__ == '__main__':
+    main()

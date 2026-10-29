@@ -148,3 +148,42 @@ non-technical. `--show-prompt` prints the prompt without calling anything.
 ## Logging
 Every request, raw answer and shown/dismissed suggestion is written to
 `user_study_logs/<id>_<scenario>/llm_suggestions_id_<id>_scenario_<scenario>.log`.
+
+## Local dictation
+
+Dictate is beside **Edit suggestion** and updates that suggestion's text and
+movement fields. It does not apply the suggestion until Apply is clicked.
+Microphone recording and Whisper transcription run on this machine, without
+an API key. No audio is sent to OpenRouter. LLM suggestion generation still
+uses OpenRouter separately.
+
+From the repository root, install the optional packages:
+
+```sh
+python -m pip install -r requirements-voice.txt
+```
+
+Then, from `code/`, download the speech model once while online:
+
+```sh
+python -m llm.voice --download
+```
+
+After setup, dictation works offline. The multilingual `base` model runs on
+CPU using int8, including on macOS and Windows. Models are cached under
+`.voice_models/` (ignored by Git). Set `HITL_WHISPER_MODEL` to a different
+model name or a local converted Whisper-model directory if needed; download
+that same model before using it offline. Old `OPENROUTER_TRANSCRIBE_MODEL`
+settings no longer control dictation. Linux may need the system PortAudio
+library for sounddevice, and macOS/Windows must grant microphone access.
+
+To check a saved audio clip without using the microphone, from `code/`:
+
+```sh
+python -m llm.voice --audio path/to/clip.wav
+```
+
+The existing session recorder still saves audio and transcripts locally in
+`user_study_logs/` when session logging is enabled. Downloading model weights
+requires internet; the transcription function loads cached/local files only
+and never falls back to cloud transcription.

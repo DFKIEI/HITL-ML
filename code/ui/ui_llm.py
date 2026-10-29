@@ -47,6 +47,8 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.current_index = 0  # the one suggestion on screen
         self.recorder = voice.Recorder()
         self.dictation_target = None  # what the running recording is for, see _toggle_dictation
+        self.dictation_busy = False
+        self.dictation_button = None
 
         ttk.Label(self, text="LLM Suggestions", style='Heading.TLabel').pack(anchor=tk.W, pady=(0, ui_theme.PAD_S))
         self._build_controls()
@@ -71,7 +73,6 @@ class LLMSuggestionsPanel(ttk.Frame):
         focus_row.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
         self.goal_var = tk.StringVar()
         ttk.Entry(focus_row, textvariable=self.goal_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self._dictate_button(focus_row, 'focus').pack(side=tk.LEFT, padx=(4, 0))
 
         self.key_row = ttk.Frame(frame)
         self.key_row.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=2)
@@ -234,6 +235,9 @@ class LLMSuggestionsPanel(ttk.Frame):
         try:
             while True:
                 status, payload = self.result_queue.get_nowait()
+                if status == 'voice_status':
+                    self.status_var.set(payload)
+                    continue
                 if status == 'voice':
                     self._dictation_done(*payload)
                     continue
@@ -581,6 +585,10 @@ class LLMSuggestionsPanel(ttk.Frame):
         tighten_i_check.pack(side=tk.LEFT, padx=(4, 0))
         tighten_j_check = ttk.Checkbutton(row3, variable=tighten_j_var, text=suggestion.class_j_name)
         tighten_j_check.pack(side=tk.LEFT, padx=(4, 0))
+        edit_header = ttk.Frame(card)
+        edit_header.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
+        ttk.Label(edit_header, text="Edit suggestion:").pack(side=tk.LEFT)
+        self._dictate_button(edit_header, suggestion).pack(side=tk.RIGHT)
         text_row = ttk.Frame(card)
         text_row.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
         text = tk.Text(text_row, height=3, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1,
@@ -588,7 +596,6 @@ class LLMSuggestionsPanel(ttk.Frame):
                        highlightthickness=0, padx=4, pady=3)
         text.insert('1.0', suggestion.suggestion)
         text.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self._dictate_button(text_row, suggestion).pack(side=tk.LEFT, anchor=tk.N, padx=(4, 0))
         ttk.Label(card, textvariable=summary_var, wraplength=WRAP_LENGTH - 20,
                   justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 0))
 
@@ -672,34 +679,29 @@ class LLMSuggestionsPanel(ttk.Frame):
     # -------------------------------------------------------------- dictation
     def _dictate_button(self, parent, target):
         """Mic button: click to start recording, click again to stop and
-        transcribe into ``target`` - a suggestion's text, or 'focus' for the
-        Focus field."""
+        transcribe into the editable suggestion's text."""
         button = ttk.Button(parent, text="Dictate", width=8)
+        self.dictation_button = button
         button.configure(command=lambda: self._toggle_dictation(button, target))
-        if self.recorder.recording and self.dictation_target is target:
+        if self.dictation_busy:
+            button.configure(text="Working…", state='disabled')
+        elif self.recorder.recording and self.dictation_target is target:
             button.configure(text="Stop")
         return button
 
     def _toggle_dictation(self, button, target):
-        if not voice.available():
-            self.status_var.set(voice.unavailable_reason())
+        if getattr(self, 'dictation_busy', False):
             return
         if self.recorder.recording:
-            wav, seconds = self.recorder.stop()
-            target = self.dictation_target
-            try:
-                button.configure(text="Dictate")
-            except tk.TclError:  # the card was rebuilt meanwhile
-                pass
-            if seconds < 0.3:
-                self.status_var.set("Nothing recorded.")
-                return
-            self.status_var.set(f"Transcribing {seconds:.0f}s of audio...")
-            threading.Thread(target=self._transcribe_worker, args=(wav, seconds, target), daemon=True).start()
+            self.dictation_busy = True
+            self.dictation_button = button
+            button.configure(text="Working…", state='disabled')
+            self.status_var.set("Stopping microphone...")
+            threading.Thread(target=self._stop_and_transcribe_worker,
+                             args=(self.dictation_target,), daemon=True).start()
             return
-        if not openrouter.get_api_key():
-            self.key_row.grid()
-            self.status_var.set(self._key_status())
+        if not voice.available():
+            self.status_var.set(voice.unavailable_reason())
             return
         try:
             self.recorder.start()
@@ -710,32 +712,46 @@ class LLMSuggestionsPanel(ttk.Frame):
         button.configure(text="Stop")
         self.status_var.set("Recording... click Stop when you are done.")
 
-    def _transcribe_worker(self, wav, seconds, target):
+    def _stop_and_transcribe_worker(self, target):
         started = time.monotonic()
+        wav, seconds = b'', 0.0
         try:
-            transcript, model = voice.transcribe(wav)
+            wav, seconds = self.recorder.stop()
+            model = f'local-whisper:{voice.get_transcribe_model()}'
+            if seconds >= 0.3:
+                self.result_queue.put(('voice_status',
+                                       f"Transcribing {seconds:.0f}s locally; first use may take longer..."))
+                transcript, model = voice.transcribe(wav)
+            else:
+                transcript = ''
             error = None
         except Exception as e:
-            transcript, model, error = '', voice.get_transcribe_model(), f"{type(e).__name__}: {e}"
+            transcript, model, error = '', f'local-whisper:{voice.get_transcribe_model()}', f"{type(e).__name__}: {e}"
         self.result_queue.put(('voice', (target, wav, seconds, transcript, model, error,
                                          time.monotonic() - started)))
 
     def _dictation_done(self, target, wav, seconds, transcript, model, error, latency):
+        self.dictation_busy = False
+        self.dictation_target = None
+        button = getattr(self, 'dictation_button', None)
+        if button is not None:
+            try:
+                button.configure(text="Dictate", state='normal')
+            except tk.TclError:  # navigation may have destroyed the old card
+                pass
         audio_file = None
         events = getattr(self.ui, 'events', None)
-        if events is not None:
+        if events is not None and wav:
             audio_file = events.audio_path()
             with open(audio_file, 'wb') as f:
                 f.write(wav)
-        target_name = 'focus' if target == 'focus' else getattr(target, 'uid', None)
+        target_name = getattr(target, 'uid', None)
         self._log('VOICE_DICTATION', target=target_name, audio_file=audio_file, seconds=round(seconds, 2),
                   model=model, latency_s=round(latency, 2), transcript=transcript, error=error)
         if error or not transcript:
-            self.status_var.set(f"Transcription failed: {error or 'empty answer'}")
+            self.status_var.set(f"Transcription failed: {error}" if error else "No speech detected. Try again.")
             return
-        if target == 'focus':
-            self.goal_var.set(transcript)
-        elif target in self._suggestions():
+        if target in self._suggestions():
             self._set_text(target, transcript)
             target.edited = True
             self._log('SUGGESTION_EDITED', uid=target.uid, via='voice', suggestion=target.as_log_dict())
