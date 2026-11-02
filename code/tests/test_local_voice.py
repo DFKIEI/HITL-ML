@@ -138,3 +138,60 @@ def test_empty_recording_releases_busy_state(monkeypatch):
     recognizer.assert_not_called()
     assert panel.dictation_busy is False
     panel.status_var.set.assert_called_with('No speech detected. Try again.')
+
+
+def test_audio_is_saved_before_native_shutdown(monkeypatch, tmp_path):
+    """A deadlocking native stop must not prevent the audio being delivered."""
+    class Stream:
+        def __init__(self, **kwargs):
+            self.callback = kwargs['callback']
+        def start(self):
+            self.callback(np.ones((16000, 1), dtype=np.int16), 16000, None, None)
+        def abort(self):
+            assert (tmp_path / 'audio.wav').exists()
+            with wave.open(str(tmp_path / 'audio.wav')) as wav:
+                assert wav.getnframes() == 16000
+        def close(self):
+            pass
+    monkeypatch.setattr(voice, '_sd', SimpleNamespace(InputStream=Stream))
+    monkeypatch.setattr(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(b'STOP\n')))
+    voice._record_worker(tmp_path)
+    assert (tmp_path / 'ready').exists()
+    assert not (tmp_path / 'error.txt').exists()
+
+
+def test_recorder_recovers_audio_when_child_driver_cannot_exit(monkeypatch, tmp_path):
+    import subprocess
+    wav = voice.to_wav(np.ones((16000, 1), dtype=np.int16))
+    (tmp_path / 'ready').touch()
+    class StopPipe(io.BytesIO):
+        def flush(self):
+            (tmp_path / 'audio.wav').write_bytes(wav)
+    process = MagicMock()
+    process.stdin = StopPipe()
+    process.poll.return_value = None
+    process.wait.side_effect = [subprocess.TimeoutExpired('mic', .5), 0]
+    monkeypatch.setattr(voice.tempfile, 'TemporaryDirectory',
+                        lambda **_: SimpleNamespace(name=str(tmp_path), cleanup=MagicMock()))
+    monkeypatch.setattr(voice.subprocess, 'Popen', lambda *a, **k: process)
+    recorder = voice.Recorder()
+    recorder.start()
+    audio, seconds = recorder.stop()
+    assert audio == wav and seconds == 1.0
+    process.terminate.assert_called_once()
+    assert not recorder.recording
+
+
+def test_recording_start_error_cleans_up_child(monkeypatch, tmp_path):
+    process = MagicMock()
+    process.poll.return_value = None
+    (tmp_path / 'error.txt').write_text('Microphone permission denied')
+    directory = SimpleNamespace(name=str(tmp_path), cleanup=MagicMock())
+    monkeypatch.setattr(voice.tempfile, 'TemporaryDirectory', lambda **_: directory)
+    monkeypatch.setattr(voice.subprocess, 'Popen', lambda *a, **k: process)
+    recorder = voice.Recorder()
+    with pytest.raises(RuntimeError, match='permission denied'):
+        recorder.start()
+    process.terminate.assert_called_once()
+    directory.cleanup.assert_called_once()
+    assert not recorder.recording

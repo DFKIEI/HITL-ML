@@ -13,6 +13,10 @@ import io
 import os
 import threading
 import wave
+import subprocess
+import sys
+import tempfile
+import time
 
 import numpy as np
 
@@ -62,39 +66,131 @@ def _load_model(model_name, local_files_only=True):
 
 
 class Recorder:
-    """Collects 16 kHz mono audio between ``start()`` and ``stop()``."""
+    """Microphone in a child process, isolating native audio-driver shutdown.
+
+    The child writes WAV data before closing PortAudio. If native shutdown
+    deadlocks, the parent can terminate that child and still transcribe the WAV.
+    """
 
     def __init__(self):
-        self._frames = []
-        self._stream = None
-        self._lock = threading.Lock()
+        self._process = None
+        self._directory = None
 
     @property
     def recording(self):
-        return self._stream is not None
+        return self._process is not None
 
     def start(self):
-        if _sd is None:
-            raise RuntimeError(unavailable_reason())
-        self._frames = []
+        if self.recording:
+            raise RuntimeError("A recording is already running.")
+        self._directory = tempfile.TemporaryDirectory(prefix='hitl-mic-')
+        directory = Path(self._directory.name)
+        try:
+            self._process = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), '--record-worker', str(directory)],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            deadline = time.monotonic() + 10
+            while not (directory / 'ready').exists():
+                error = directory / 'error.txt'
+                if error.exists():
+                    raise RuntimeError(error.read_text())
+                if self._process.poll() is not None:
+                    raise RuntimeError("Microphone process exited before recording started.")
+                if time.monotonic() > deadline:
+                    raise RuntimeError("Microphone did not start within 10 seconds.")
+                time.sleep(.03)
+        except Exception:
+            self._cleanup()
+            raise
 
-        def callback(indata, _frames, _time, _status):
-            with self._lock:
-                if sum(len(f) for f in self._frames) < SAMPLE_RATE * MAX_SECONDS:
-                    self._frames.append(indata.copy())
-
-        self._stream = _sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='int16', callback=callback)
-        self._stream.start()
+    def _cleanup(self):
+        process, self._process = self._process, None
+        if process is not None:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2)
+            if process.stdin:
+                process.stdin.close()
+        if self._directory is not None:
+            self._directory.cleanup()
+            self._directory = None
 
     def stop(self):
-        """Stop and return (wav_bytes, seconds)."""
-        stream, self._stream = self._stream, None
+        if self._process is None:
+            return to_wav(np.zeros((0, 1), dtype=np.int16)), 0.0
+        process = self._process
+        directory = Path(self._directory.name)
+        try:
+            try:
+                process.stdin.write(b'STOP\n')
+                process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                pass  # an auto-stopped recording may already be on disk
+            deadline = time.monotonic() + 5
+            while not (directory / 'audio.wav').exists():
+                error = directory / 'error.txt'
+                if error.exists():
+                    raise RuntimeError(error.read_text())
+                if process.poll() is not None:
+                    raise RuntimeError("Microphone exited without saving the recording.")
+                if time.monotonic() > deadline:
+                    raise RuntimeError("Microphone did not return audio within 5 seconds. Please retry.")
+                time.sleep(.02)
+            audio = (directory / 'audio.wav').read_bytes()
+            with wave.open(io.BytesIO(audio)) as wav:
+                seconds = wav.getnframes() / wav.getframerate()
+            try:
+                process.wait(timeout=.5)
+            except subprocess.TimeoutExpired:
+                pass  # _cleanup kills a driver stuck in stop/close; audio is already safe
+            return audio, seconds
+        finally:
+            self._cleanup()
+
+
+def _record_worker(directory):
+    """Only the child process touches the microphone and native stream."""
+    directory = Path(directory)
+    frames, lock = [], threading.Lock()
+    state = {'samples': 0, 'accepting': True}
+    stream = None
+    try:
+        if _sd is None:
+            raise RuntimeError("Microphone recording requires sounddevice.")
+
+        def callback(indata, _frames, _time, _status):
+            with lock:
+                if not state['accepting']:
+                    return
+                remaining = SAMPLE_RATE * MAX_SECONDS - state['samples']
+                if remaining > 0:
+                    block = indata[:remaining].copy()
+                    frames.append(block)
+                    state['samples'] += len(block)
+
+        stream = _sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
+                                 dtype='int16', callback=callback)
+        stream.start()
+        (directory / 'ready').touch()
+        sys.stdin.buffer.readline()  # STOP or parent exit (EOF)
+        with lock:
+            state['accepting'] = False
+            audio = np.concatenate(frames) if frames else np.zeros((0, 1), dtype=np.int16)
+        temporary = directory / 'audio.tmp'
+        temporary.write_bytes(to_wav(audio))
+        temporary.replace(directory / 'audio.wav')  # publish complete audio before native shutdown
+    except Exception as exc:
+        (directory / 'error.txt').write_text(f'{type(exc).__name__}: {exc}')
+    finally:
         if stream is not None:
-            stream.stop()
-            stream.close()
-        with self._lock:
-            audio = np.concatenate(self._frames) if self._frames else np.zeros((0, 1), dtype=np.int16)
-        return to_wav(audio), len(audio) / SAMPLE_RATE
+            try:
+                stream.abort()
+            finally:
+                stream.close()
 
 
 def to_wav(samples):
@@ -122,10 +218,14 @@ def transcribe(wav_bytes, model=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--record-worker', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--download', action='store_true', help='download speech model for offline use')
     parser.add_argument('--model', default=None, help='model name or local model directory')
     parser.add_argument('--audio', type=Path, help='transcribe an existing WAV file locally')
     args = parser.parse_args()
+    if args.record_worker:
+        _record_worker(args.record_worker)
+        return
     model = args.model or get_transcribe_model()
     if args.download:
         _load_model(model, local_files_only=False)

@@ -187,3 +187,10 @@ The existing session recorder still saves audio and transcripts locally in
 `user_study_logs/` when session logging is enabled. Downloading model weights
 requires internet; the transcription function loads cached/local files only
 and never falls back to cloud transcription.
+
+Microphone capture runs in a separate local process. On Stop, that process
+saves the completed WAV before closing the audio driver. If driver shutdown
+stalls, the app terminates the recorder process and transcribes the saved
+recording. Startup and audio-return waits are bounded, and temporary files
+are removed after capture. Restart the app after updating this code; an
+already stuck recorder in an older app session cannot be repaired in place.
