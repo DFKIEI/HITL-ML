@@ -100,13 +100,20 @@ class LLMSuggestionsPanel(ttk.Frame):
         ttk.Label(frame, text="On the plot: dashed arrow = the shown suggestion's move; dashed "
                               "circle = the tighter size it suggests for that class. Hover the card "
                               "to highlight its classes. Drag an arrow's tip or a circle's edge (the "
-                              "white handles) to reshape it. Skip moves on to the next one.",
+                              "white handles) to reshape it. Each arrow moves independently. "
+                              "A stationary class has a handle labelled 'drag to move'. "
+                              "Skip moves on to the next one.",
                   wraplength=WRAP_LENGTH, justify=tk.LEFT, style='Status.TLabel').grid(
             row=5, column=0, columnspan=2, sticky=tk.W, pady=(2, ui_theme.PAD_S))
 
         frame.columnconfigure(1, weight=1)
 
     def _build_suggestion_area(self):
+        self.suggestion_view_var = tk.BooleanVar(
+            value=bool(getattr(self.ui, 'llm_only_suggestion_clusters', False)))
+        ttk.Checkbutton(self, text="Only this suggestion's clusters",
+                        variable=self.suggestion_view_var,
+                        command=self._toggle_suggestion_view).pack(anchor=tk.W, pady=(0, ui_theme.PAD_S))
         nav = ttk.Frame(self)
         nav.pack(fill=tk.X, pady=(0, ui_theme.PAD_S))
         self.prev_button = ttk.Button(nav, text="‹ Previous", command=lambda: self._step(-1))
@@ -298,6 +305,11 @@ class LLMSuggestionsPanel(ttk.Frame):
         if on_plot is not None:
             names = {int(i): names.get(int(i), f"class_{int(i)}") for i in on_plot}
         return names
+
+    def _toggle_suggestion_view(self):
+        self.ui.llm_only_suggestion_clusters = self.suggestion_view_var.get()
+        refresh_llm_overlay(self.ui)
+        self._log('SUGGESTION_VIEW_CHANGED', only_suggestion_clusters=self.ui.llm_only_suggestion_clusters)
 
     def refresh_cards(self):
         """Rebuild the card after a suggestion changed elsewhere (dragged on
@@ -631,6 +643,8 @@ class LLMSuggestionsPanel(ttk.Frame):
             preset_fraction = move_fraction(suggestion)
             preset_angle = self._current_angle(suggestion)
             suggestion.set_classes(class_i, class_j, class_names)
+            # The dropdowns edit the primary class; retain the other class's custom move.
+            suggestion.move_overrides.pop(suggestion.class_i, None)
             suggestion.direction = direction_of.get(direction_var.get(), suggestion.direction)
             suggestion.scale = scale_of.get(scale_var.get(), suggestion.scale)
             suggestion.tighten_i = bool(tighten_i_var.get())
@@ -665,6 +679,7 @@ class LLMSuggestionsPanel(ttk.Frame):
         the fields (llm/text_to_movement.py)."""
         class_names = class_names or self._class_names()
         suggestion.suggestion = new_text.strip()
+        suggestion.move_overrides.clear()  # a newly typed/dictated command replaces the old plan
         understood = interpret_text(suggestion.suggestion, class_names)
         class_i = understood.get('class_i', suggestion.class_i)
         class_j = understood.get('class_j', suggestion.class_j)

@@ -96,7 +96,7 @@ def _unit_from_angle(angle_degrees, center_i, centroids):
     return np.array([np.cos(radians), np.sin(radians)])
 
 
-def suggestion_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> Dict[int, np.ndarray]:
+def _preset_suggestion_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> Dict[int, np.ndarray]:
     """Displacement vectors for every class this suggestion moves, keyed by
     class index. ``class_i`` gets a vector whenever the suggestion can be
     computed at all; a repulsive (``away_from_j``) suggestion also pushes
@@ -137,6 +137,40 @@ def suggestion_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> Dict[int
 
     # "toward_empty_space" (or anything unrecognized).
     return {suggestion.class_i: _unit_away_from_crowd(center_i, centroids) * fraction * reference}
+
+
+def suggestion_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> Dict[int, np.ndarray]:
+    vectors = _preset_suggestion_vectors(suggestion, centroids)
+    reference = configuration_scale(centroids)
+    for class_index, normalized in getattr(suggestion, 'move_overrides', {}).items():
+        class_index = int(class_index)
+        if class_index not in (suggestion.class_i, suggestion.class_j) or class_index not in centroids:
+            continue
+        normalized = np.asarray(normalized, dtype=float)
+        if normalized.shape == centroids[class_index].shape:
+            vectors[class_index] = normalized * reference
+        else:
+            # A plot direction has no fixed angle in a higher-dimensional space.
+            vectors[class_index] = (_unit_away_from_crowd(centroids[class_index], centroids)
+                                    * np.linalg.norm(normalized) * reference)
+    return vectors
+
+
+def fit_independent_class_vector(suggestion, class_index, vector, centroids, base_direction=None):
+    """Edit one class while freezing the other class's current movement."""
+    reference = configuration_scale(centroids)
+    existing = suggestion_vectors(suggestion, centroids)
+    if class_index == suggestion.class_i:
+        fit_suggestion_to_vector(suggestion, vector, centroids, base_direction)
+        vector = _preset_suggestion_vectors(suggestion, centroids).get(class_index, np.zeros(2))
+    else:
+        vector = np.asarray(vector, dtype=float)
+        length = float(np.linalg.norm(vector))
+        if length > CUSTOM_MOVE_RANGE[1] * reference:
+            vector = vector * (CUSTOM_MOVE_RANGE[1] * reference / length)
+    overrides = {int(c): (v / reference).tolist() for c, v in existing.items()}
+    overrides[class_index] = (np.asarray(vector) / reference).tolist()
+    suggestion.move_overrides = overrides
 
 
 def compute_class_movements(suggestions: Iterable, centroids: Dict[int, np.ndarray]
@@ -182,7 +216,7 @@ def fit_suggestion_to_vector(suggestion, vector, centroids: Dict[int, np.ndarray
         return
 
     if base_direction is not None and base_direction != 'custom_angle':
-        preset = dataclasses.replace(suggestion, direction=base_direction, scale='medium')
+        preset = dataclasses.replace(suggestion, direction=base_direction, scale='medium', move_overrides={})
         preset_vector = suggestion_vectors(preset, centroids).get(suggestion.class_i)
         if preset_vector is not None and np.any(preset_vector):
             unit = preset_vector / np.linalg.norm(preset_vector)

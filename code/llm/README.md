@@ -194,3 +194,21 @@ stalls, the app terminates the recorder process and transcribes the saved
 recording. Startup and audio-return waits are bounded, and temporary files
 are removed after capture. Restart the app after updating this code; an
 already stuck recorder in an older app session cannot be repaired in place.
+
+## Independent suggestion arrows
+
+In the editable suggestion strategy, each moving class has its own arrow
+handle. Dragging one arrow preserves the other class's movement, including
+when changing direction. A zero-length move keeps a handle at its centre
+so it can be edited again. These independent movements are used by the
+preview, Apply, impact metrics and session log. Dropdowns edit the primary
+class's movement; replacing the text/dictation command or changing the class
+pair resets the previous arrow overrides. A new LLM push-apart suggestion
+still initially proposes movements for both classes.
+
+Every class named in an editable suggestion has a movement handle, including
+the reference class in "closer to", "into open space" and custom-direction
+suggestions. A class with no requested movement shows a handle labelled
+"drag to move" at its centre; dragging it adds an independent movement
+without changing the first class. The label does not represent a movement
+that would be applied before dragging.

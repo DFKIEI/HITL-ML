@@ -9,7 +9,7 @@ from matplotlib.backend_tools import Cursors
 from matplotlib.patches import Circle
 
 from llm.movement import (CUSTOM_TIGHTEN_RANGE, compute_class_movements, compute_class_tighten_factors,
-                          fit_suggestion_to_vector, suggestion_vectors, tighten_factor)
+                          fit_independent_class_vector, suggestion_vectors, tighten_factor)
 from llm.strategies import get_strategy
 from ui import ui_theme
 
@@ -175,6 +175,9 @@ def display_scatter_plot(self, data, tab):
         self.points_last_step = self.moved_points.copy()  # backup current points
         self.last_centers = data['centers'].copy()
         for i, artist in enumerate(self.center_artists):
+            visible_classes = suggestion_view_classes(self)
+            if visible_classes is not None and int(unique_labels[i]) not in visible_classes:
+                continue
             if artist.contains(event)[0]:
                 self.dragging = i
                 self.offset = (data['centers'][i][0] - event.xdata,
@@ -183,7 +186,13 @@ def display_scatter_plot(self, data, tab):
 
         cont, ind = scatter.contains(event)
         if cont:
-            self.dragging_point = ind['ind'][0]
+            candidates = ind['ind']
+            visible_classes = suggestion_view_classes(self)
+            if visible_classes is not None:
+                candidates = [i for i in candidates if int(data['labels'][i]) in visible_classes]
+            if not len(candidates):
+                return
+            self.dragging_point = candidates[0]
             self.offset = (self.moved_points[self.dragging_point, 0] - event.xdata,
                            self.moved_points[self.dragging_point, 1] - event.ydata)
             print(f"Selected point {self.dragging_point}")
@@ -322,6 +331,14 @@ def class_color_hex(self, class_index, default='#98A1AD'):
     return matplotlib.colors.to_hex(color) if color is not None else default
 
 
+def suggestion_view_classes(self):
+    """Classes visible in suggestion-only mode; None means show everything."""
+    current = getattr(self, 'llm_focus_suggestion', None)
+    if not getattr(self, 'llm_only_suggestion_clusters', False) or current is None:
+        return None
+    return {int(current.class_i), int(current.class_j)}
+
+
 def highlight_classes(self, class_indices=None):
     """Fade every class except ``class_indices`` on the scatter plot (points,
     misclassified markers, centers, and the LLM overlay), or restore all of
@@ -333,9 +350,8 @@ def highlight_classes(self, class_indices=None):
     if scatter is None or base is None or data is None:
         return
     keep = set(int(c) for c in class_indices) if class_indices else None
-    if keep == getattr(self, 'highlighted_classes', None):
-        return
     self.highlighted_classes = keep
+    visible_classes = suggestion_view_classes(self)
 
     faded_alpha = 0.06
     colors = base.copy()
@@ -344,19 +360,27 @@ def highlight_classes(self, class_indices=None):
         in_focus = np.isin(data['labels'], list(keep))
         colors[~in_focus, 3] = faded_alpha
         incorrect_colors[~in_focus[self.incorrect_mask], 3] = faded_alpha
+    if visible_classes is not None:
+        visible = np.isin(data['labels'], list(visible_classes))
+        colors[~visible, 3] = 0
+        incorrect_colors[~visible[self.incorrect_mask], 3] = 0
     scatter.set_facecolors(colors)
     scatter.set_edgecolors(colors)
     self.incorrect_scatter.set_facecolors(incorrect_colors)
-    edge_alpha = np.where(incorrect_colors[:, 3] > faded_alpha, 1.0, faded_alpha)
+    edge_alpha = np.where(incorrect_colors[:, 3] == 0, 0,
+                          np.where(incorrect_colors[:, 3] > faded_alpha, 1.0, faded_alpha))
     self.incorrect_scatter.set_edgecolors([(0, 0, 0, a) for a in edge_alpha])
 
     for label, artist in zip(self.unique_labels, self.center_artists):
+        artist.set_visible(visible_classes is None or int(label) in visible_classes)
         focused = keep is None or int(label) in keep
         artist.set_alpha(1.0 if focused else 0.15)
         artist.set_sizes([220 if keep and focused else 100])
 
     for artist, class_index in getattr(self, 'llm_overlay_classes', []):
-        artist.set_alpha(0.9 if keep is None or class_index in keep else 0.1)
+        # Editing one class must not hide the other class's movement arrow.
+        artist.set_alpha(0.9)
+        artist.set_visible(visible_classes is None or class_index in visible_classes)
 
     self.scatter_fig.canvas.draw_idle()
 
@@ -396,29 +420,55 @@ def refresh_llm_overlay(self):
     data = getattr(self, 'data', None)
     unique_labels = getattr(self, 'unique_labels', None)
     outline = [patheffects.withStroke(linewidth=4.5, foreground='white')]
+    overlay_bounds = []
     if suggestions and data is not None and unique_labels is not None:
         centroids = {int(label): np.asarray(data['centers'][i], dtype=float)
                      for i, label in enumerate(unique_labels)}
         movements = compute_class_movements(suggestions, centroids)
+        if editable:
+            # Both named classes need controls, even when the preset moves only one.
+            for suggestion in suggestions:
+                for c in (suggestion.class_i, suggestion.class_j):
+                    if c in centroids:
+                        movements.setdefault(c, np.zeros_like(centroids[c]))
 
         for class_index, vector in movements.items():
             start = centroids.get(class_index)
-            if start is None or not np.any(vector):
+            if start is None:
                 continue
             end = start + vector
+            owner = None
+            if editable:
+                owner = next((s for s in suggestions if s.class_i == class_index), None)
+                if owner is None:
+                    owner = next((s for s in suggestions
+                                  if class_index in (s.class_i, s.class_j)), None)
+            if not np.any(vector):
+                # A stationary class still needs a handle so it can be moved again.
+                if owner is not None:
+                    _draw_handle(self, ax, end, class_index, outline)
+                    name = owner.class_i_name if class_index == owner.class_i else owner.class_j_name
+                    label = ax.annotate(f'{name}: drag to move', xy=tuple(end), xytext=(10, 12),
+                                        textcoords='offset points', fontsize=9, zorder=13,
+                                        annotation_clip=False, color=self.class_colors[class_index],
+                                        path_effects=outline)
+                    self.llm_overlay_artists.append(label)
+                    self.llm_overlay_classes.append((label, class_index))
+                    self.llm_handles.append({'kind': 'arrow', 'class': class_index, 'start': start,
+                                             'end': end, 'owner': owner})
+                continue
+            overlay_bounds.extend([start, end])
             arrow = ax.annotate(
                 '', xy=tuple(end), xytext=tuple(start),
                 arrowprops=dict(arrowstyle='-|>', color=self.class_colors[class_index], lw=2.5,
                                 alpha=0.9, linestyle='--', mutation_scale=22,
                                 path_effects=outline),
-                zorder=10,
+                zorder=10, annotation_clip=False,
             )
             self.llm_overlay_artists.append(arrow)
+            arrow.arrow_patch.set_clip_on(False)
             self.llm_overlay_classes.append((arrow.arrow_patch, class_index))
 
-            # Draggable when a suggestion moves this class itself; a class
-            # only pushed away as another's class_j follows that suggestion.
-            owner = next((s for s in suggestions if s.class_i == class_index), None) if editable else None
             if owner is not None:
                 _draw_handle(self, ax, end, class_index, outline)
                 self.llm_handles.append({'kind': 'arrow', 'class': class_index, 'start': start,
@@ -441,6 +491,7 @@ def refresh_llm_overlay(self):
                             edgecolor=self.class_colors[class_index], linewidth=2.5,
                             alpha=0.9, zorder=9, path_effects=outline)
             ax.add_patch(circle)
+            overlay_bounds.extend([center - target_radius, center + target_radius])
             self.llm_overlay_artists.append(circle)
             self.llm_overlay_classes.append((circle, class_index))
             if editable:
@@ -448,11 +499,10 @@ def refresh_llm_overlay(self):
                 self.llm_handles.append({'kind': 'circle', 'class': class_index, 'center': center,
                                          'radius': target_radius, 'mean_radius': mean_radius})
 
-    # Keep a hover highlight that was active before the redraw.
-    keep = getattr(self, 'highlighted_classes', None)
-    if keep:
-        for artist, class_index in self.llm_overlay_classes:
-            artist.set_alpha(0.9 if class_index in keep else 0.1)
+    # Fit preview endpoints too, but do not move axes under the pointer during a drag.
+    if overlay_bounds and getattr(self, 'llm_drag', None) is None:
+        _fit_axes_to_points(ax, np.asarray(overlay_bounds))
+    highlight_classes(self, getattr(self, 'highlighted_classes', None))
 
     fig.canvas.draw_idle()
 
@@ -555,7 +605,7 @@ def llm_overlay_motion(self, event):
         others = [suggestion_vectors(s, centroids).get(class_index) for s in pending if s is not owner]
         others = [v for v in others if v is not None]
         own = wanted * (len(others) + 1) - np.sum(others, axis=0) if others else wanted
-        fit_suggestion_to_vector(owner, own, centroids, drag['base_direction'])
+        fit_independent_class_vector(owner, class_index, own, centroids, drag['base_direction'])
         owner.edited = True
     else:
         factor = float(np.clip(np.linalg.norm(cursor - drag['center']) / max(drag['mean_radius'], 1e-12),

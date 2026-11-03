@@ -154,10 +154,14 @@ class PairSuggestion:
     move_angle: Optional[float] = None
     tighten_amount_i: Optional[float] = None
     tighten_amount_j: Optional[float] = None
+    # Per-class displacement / configuration scale, set by independent arrow edits.
+    move_overrides: Dict[int, List[float]] = field(default_factory=dict)
     # Stable id for the session log (id() is reused once an object is freed).
     uid: str = field(default_factory=lambda: f"s{next(_UIDS)}")
 
     def set_classes(self, class_i, class_j, class_names):
+        if (int(class_i), int(class_j)) != (self.class_i, self.class_j):
+            self.move_overrides.clear()
         self.class_i, self.class_j = int(class_i), int(class_j)
         self.class_i_name = class_names.get(self.class_i, f"class_{self.class_i}")
         self.class_j_name = class_names.get(self.class_j, f"class_{self.class_j}")
@@ -178,6 +182,7 @@ class PairSuggestion:
             'edited': self.edited,
             'move_amount': self.move_amount,
             'move_angle': self.move_angle,
+            'move_overrides': self.move_overrides,
             'tighten_amount_i': self.tighten_amount_i,
             'tighten_amount_j': self.tighten_amount_j,
             'expected_benefit': self.expected_benefit,
@@ -223,6 +228,18 @@ def describe_movement(suggestion):
 
     if suggestion.scale == 'custom' and suggestion.move_amount == 0:
         text = f"Keep {suggestion.class_i_name} where it is."
+
+    if suggestion.move_overrides:
+        parts = []
+        for c, vector in suggestion.move_overrides.items():
+            name = suggestion.class_i_name if int(c) == suggestion.class_i else suggestion.class_j_name
+            length = float(np.linalg.norm(vector))
+            if length < 1e-8:
+                parts.append(f"Keep {name} where it is.")
+            else:
+                angle = float(np.degrees(np.arctan2(vector[1], vector[0])) % 360)
+                parts.append(f"Move {name} {compass_word(angle)} ({length:.0%} of the layout scale).")
+        text = ' '.join(parts)
 
     tighten_names, shrink = [], []
     for flag, name, amount in ((suggestion.tighten_i, suggestion.class_i_name, suggestion.tighten_amount_i),

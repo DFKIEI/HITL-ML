@@ -69,13 +69,13 @@ def drawn_tip(ui, class_index):
 
 def test_handles_only_when_editable():
     s = suggestion(tighten_i=True)
-    assert {(h['kind'], h['class']) for h in plot_ui([s])[0].llm_handles} == {('arrow', 0), ('circle', 0)}
+    assert {(h['kind'], h['class']) for h in plot_ui([s])[0].llm_handles} == {('arrow', 0), ('arrow', 1), ('circle', 0)}
     assert plot_ui([s], strategy=3)[0].llm_handles == []
 
 
-def test_class_j_pushed_away_has_no_arrow_handle():
+def test_class_j_pushed_away_has_independent_arrow_handle():
     ui, *_ = plot_ui([suggestion()])
-    assert [h['class'] for h in ui.llm_handles if h['kind'] == 'arrow'] == [0]
+    assert [h['class'] for h in ui.llm_handles if h['kind'] == 'arrow'] == [0, 1]
 
 
 def test_press_elsewhere_is_not_grabbed():
@@ -177,3 +177,139 @@ def test_snap_threshold(degrees, snapped):
     rotated = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]) @ base
     fit_suggestion_to_vector(s, rotated, centroids, 'away_from_j')
     assert (s.direction == 'away_from_j') == snapped
+
+
+def test_suggestion_view_hides_other_clusters_and_restores_everything():
+    from ui.ui_display import highlight_classes
+    s = suggestion()
+    ui, points, labels = plot_ui([s])
+    ui.llm_focus_suggestion = s
+    ui.llm_only_suggestion_clusters = True
+    highlight_classes(ui, None)
+    colors = ui.scatter.set_facecolors.call_args.args[0]
+    assert np.all(colors[labels == 2, 3] == 0)
+    assert np.all(colors[labels != 2, 3] > 0)
+    ui.center_artists[2].set_visible.assert_called_with(False)
+    # A hover exit or redraw must not restore unrelated clusters.
+    refresh_llm_overlay(ui)
+    colors = ui.scatter.set_facecolors.call_args.args[0]
+    assert np.all(colors[labels == 2, 3] == 0)
+    ui.llm_only_suggestion_clusters = False
+    highlight_classes(ui, None)
+    np.testing.assert_array_equal(ui.scatter.set_facecolors.call_args.args[0], ui.point_colors)
+    ui.center_artists[2].set_visible.assert_called_with(True)
+    np.testing.assert_array_equal(ui.moved_points, points)
+    plt.close(ui.scatter_fig)
+
+
+def test_suggestion_view_tracks_current_pair_while_editing_and_navigation():
+    from ui.ui_display import highlight_classes
+    s = suggestion()
+    ui, _, labels = plot_ui([s])
+    ui.llm_only_suggestion_clusters = True
+    ui.llm_focus_suggestion = s
+    s.class_j = 2  # dropdown/text edit changes the current pair in place
+    refresh_llm_overlay(ui)
+    colors = ui.scatter.set_facecolors.call_args.args[0]
+    assert np.all(colors[labels == 1, 3] == 0)
+    assert np.all(colors[labels == 2, 3] > 0)
+    ui.llm_focus_suggestion = suggestion(class_i=1, class_j=2)
+    highlight_classes(ui, None)
+    colors = ui.scatter.set_facecolors.call_args.args[0]
+    assert np.all(colors[labels == 0, 3] == 0)
+    ui.llm_focus_suggestion = None
+    highlight_classes(ui, None)
+    assert np.all(ui.scatter.set_facecolors.call_args.args[0][:, 3] > 0)
+    plt.close(ui.scatter_fig)
+
+
+def test_edit_highlight_keeps_both_movement_arrows_visible():
+    from ui.ui_display import highlight_classes
+    ui, *_ = plot_ui([suggestion()])
+    highlight_classes(ui, {0})
+    refresh_llm_overlay(ui)
+    arrows = [a for a, c in ui.llm_overlay_classes if c == 1]
+    assert arrows and all(a.get_alpha() == .9 and a.get_visible() for a in arrows)
+    plt.close(ui.scatter_fig)
+
+
+def test_preview_arrow_endpoints_remain_in_view():
+    s = suggestion(scale='custom', move_amount=4.0)
+    ui, *_ = plot_ui([s])
+    ui.ax.set_xlim(-.1, .1)
+    ui.ax.set_ylim(-.1, .1)
+    refresh_llm_overlay(ui)
+    for artist in ui.llm_overlay_artists:
+        if hasattr(artist, 'arrow_patch'):
+            x,y = artist.xy
+            assert ui.ax.get_xlim()[0] <= x <= ui.ax.get_xlim()[1]
+            assert ui.ax.get_ylim()[0] <= y <= ui.ax.get_ylim()[1]
+            assert artist.get_annotation_clip() is False
+    plt.close(ui.scatter_fig)
+
+
+@pytest.mark.parametrize('edited_class,other_class', [(0, 1), (1, 0)])
+def test_each_arrow_moves_independently_and_apply_matches_preview(edited_class, other_class):
+    from llm.impact import apply_to_points
+    s = suggestion()
+    ui, points, labels = plot_ui([s])
+    centroids = {int(c): ui.data['centers'][i].copy() for i,c in enumerate(ui.unique_labels)}
+    before_other = suggestion_vectors(s, centroids)[other_class].copy()
+    original = handle(ui, 'arrow', edited_class)['end'].copy()
+    target = centroids[edited_class] + np.array([1.0, 2.0])
+    drag(ui, original, target)
+    after = suggestion_vectors(s, centroids)
+    np.testing.assert_allclose(after[other_class], before_other, atol=1e-8)
+    np.testing.assert_allclose(centroids[edited_class] + after[edited_class], target, atol=1e-8)
+    predicted = apply_to_points(points, labels, [s])
+    assert apply_llm_suggestion(ui, s)
+    np.testing.assert_allclose(ui.moved_points, predicted, atol=1e-8)
+    plt.close(ui.scatter_fig)
+
+
+def test_editing_primary_then_secondary_preserves_primary_move():
+    s = suggestion()
+    ui, *_ = plot_ui([s])
+    drag(ui, handle(ui, 'arrow', 0)['end'], ui.data['centers'][0] + [0., 2.])
+    before = handle(ui, 'arrow', 0)['end'].copy()
+    drag(ui, handle(ui, 'arrow', 1)['end'], ui.data['centers'][1] + [2., 0.])
+    np.testing.assert_allclose(handle(ui, 'arrow', 0)['end'], before)
+    # Serializing and reconstructing a suggestion preserves both independent moves.
+    import json
+    restored = PairSuggestion(**json.loads(json.dumps(s.as_log_dict())))
+    centroids = {int(c):ui.data['centers'][i] for i,c in enumerate(ui.unique_labels)}
+    for c,vector in suggestion_vectors(s,centroids).items():
+        np.testing.assert_allclose(suggestion_vectors(restored,centroids)[c], vector)
+    plt.close(ui.scatter_fig)
+
+
+def test_changing_class_pair_clears_old_movement_overrides():
+    s = suggestion(move_overrides={0:[1.,0.],1:[-1.,0.]})
+    s.set_classes(0,2,{0:'cat',1:'dog',2:'bird'})
+    assert s.move_overrides == {}
+
+
+def test_zero_movement_keeps_handle_for_editing_again():
+    s = suggestion()
+    ui, *_ = plot_ui([s])
+    start = handle(ui, 'arrow', 0)['start'].copy()
+    drag(ui, handle(ui, 'arrow', 0)['end'], start)
+    np.testing.assert_allclose(handle(ui, 'arrow', 0)['end'], start)
+    drag(ui, start, start + [0., 1.])
+    np.testing.assert_allclose(handle(ui, 'arrow', 0)['end'], start + [0., 1.])
+    plt.close(ui.scatter_fig)
+
+
+@pytest.mark.parametrize('direction', ['toward_j', 'toward_empty_space', 'custom_angle'])
+def test_stationary_reference_class_can_be_moved_independently(direction):
+    s = suggestion(direction=direction, move_angle=90.)
+    ui, *_ = plot_ui([s])
+    first_tip = handle(ui, 'arrow', 0)['end'].copy()
+    second = handle(ui, 'arrow', 1)
+    np.testing.assert_allclose(second['end'], ui.data['centers'][1])
+    assert any('drag to move' in a.get_text() for a in ui.llm_overlay_artists if hasattr(a, 'get_text'))
+    target = second['start'] + [1., 1.]
+    drag(ui, second['end'], target)
+    np.testing.assert_allclose(handle(ui, 'arrow', 1)['end'], target)
+    np.testing.assert_allclose(handle(ui, 'arrow', 0)['end'], first_tip)
+    plt.close(ui.scatter_fig)
