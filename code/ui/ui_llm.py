@@ -24,7 +24,7 @@ from llm.movement import move_fraction, suggestion_vectors
 from llm.strategies import get_strategy
 from llm.suggestions import (DIRECTION_LABELS, SCALE_LABELS, PairSuggestion,
                              describe_movement, request_suggestions)
-from llm.text_to_movement import interpret_text
+from llm.interpretation import interpret_instruction
 from ui.ui_display import apply_llm_suggestion, class_color_hex, highlight_classes, refresh_llm_overlay
 from ui import ui_theme
 
@@ -41,6 +41,9 @@ class LLMSuggestionsPanel(ttk.Frame):
 
         self.result_queue = queue.Queue()
         self.request_running = False
+        self.text_interpretations = {}
+        self.text_flush = {}
+        self.text_setters = {}
         self.plot_retries = 0
         self.global_summary = None
         self.color_dots = []  # (tk.Label, callable -> class index) to recolor on plot redraw
@@ -242,6 +245,9 @@ class LLMSuggestionsPanel(ttk.Frame):
         try:
             while True:
                 status, payload = self.result_queue.get_nowait()
+                if status == 'interpretation':
+                    self._interpretation_done(*payload)
+                    continue
                 if status == 'voice_status':
                     self.status_var.set(payload)
                     continue
@@ -263,6 +269,8 @@ class LLMSuggestionsPanel(ttk.Frame):
 
     def _show_suggestions(self, global_summary, suggestions, state, raw, model, goal, latency=None):
         strategy = get_strategy(self.ui.strategy_var.get())
+        for suggestion in suggestions:
+            suggestion.original_text = suggestion.suggestion
         self.ui.llm_tracker.log_request(model, goal, state)
         self.ui.llm_tracker.log_response(model, raw)
         self.ui.llm_tracker.log_suggestions(global_summary, suggestions)
@@ -343,6 +351,13 @@ class LLMSuggestionsPanel(ttk.Frame):
         """(Re)build the overall card and the card of the current suggestion
         from ui.latest_llm_suggestions - the cards are just views of those
         objects, edited in place. Only that suggestion is drawn on the plot."""
+        for flush in list(self.text_flush.values()):
+            try:
+                flush()
+            except tk.TclError:
+                pass
+        self.text_flush = {}
+        self.text_setters = {}
         highlight_classes(self.ui, None)
         for widget in self.suggestion_frame.winfo_children():
             widget.destroy()
@@ -357,6 +372,8 @@ class LLMSuggestionsPanel(ttk.Frame):
         if self.global_summary is not None and not self.global_summary.is_empty():
             self._build_global_card(self.global_summary)
         if current is not None:
+            if current.original_text is None:
+                current.original_text = current.suggestion
             self._build_card(self.current_index, current, strategy)
 
         if suggestions:
@@ -554,8 +571,8 @@ class LLMSuggestionsPanel(ttk.Frame):
 
     def _build_editable_body(self, card, suggestion, impact_var):
         """Strategy 4: the free text and the structured fields are both
-        editable. Typing in the text re-reads it (llm/text_to_movement.py) and
-        updates the fields, which are what actually gets applied - and hence
+        editable. Edited text is interpreted asynchronously by the selected LLM
+        and updates the validated fields, which are what gets applied - and hence
         what the interaction loss is pulled towards."""
         class_names = self._class_names()
         name_list = [class_names[i] for i in sorted(class_names)]
@@ -601,12 +618,20 @@ class LLMSuggestionsPanel(ttk.Frame):
         edit_header.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
         ttk.Label(edit_header, text="Edit suggestion:").pack(side=tk.LEFT)
         self._dictate_button(edit_header, suggestion).pack(side=tk.RIGHT)
+        ttk.Button(edit_header, text='Interpret text',
+                   command=lambda: self._set_text(suggestion, text.get('1.0', 'end-1c'), class_names)).pack(side=tk.RIGHT, padx=4)
         text_row = ttk.Frame(card)
         text_row.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
         text = tk.Text(text_row, height=3, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1,
                        font=ui_theme.fonts()['body'], bg=ui_theme.SURFACE, fg=ui_theme.TEXT,
                        highlightthickness=0, padx=4, pady=3)
         text.insert('1.0', suggestion.suggestion)
+        def replace_editor(value):
+            if text.get('1.0', 'end-1c') == value:
+                return
+            text.delete('1.0', tk.END)
+            text.insert('1.0', value)
+        self.text_setters[suggestion.uid] = replace_editor
         text.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Label(card, textvariable=summary_var, wraplength=WRAP_LENGTH - 20,
                   justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 0))
@@ -634,6 +659,10 @@ class LLMSuggestionsPanel(ttk.Frame):
             self._log('SUGGESTION_EDITED', uid=suggestion.uid, via=via, suggestion=suggestion.as_log_dict())
 
         def on_fields(_event=None):
+            if self.text_interpretations.get(suggestion.uid, (None, 'ready'))[1] == 'pending':
+                self.status_var.set('Wait for text interpretation before editing the movement.')
+                sync_widgets()
+                return
             class_i = index_of.get(class_i_var.get(), suggestion.class_i)
             class_j = index_of.get(class_j_var.get(), suggestion.class_j)
             if class_i == class_j:
@@ -661,6 +690,15 @@ class LLMSuggestionsPanel(ttk.Frame):
         tighten_j_check.configure(command=on_fields)
 
         pending = {'job': None}
+        self.text_flush[suggestion.uid] = lambda: flush_text()
+
+        def flush_text():
+            if pending['job'] is not None:
+                text.after_cancel(pending['job'])
+                pending['job'] = None
+            value = text.get('1.0', 'end-1c').strip()
+            if value != suggestion.suggestion:
+                self._set_text(suggestion, value, class_names)
 
         def on_text_edit(_event=None):
             if pending['job'] is not None:
@@ -669,27 +707,65 @@ class LLMSuggestionsPanel(ttk.Frame):
 
         def read_text():
             pending['job'] = None
+            if not text.winfo_exists():
+                return
             self._set_text(suggestion, text.get('1.0', 'end-1c'), class_names)
-            changed('text')
 
         text.bind("<KeyRelease>", on_text_edit)
 
     def _set_text(self, suggestion, new_text, class_names=None):
-        """Store a typed or dictated suggestion text and read it back into
-        the fields (llm/text_to_movement.py)."""
         class_names = class_names or self._class_names()
+        if suggestion.original_text is None:
+            suggestion.original_text = suggestion.suggestion
+        previous = suggestion.suggestion
         suggestion.suggestion = new_text.strip()
-        suggestion.move_overrides.clear()  # a newly typed/dictated command replaces the old plan
-        understood = interpret_text(suggestion.suggestion, class_names)
-        class_i = understood.get('class_i', suggestion.class_i)
-        class_j = understood.get('class_j', suggestion.class_j)
-        if class_j == class_i:
-            class_j = suggestion.class_j if suggestion.class_j != class_i else suggestion.class_i
-        if class_i != class_j:
-            suggestion.set_classes(class_i, class_j, class_names)
-        for name in ('direction', 'scale', 'tighten_i', 'tighten_j'):
-            if name in understood:
-                setattr(suggestion, name, understood[name])
+        setter = getattr(self, 'text_setters', {}).get(suggestion.uid)
+        if setter is not None:
+            try:
+                setter(suggestion.suggestion)
+            except tk.TclError:
+                pass
+        suggestion.edited = True
+        self._log('SUGGESTION_TEXT_CHANGED', uid=suggestion.uid, previous_text=previous,
+                  text=suggestion.suggestion, original_text=suggestion.original_text,
+                  movement_before=suggestion.as_log_dict())
+        revision = object()
+        self.text_interpretations[suggestion.uid] = (revision, 'pending')
+        current = suggestion.as_log_dict()
+        model = self.model_var.get().strip()
+        self.status_var.set('Interpreting your instruction with the LLM...')
+        def worker():
+            try:
+                fields, raw = interpret_instruction(new_text, class_names, current, model=model)
+                error = None
+            except Exception as exc:
+                fields, raw, error = {}, '', f'{type(exc).__name__}: {exc}'
+            self.result_queue.put(('interpretation',
+                                   (suggestion, revision, new_text.strip(), fields, raw, error, model)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _interpretation_done(self, suggestion, revision, text, fields, raw, error, model):
+        if self.text_interpretations.get(suggestion.uid, (None,))[0] is not revision:
+            return  # an older reply cannot overwrite a more recent edit
+        if not any(s is suggestion for s in self._suggestions()):
+            self.text_interpretations.pop(suggestion.uid, None)
+            return
+        self._log('TEXT_INTERPRETATION', uid=suggestion.uid, text=text, model=model,
+                  fields=fields, raw=raw, error=error)
+        self.text_interpretations[suggestion.uid] = (revision, 'error' if error else 'ready')
+        if error:
+            self.status_var.set('Instruction could not be interpreted. Edit the text and retry: ' + error)
+            return
+        suggestion.set_classes(fields['class_i'], fields['class_j'], self._class_names())
+        suggestion.move_overrides.clear()
+        suggestion.move_amount = suggestion.move_angle = None
+        for name, value in fields.items():
+            if name not in ('class_i', 'class_j'):
+                setattr(suggestion, name, value)
+        suggestion.interpretation = {'model': model, 'text': text, 'fields': fields}
+        self._log('SUGGESTION_EDITED', uid=suggestion.uid, via='llm_text', suggestion=suggestion.as_log_dict())
+        self.refresh_cards()
+        self.status_var.set('Instruction interpreted. Review the arrows, then Apply.')
 
     # -------------------------------------------------------------- dictation
     def _dictate_button(self, parent, target):
@@ -774,7 +850,7 @@ class LLMSuggestionsPanel(ttk.Frame):
         else:
             self.status_var.set(f"Heard: \"{transcript}\" (that suggestion is gone).")
             return
-        self.status_var.set(f"Heard: \"{transcript}\"")
+        self.status_var.set(f"Heard: \"{transcript}\". Interpreting the instruction...")
 
     # ---------------------------------------------------------------- actions
     def _log(self, event_type, **payload):
@@ -783,6 +859,21 @@ class LLMSuggestionsPanel(ttk.Frame):
             events.log(event_type, **payload)
 
     def _apply(self, suggestion, status_var=None):
+        flush = self.text_flush.get(suggestion.uid)
+        if flush is not None:
+            try:
+                flush()
+            except tk.TclError:
+                pass
+        state = self.text_interpretations.get(suggestion.uid, (None, 'ready'))[1]
+        if state != 'ready':
+            self.status_var.set('Wait for a successful text interpretation before applying.')
+            return False
+        if hasattr(self.ui, 'study_allows_apply') and not self.ui.study_allows_apply():
+            return False
+        self._log('SUGGESTION_APPLY_REQUESTED', uid=suggestion.uid,
+                  original_text=suggestion.original_text if suggestion.original_text is not None else suggestion.suggestion,
+                  user_text=suggestion.suggestion, final_movement=suggestion.as_log_dict())
         if apply_llm_suggestion(self.ui, suggestion, source='participant'):
             self.ui.llm_tracker.log_applied(suggestion)
             self.ui.update_log(f"LLM: applied - {describe_movement(suggestion)}")

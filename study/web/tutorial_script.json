@@ -1,0 +1,47 @@
+[
+  {
+    "title": "1. Explore the representation",
+    "caption": "This is the latent space view. Each dot is an example. Colours show its class. The controls are on the left, and suggestions are on the right.",
+    "duration": 12
+  },
+  {
+    "title": "2. Read the suggestions sidebar",
+    "caption": "Read one suggestion at a time. Use Previous or Skip to move through them. Dashed arrows show proposed changes. Apply commits the change.",
+    "duration": 12
+  },
+  {
+    "title": "3. Focus on the current classes",
+    "caption": "Turn on this option to show only the classes in the current suggestion. Turn it off whenever you need the full picture.",
+    "duration": 12
+  },
+  {
+    "title": "4. Adjust the proposal",
+    "caption": "Watch the cursor drag the first arrow, then the second. Each arrow can be edited independently. Drag the dashed circle to make a group tighter.",
+    "duration": 12
+  },
+  {
+    "title": "5. Edit an instruction",
+    "caption": "Now edit the instruction in the text box. The backend asks the language model to interpret your words. Wait for the updated arrows, then review them.",
+    "duration": 12
+  },
+  {
+    "title": "6. Apply the reviewed change",
+    "caption": "Click Apply when the proposal looks right. The points move, and the log saves your words and the final movements together.",
+    "duration": 12
+  },
+  {
+    "title": "7. Inspect the measured effect",
+    "caption": "These measures describe the proposed change. They show movement size and class separation. A better layout does not always mean better accuracy.",
+    "duration": 12
+  },
+  {
+    "title": "8. Complete a study task",
+    "caption": "Study mode uses a pretrained model and locks training. Complete three interactions within five minutes. Your count and remaining time appear here.",
+    "duration": 12
+  },
+  {
+    "title": "9. Finish and return to the survey",
+    "caption": "Collapse either sidebar when you want more space. After the task, return to the survey. Answer the questions, then stop and save the recording.",
+    "duration": 12
+  }
+]

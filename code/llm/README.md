@@ -212,3 +212,15 @@ suggestions. A class with no requested movement shows a handle labelled
 "drag to move" at its centre; dragging it adds an independent movement
 without changing the first class. The label does not represent a movement
 that would be applied before dragging.
+
+## LLM interpretation of edited instructions
+
+The desktop suggestion editor now uses `llm/interpretation.py` for edited
+text. The selected OpenRouter model returns validated movement fields;
+invalid output blocks Apply and can be retried with Interpret text. This is
+asynchronous and keeps the previous movement until a valid reply arrives.
+The deterministic `text_to_movement.py` module remains for older tests/tools,
+but is no longer the desktop editor's interpretation path.
+
+See `study/README.md` for the local survey, study controls, checkpoint bank,
+recording controls, tutorial assets and the complete text-to-target audit.

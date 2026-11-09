@@ -23,7 +23,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None,
                 pause_after_n_epochs=None, plot=None,
                 checkpoint_dir=None, logger=None, metrics_callback=None,
-                strategy_var=None, llm_suggestions_callback=None):
+                strategy_var=None, llm_suggestions_callback=None, target_callback=None, start_epoch=0, paused_state=None):
     amp_device = device.type if device.type in ('cuda', 'mps') else 'cpu'
     scaler = torch.amp.GradScaler(amp_device, enabled=amp_device != 'cpu')
 
@@ -35,7 +35,39 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
     ideal_structure = None
     current_strategy = get_strategy(strategy_var.get() if strategy_var is not None else DEFAULT_STRATEGY_ID)
 
-    for epoch in range(num_epochs):
+    target_needs_refresh = False
+
+    def wait_for_resume():
+        nonlocal target_needs_refresh
+        if stop_training and stop_training.is_set():
+            return False
+        if pause_event is None or not pause_event.is_set():
+            return True
+        target_needs_refresh = True
+        if paused_state is not None:
+            paused_state.set()
+        try:
+            while pause_event.is_set():
+                if stop_training and stop_training.is_set():
+                    return False
+                time.sleep(0.05)
+        finally:
+            if paused_state is not None:
+                paused_state.clear()
+        return not (stop_training and stop_training.is_set())
+
+    def rebuild_target(epoch_number):
+        nonlocal current_strategy, ideal_structure, target_needs_refresh
+        target_needs_refresh = False
+        current_strategy = get_strategy(strategy_var.get() if strategy_var is not None else DEFAULT_STRATEGY_ID)
+        suggestions = llm_suggestions_callback() if llm_suggestions_callback else None
+        ideal_structure = compute_structure_for_strategy(current_strategy, plot, device, suggestions)
+        if target_callback:
+            target_callback(ideal_structure, current_strategy, epoch_number)
+
+    for epoch in range(start_epoch, start_epoch + num_epochs):
+        if not wait_for_resume():
+            return
         model.train()
         running_loss = 0.0
         ce_running_loss = 0.0
@@ -47,23 +79,18 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         epoch_ce_loss_sum = 0.0
         epoch_interaction_loss_sum = 0.0
 
-        if epoch % pause_after_n_epochs == 0:
-            current_strategy = get_strategy(
-                strategy_var.get() if strategy_var is not None else DEFAULT_STRATEGY_ID)
-            # Single loss (see llm/strategies.py): the target structure it is
-            # pulled towards comes from wherever the active strategy says it
-            # should - the operator's 2D drags/LLM-applied layout, or the
-            # model's real latent space nudged by the LLM's suggestions.
-            llm_suggestions = llm_suggestions_callback() if llm_suggestions_callback else None
-            ideal_structure = compute_structure_for_strategy(current_strategy, plot, device, llm_suggestions)
-
-        if stop_training and stop_training.is_set():
-            return
-
-        if pause_event and pause_event.is_set():
-            pause_event.wait()
+        if target_needs_refresh or epoch == start_epoch or (pause_after_n_epochs and epoch % pause_after_n_epochs == 0):
+            rebuild_target(epoch + 1)
 
         for i, (inputs, labels) in enumerate(trainloader):
+            if pause_event is not None and pause_event.is_set():
+                if not wait_for_resume():
+                    return
+                # Edits made while paused must become the target before the next update.
+                rebuild_target(epoch + 1)
+                model.train()
+            if stop_training and stop_training.is_set():
+                return
 
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -178,19 +205,20 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                     epoch_ce_loss_sum / len(trainloader),
                     strategy_id=current_strategy.id)
 
+        # Checkpoint cadence is independent of the interaction pause schedule.
+        if checkpoint_dir and (epoch + 1) % 5 == 0:
+            loss_info = {
+                'running_loss': running_loss,
+                'ce_loss': ce_running_loss,
+                'interaction_loss': interaction_running_loss,
+                'val_accuracy': val_accuracy,
+                'test_accuracy': test_accuracy
+            }
+            save_checkpoint(model, optimizer, epoch + 1, checkpoint_dir, loss_info)
+            if log_callback:
+                log_callback(f"Saved checkpoint at epoch {epoch + 1}")
         # Handle pause after N epochs
         if pause_after_n_epochs and (epoch + 1) % pause_after_n_epochs == 0:
-            if checkpoint_dir:
-                loss_info = {
-                    'running_loss': running_loss,
-                    'ce_loss': ce_running_loss,
-                    'interaction_loss': interaction_running_loss,
-                    'val_accuracy': val_accuracy,
-                    'test_accuracy': test_accuracy
-                }
-                save_checkpoint(model, optimizer, epoch + 1, checkpoint_dir, loss_info)
-                if log_callback:
-                    log_callback(f"Saved checkpoint at epoch {epoch + 1}")
             if epoch_end_callback:
                 epoch_end_callback()
             if pause_event:
@@ -199,10 +227,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 print(log_message)
                 if log_callback:
                     log_callback(log_message)
-                while pause_event.is_set():
-                    time.sleep(0.1)
-                    if stop_training and stop_training.is_set():
-                        return
+                if not wait_for_resume():
+                    return
 
     print('Finished Training')
 

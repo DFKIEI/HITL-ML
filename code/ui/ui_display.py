@@ -85,6 +85,8 @@ def log_modification(self, kind, **payload):
     data = getattr(self, 'data', None)
     if events is None or data is None:
         return
+    if kind in ('center_drag', 'point_drag', 'class_reset') and hasattr(self, 'record_study_interaction'):
+        self.record_study_interaction(kind=kind, payload=payload)
     events.log('MODIFICATION', kind=kind, **payload,
                state_after={'points': getattr(self, 'moved_points', data['features']),
                             'centers': data['centers']})
@@ -169,6 +171,8 @@ def display_scatter_plot(self, data, tab):
         if event.inaxes is None:
             return
         if llm_overlay_press(self, event):
+            return
+        if hasattr(self, 'study_allows_apply') and not self.study_allows_apply():
             return
         if not getattr(self, 'dragging_enabled', True):
             return
@@ -270,6 +274,8 @@ def display_scatter_plot(self, data, tab):
 
     def on_double_click(event):
         if event.inaxes is None:
+            return
+        if hasattr(self, 'study_allows_apply') and not self.study_allows_apply():
             return
         if not getattr(self, 'dragging_enabled', True):
             return
@@ -528,6 +534,11 @@ def _shown_suggestions(self):
 
 
 def _overlay_editable(self):
+    panel = getattr(self, 'llm_panel', None)
+    current = getattr(self, 'llm_focus_suggestion', None)
+    states = getattr(panel, 'text_interpretations', {})
+    if current is not None and isinstance(states, dict) and states.get(current.uid, (None, 'ready'))[1] == 'pending':
+        return False
     strategy_var = getattr(self, 'strategy_var', None)
     return strategy_var is not None and get_strategy(strategy_var.get()).suggestions_editable
 
@@ -702,6 +713,8 @@ def apply_llm_suggestion(self, suggestion, source='auto'):
     moved_points/data['centers'] (and therefore in the next human-loss
     ideal_structure too). Returns True if anything was actually changed.
     ``source`` ('auto' or 'participant') goes to the session log."""
+    if hasattr(self, 'study_allows_apply') and not self.study_allows_apply():
+        return False
     data = getattr(self, 'data', None)
     unique_labels = getattr(self, 'unique_labels', None)
     if data is None or unique_labels is None or getattr(self, 'ax', None) is None:
@@ -755,6 +768,8 @@ def apply_llm_suggestion(self, suggestion, source='auto'):
     self.plot.update_latent_space(self.moved_points)
     self.plot.moved_2d_points = self.moved_points
 
+    if hasattr(self, 'record_study_interaction'):
+        self.record_study_interaction(suggestion)
     log_modification(self, 'llm_apply', source=source, uid=getattr(suggestion, 'uid', None),
                      suggestion=suggestion.as_log_dict(),
                      vectors={int(c): v for c, v in vectors.items()},

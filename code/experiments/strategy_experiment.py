@@ -157,7 +157,9 @@ def run(condition, seed, args, loaders, llm_model, log):
                         Value(config['alpha']), report_dir, epoch_end_callback=on_pause,
                         pause_after_n_epochs=args.pause, plot=plot, logger=MagicMock(),
                         metrics_callback=record_epoch, strategy_var=Value(config['strategy']),
-                        llm_suggestions_callback=lambda: state['suggestions'])
+                        llm_suggestions_callback=lambda: state['suggestions'],
+                        checkpoint_dir=(os.path.join(args.checkpoint_dir, args.dataset, condition, f'seed_{seed}')
+                                        if getattr(args, 'checkpoint_dir', None) else None))
         finally:
             sys.stdout = stdout
     result = {'condition': condition, 'seed': seed, 'dataset': args.dataset, 'epochs': epochs,
@@ -209,6 +211,7 @@ def main():
     parser.add_argument('--split-seed', type=int, default=20261028,
                         help='fixed validation/test split, shared by all conditions and seeds')
     parser.add_argument('--llm-model', default=None, dest='llm_model')
+    parser.add_argument('--checkpoint-dir', default=None, help='save a model every five epochs, grouped by condition and seed')
     parser.add_argument('--out', default=None, help='append one JSON line per run here; runs already in it '
                                                      'are skipped')
     parser.add_argument('--summarize', default=None, metavar='RESULTS',
@@ -218,6 +221,8 @@ def main():
         summarize(load_results(args.summarize))
         return
     llm_model = args.llm_model or openrouter.get_default_model()
+    if args.checkpoint_dir:
+        args.checkpoint_dir = os.path.abspath(args.checkpoint_dir)
     if args.out:
         args.out = os.path.abspath(args.out)  # before the chdir below
 

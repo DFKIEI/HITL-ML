@@ -112,11 +112,19 @@ def load_checkpoint(model, optimizer, checkpoint_path):
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"No checkpoint found at {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-
-    return checkpoint['epoch'], checkpoint['loss_info']
+    import copy
+    checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'), weights_only=False)
+    state = checkpoint.get('model_state_dict', checkpoint.get('state_dict', checkpoint))
+    old_model, old_optimizer = copy.deepcopy(model.state_dict()), copy.deepcopy(optimizer.state_dict())
+    try:
+        model.load_state_dict(state)
+        if 'optimizer_state_dict' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    except Exception:
+        model.load_state_dict(old_model)
+        optimizer.load_state_dict(old_optimizer)
+        raise
+    return checkpoint.get('epoch', 0), checkpoint.get('loss_info', {})
 
 
 def save_checkpoint(model, optimizer, epoch, save_dir, loss_info):

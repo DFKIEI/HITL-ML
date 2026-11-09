@@ -26,7 +26,10 @@ from ui import ui_theme
 from ui.ui_theme import apply_theme
 
 
-class UI:
+from ui.ui_study import StudyControls
+
+
+class UI(StudyControls):
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name,
                  loss_type, visualization, probant_id, scenario):
         self.root = root
@@ -69,6 +72,8 @@ class UI:
         self.visualization_queue = queue.Queue()
         self.training_thread = None
         self.pause_event = Pause()
+        self.training_paused = threading.Event()
+        self._pause_was_acknowledged = False
         self.stop_training = threading.Event()
         self.current_plot_type = 'scatter'
 
@@ -176,6 +181,7 @@ class UI:
 
         create_info_labels(self)
         create_training_controls(self)
+        self.create_study_controls()
         create_visualization_controls(self)
 
         ttk.Separator(main_frame, orient=tk.VERTICAL).pack(side="left", fill="y", padx=ui_theme.PAD_M)
@@ -235,6 +241,12 @@ class UI:
     def _tick_session_clock(self):
         if self.events.closed:
             return
+        self.update_study_status()
+        acknowledged = self.training_paused.is_set() and self.pause_event.is_set()
+        if acknowledged and not self._pause_was_acknowledged:
+            self.status_var.set('Paused — study mode available')
+            self.events.log('TRAINING_PAUSE_CONFIRMED', epoch=self.latest_metrics.get('epoch'))
+        self._pause_was_acknowledged = acknowledged
         self.session_time_var.set(
             f"Session {_clock(self.events.elapsed())}  ·  this space {_clock(self.events.time_in('space'))}")
         self.root.after(1000, self._tick_session_clock)
@@ -262,6 +274,9 @@ class UI:
                 'llm_model': self.llm_panel.model_var.get() if self.llm_panel is not None else None}
 
     def toggle_training(self):
+        if self.study_mode_var.get():
+            self.status_var.set('Training is disabled in study mode.')
+            return
         if self.training_thread is None or not self.training_thread.is_alive():
             self.events.log('TRAINING_STARTED', **self._training_settings())
             self.events.enter('phase', 'training')
@@ -292,7 +307,7 @@ class UI:
                 self.events.enter('phase', 'paused')
                 self.pause_event.set()
                 self.training_button.config(text="Resume Training")
-                self.status_var.set("Paused")
+                self.status_var.set("Pausing after the current batch...")
                 # Enable pause epochs slider when pausing
                 self.pause_slider.configure(state='active')
                 self.alpha_entry.configure(state='active')
@@ -312,13 +327,26 @@ class UI:
                     checkpoint_dir=self.probant_scenario_dir, logger=self.model_tracker,
                     metrics_callback=self.record_metrics,
                     strategy_var=self.strategy_var,
-                    llm_suggestions_callback=self.get_latest_llm_suggestions)
+                    llm_suggestions_callback=self.get_latest_llm_suggestions,
+                    target_callback=self.record_training_target,
+                    start_epoch=getattr(self, 'loaded_checkpoint_epoch', 0),
+                    paused_state=self.training_paused)
         self.events.log('TRAINING_FINISHED', stopped=self.stop_training.is_set())
         self.events.enter('phase', 'finished')
+
+    def record_training_target(self, structure, strategy, epoch):
+        applied = self.applied_llm_suggestion_ids
+        sources = [s.as_log_dict() for s in self.latest_llm_suggestions
+                   if strategy.space == 'high_dim' or id(s) in applied]
+        target = {int(c): {'center': v['center'].detach().cpu().numpy(),
+                          'spread': float(v['spread'])} for c,v in (structure or {}).items()}
+        self.events.log('TRAINING_TARGET_BUILT', epoch=epoch, strategy=strategy.id,
+                        alpha=self.alpha_var.get(), sources=sources, target=target)
 
     def record_metrics(self, metrics):
         """Keep the newest scores so the LLM sees how the model is doing."""
         self.latest_metrics = metrics
+        self.loaded_checkpoint_epoch = metrics['epoch']
         self.events.log('EPOCH_END', **metrics)
 
     def get_latest_llm_suggestions(self):

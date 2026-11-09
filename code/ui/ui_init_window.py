@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
+from pathlib import Path
+from ui.checkpoint_picker import choose_checkpoint_file
 
 from ui import ui_theme
 
@@ -26,7 +28,7 @@ def run_initial_ui():
     root = tk.Tk()
     ui_theme.apply_theme(root)
     root.title("HITL-ML — Initial Setup")
-    root.geometry("440x360")
+    root.geometry("440x460")
     root.minsize(400, 340)
 
     # Input Variables
@@ -57,6 +59,16 @@ def run_initial_ui():
     ttk.Label(container, text="Scenario Name").pack(anchor=tk.W, pady=(0, 2))
     scenario_entry = ttk.Entry(container, textvariable=scenario_var)
     scenario_entry.pack(fill=tk.X, pady=(0, ui_theme.PAD_L))
+
+    checkpoint_var = tk.StringVar(value='Start from a new model')
+    def choose_model():
+        nonlocal filename
+        selected = choose_checkpoint_file(root)
+        if selected:
+            filename = selected
+            checkpoint_var.set(Path(selected).name)
+    ttk.Button(container, text='Choose pretrained model (optional)', command=choose_model).pack(fill=tk.X)
+    ttk.Label(container, textvariable=checkpoint_var, wraplength=360).pack(anchor=tk.W, pady=(2, 8))
 
     confirm_button = ttk.Button(container, text="Confirm", state=tk.DISABLED,
                                 style='Primary.TButton', command=confirm_action)

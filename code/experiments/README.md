@@ -123,3 +123,10 @@ See [ACCURACY_STUDY_PLAN.md](ACCURACY_STUDY_PLAN.md) for the fixed 60-epoch,
 behaviour and analysis plan. The full study has not been launched locally.
 The plan distinguishes the saved descriptive accuracy curves from a controlled
 comparison of the LLM methods.
+
+## Study checkpoint bank
+
+`strategy_experiment.py --checkpoint-dir <directory>` saves every fifth epoch,
+grouped by dataset, condition and seed. Use a fresh output path to generate
+missing checkpoint epochs. See `../../study/README.md` for a baseline-only
+command, model loading, study limits and the local survey workflow.

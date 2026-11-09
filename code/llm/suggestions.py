@@ -142,6 +142,8 @@ class PairSuggestion:
     tighten_j: bool = False
     source: str = 'llm'  # 'llm', or 'human' for one the operator added
     expected_benefit: Optional[str] = None  # the LLM's own estimate, see BENEFITS
+    original_text: Optional[str] = None
+    interpretation: dict = field(default_factory=dict)
     edited: bool = False  # the operator changed it after it arrived
     # Operator-set geometry from dragging the overlay arrow/circle on the
     # scatter plot, used instead of the categorical presets above (see
@@ -174,6 +176,8 @@ class PairSuggestion:
             'class_i_name': self.class_i_name,
             'class_j_name': self.class_j_name,
             'suggestion': self.suggestion,
+            'original_text': self.original_text,
+            'interpretation': self.interpretation,
             'direction': self.direction,
             'scale': self.scale,
             'tighten_i': self.tighten_i,
