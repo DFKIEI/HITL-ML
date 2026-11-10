@@ -2,11 +2,11 @@ WEBVTT
 
 1
 00:00:00.000 --> 00:00:12.000
-1. Explore the representation: This is the latent space view. Each dot is an example. Colours show its class. The controls are on the left, and suggestions are on the right.
+1. Explore the representation: This is the latent space view. Each dot is an example, and colours show its class. The suggestions sidebar is already open on the right.
 
 2
 00:00:12.000 --> 00:00:24.000
-2. Read the suggestions sidebar: Read one suggestion at a time. Use Previous or Skip to move through them. Dashed arrows show proposed changes. Apply commits the change.
+2. Get suggestions: Click Get Suggestions and wait for the response. Read the proposed changes on the right. Dashed arrows preview the movements. Nothing is applied yet.
 
 3
 00:00:24.000 --> 00:00:36.000
@@ -29,9 +29,9 @@ WEBVTT
 7. Inspect the measured effect: These measures describe the proposed change. They show movement size and class separation. A better layout does not always mean better accuracy.
 
 8
-00:01:24.000 --> 00:01:36.000
-8. Complete a study task: Study mode uses a pretrained model and locks training. Complete three interactions within five minutes. Your count and remaining time appear here.
+00:01:24.000 --> 00:01:37.000
+8. Complete a study task: Enable Study mode, then click Begin or reset study task. Training stays locked. You have three interactions and five minutes. Watch the count and timer.
 
 9
-00:01:36.000 --> 00:01:48.000
+00:01:37.000 --> 00:01:49.000
 9. Finish and return to the survey: Collapse either sidebar when you want more space. After the task, return to the survey. Answer the questions, then stop and save the recording.

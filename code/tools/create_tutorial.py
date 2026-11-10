@@ -53,19 +53,19 @@ def application_window_id():
 
 
 NARRATION = [
-('1. Explore the representation', 'This is the latent space view. Each dot is an example. Colours show its class. The controls are on the left, and suggestions are on the right.'),
-('2. Read the suggestions sidebar', 'Read one suggestion at a time. Use Previous or Skip to move through them. Dashed arrows show proposed changes. Apply commits the change.'),
+('1. Explore the representation', 'This is the latent space view. Each dot is an example, and colours show its class. The suggestions sidebar is already open on the right.'),
+('2. Get suggestions', 'Click Get Suggestions and wait for the response. Read the proposed changes on the right. Dashed arrows preview the movements. Nothing is applied yet.'),
 ('3. Focus on the current classes', 'Turn on this option to show only the classes in the current suggestion. Turn it off whenever you need the full picture.'),
 ('4. Adjust the proposal', 'Watch the cursor drag the first arrow, then the second. Each arrow can be edited independently. Drag the dashed circle to make a group tighter.'),
 ('5. Edit an instruction', 'Now edit the instruction in the text box. The backend asks the language model to interpret your words. Wait for the updated arrows, then review them.'),
 ('6. Apply the reviewed change', 'Click Apply when the proposal looks right. The points move, and the log saves your words and the final movements together.'),
 ('7. Inspect the measured effect', 'These measures describe the proposed change. They show movement size and class separation. A better layout does not always mean better accuracy.'),
-('8. Complete a study task', 'Study mode uses a pretrained model and locks training. Complete three interactions within five minutes. Your count and remaining time appear here.'),
+('8. Complete a study task', 'Enable Study mode, then click Begin or reset study task. Training stays locked. You have three interactions and five minutes. Watch the count and timer.'),
 ('9. Finish and return to the survey', 'Collapse either sidebar when you want more space. After the task, return to the survey. Answer the questions, then stop and save the recording.')
 ]
 CAPTIONS = [
-'Each dot is an example. Colours identify classes. Controls are on the left; suggestions are on the right.',
-'Review one suggestion at a time. Dashed arrows show the proposal. Apply commits the change.',
+'Each dot is an example. Colours identify classes. The suggestions sidebar is ready on the right.',
+'Click Get Suggestions. Wait for the response, then review the proposed changes on the right.',
 'Use “Only this suggestion’s clusters” to hide unrelated groups while editing.',
 'Drag each arrow independently. Drag a circle edge to change how tightly a class is grouped.',
 'Edit the text. The backend LLM interprets the instruction and updates the preview automatically.',
@@ -117,15 +117,16 @@ def main():
     root=tk.Tk();app=UI(root,model,opt,train,val,test,device,'CIFAR10','CNN_CIFAR10','cross_entropy','validation','TUTORIAL','cursor_demo')
     root.geometry('1440x900+10+30');root.update()
     app.load_pretrained_model(str(ROOT/'saved_checkpoints/CIFAR10/checkpoint_epoch_20.pt'))
+    # The tutorial begins with the editable suggestions sidebar already enabled.
     app.strategy_display_var.set(STRATEGIES[4].label);app.on_strategy_change();root.update()
     names=dict(enumerate(val.dataset.dataset.classes))
     record=next(json.loads(l) for l in (ROOT/'code/experiments/results/llm_comparison.jsonl').read_text().splitlines()
                 if json.loads(l)['model']=='openai/gpt-5-mini' and json.loads(l)['dataset']=='CIFAR10')
     summary,suggestions=parse_suggestions(record['raw'],names,set(names))
-    app.llm_panel.global_summary=summary;app.latest_llm_suggestions=suggestions
+    # The tutorial replays a recorded successful suggestions response.
     app.llm_panel.model_var.set('openai/gpt-5-mini')
     for s in suggestions:s.original_text=s.suggestion
-    app.llm_panel.refresh_cards();root.update()
+    root.update()
     window=None if args.verify_ui else application_window_id()
     timeline=[];scene=0;scene_start=0;last_path=None;last_base=None;frame_number=0
     try:font=ImageFont.truetype('/System/Library/Fonts/Supplemental/Arial.ttf',25)
@@ -192,8 +193,32 @@ def main():
                 found=walk(child)
                 if found is not None:return found
         return walk(app.llm_panel.suggestion_frame)
+    def widget_point(widget):
+        root.update()
+        return (widget.winfo_rootx()-root.winfo_rootx()+widget.winfo_width()/2,
+                widget.winfo_rooty()-root.winfo_rooty()+widget.winfo_height()/2)
+    def find_text(widget,text):
+        try:
+            if widget.cget('text')==text:return widget
+        except tk.TclError:pass
+        for child in widget.winfo_children():
+            found=find_text(child,text)
+            if found is not None:return found
     capture();finish_scene()
-    capture();finish_scene()
+    # Exercise the actual Get Suggestions button and asynchronous result path,
+    # replaying public demo output instead of paying for another identical request.
+    import ui.ui_llm as panel_module
+    original_request=panel_module.request_suggestions
+    panel_module.request_suggestions=lambda *a,**kw:(summary,suggestions,{},record['raw'])
+    button=app.llm_panel.request_button
+    capture(1.,widget_point(button));capture(.5,widget_point(button),True)
+    button.invoke()
+    deadline=time.monotonic()+15
+    while app.llm_panel.request_running:
+        root.update();time.sleep(.05)
+        if time.monotonic()>deadline:raise RuntimeError('Tutorial suggestions response timed out')
+    panel_module.request_suggestions=original_request
+    capture(1.);finish_scene()
     app.llm_panel.suggestion_view_var.set(True);app.llm_panel._toggle_suggestion_view();capture();finish_scene()
     s=suggestions[0]
     h=next(h for h in app.llm_handles if h['kind']=='arrow' and h['class']==s.class_i)
@@ -243,8 +268,12 @@ def main():
     finish_scene()
     assert app.llm_panel._apply(s);capture();finish_scene()
     app.llm_panel.current_index=1;app.llm_panel.refresh_cards();capture();finish_scene()
-    app.study_mode_var.set(True);app.toggle_study_mode();app.begin_study_task();root.update()
-    app.control_panel.master.yview_moveto(.3);capture();finish_scene()
+    app.control_panel.master.yview_moveto(.3);root.update()
+    checkbox=find_text(app.control_panel,'Study mode (training locked)')
+    capture(1.,widget_point(checkbox));capture(.5,widget_point(checkbox),True);checkbox.invoke();root.update()
+    begin=find_text(app.control_panel,'Begin / reset study task')
+    capture(1.,widget_point(begin));capture(.5,widget_point(begin),True);begin.invoke();root.update()
+    capture(1.);finish_scene()
     app.toggle_sidebar('controls');capture();finish_scene()
     if args.verify_ui:
         assert str(app.training_button.cget('state'))=='disabled'

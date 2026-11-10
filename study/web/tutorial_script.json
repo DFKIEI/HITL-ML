@@ -1,12 +1,12 @@
 [
   {
     "title": "1. Explore the representation",
-    "caption": "This is the latent space view. Each dot is an example. Colours show its class. The controls are on the left, and suggestions are on the right.",
+    "caption": "This is the latent space view. Each dot is an example, and colours show its class. The suggestions sidebar is already open on the right.",
     "duration": 12
   },
   {
-    "title": "2. Read the suggestions sidebar",
-    "caption": "Read one suggestion at a time. Use Previous or Skip to move through them. Dashed arrows show proposed changes. Apply commits the change.",
+    "title": "2. Get suggestions",
+    "caption": "Click Get Suggestions and wait for the response. Read the proposed changes on the right. Dashed arrows preview the movements. Nothing is applied yet.",
     "duration": 12
   },
   {
@@ -36,8 +36,8 @@
   },
   {
     "title": "8. Complete a study task",
-    "caption": "Study mode uses a pretrained model and locks training. Complete three interactions within five minutes. Your count and remaining time appear here.",
-    "duration": 12
+    "caption": "Enable Study mode, then click Begin or reset study task. Training stays locked. You have three interactions and five minutes. Watch the count and timer.",
+    "duration": 13
   },
   {
     "title": "9. Finish and return to the survey",
