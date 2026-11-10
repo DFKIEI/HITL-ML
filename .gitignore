@@ -160,6 +160,7 @@ cython_debug/
 #.idea/
 *.meta
 *.html
+!study/web/index.html
 *.gz
 *.txt~
 *.gz
