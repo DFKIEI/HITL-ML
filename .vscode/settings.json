@@ -1,5 +1,6 @@
 {
-    "python.defaultInterpreterPath": "/Users/vishalbanwari/miniconda3/envs/pamap/bin/python",
     "python.analysis.extraPaths": [
-    ]
+    ],
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
 }

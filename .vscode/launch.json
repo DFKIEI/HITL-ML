@@ -6,11 +6,11 @@
     "configurations": [
 
         {
-            "name": "Python: Current File",
+            "name": "HITL-ML",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/code/main.py",
-            "python": "/Users/vishalbanwari/miniconda3/envs/pamap/bin/python",
+            "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
         }
     ]
