@@ -1,7 +1,7 @@
 {
   "title": "Latent Space VIS",
   "source": "Latent_Space_VIS.qsf",
-  "source_sha256": "6910b1afa97c753db5088b49902faa3a5b5db0a069b8c6e26173956bb3e826c7",
+  "source_sha256": "b6c5a6b32a406531babe958aa6cd9bc6e2b608722893f2293139f25f21f4a797",
   "flow": [
     {
       "Type": "Standard",
@@ -104,12 +104,6 @@
           "Autofill": []
         }
       ]
-    },
-    {
-      "Type": "Block",
-      "ID": "BL_bQufEN3Wct7dJdQ",
-      "FlowID": "FL_15",
-      "Autofill": []
     },
     {
       "Type": "Standard",
@@ -233,6 +227,14 @@
         },
         {
           "type": "Question",
+          "question": "QID193"
+        },
+        {
+          "type": "Page Break",
+          "question": null
+        },
+        {
+          "type": "Question",
           "question": "QID133"
         }
       ]
@@ -280,6 +282,14 @@
         {
           "type": "Question",
           "question": "QID191"
+        },
+        {
+          "type": "Page Break",
+          "question": null
+        },
+        {
+          "type": "Question",
+          "question": "QID194"
         },
         {
           "type": "Page Break",
@@ -573,7 +583,7 @@
       "id": "QID173",
       "type": "TE",
       "selector": "SL",
-      "text": "Experimenter notes",
+      "text": "Interview and experimenter notes",
       "choices": [],
       "answers": [],
       "required": false,
@@ -599,7 +609,7 @@
       "id": "QID175",
       "type": "DB",
       "selector": "TB",
-      "text": "Please hand the tablet back to the experimenter",
+      "text": "Please switch to the tool",
       "choices": [],
       "answers": [],
       "required": false,
@@ -964,6 +974,136 @@
       "text": "How old are you?",
       "choices": [],
       "answers": [],
+      "required": true,
+      "min": 0,
+      "max": 100,
+      "showValue": true,
+      "labels": []
+    },
+    "QID193": {
+      "id": "QID193",
+      "type": "Matrix",
+      "selector": "Likert",
+      "text": "Trust in AI assistant",
+      "choices": [
+        {
+          "id": "1",
+          "text": "I am confident in the AI assistant.",
+          "textEntry": false
+        },
+        {
+          "id": "2",
+          "text": "The AI assistant is reliable.",
+          "textEntry": false
+        },
+        {
+          "id": "3",
+          "text": "I can trust the AI assistant.",
+          "textEntry": false
+        }
+      ],
+      "answers": [
+        {
+          "id": "1",
+          "text": "1 (Not at all)",
+          "textEntry": false
+        },
+        {
+          "id": "2",
+          "text": "2",
+          "textEntry": false
+        },
+        {
+          "id": "3",
+          "text": "3",
+          "textEntry": false
+        },
+        {
+          "id": "4",
+          "text": "4",
+          "textEntry": false
+        },
+        {
+          "id": "5",
+          "text": "5",
+          "textEntry": false
+        },
+        {
+          "id": "6",
+          "text": "6",
+          "textEntry": false
+        },
+        {
+          "id": "7",
+          "text": "7 (Extremely)",
+          "textEntry": false
+        }
+      ],
+      "required": true,
+      "min": 0,
+      "max": 100,
+      "showValue": true,
+      "labels": []
+    },
+    "QID194": {
+      "id": "QID194",
+      "type": "Matrix",
+      "selector": "Likert",
+      "text": "Trust in AI assistant",
+      "choices": [
+        {
+          "id": "1",
+          "text": "I am confident in the AI assistant.",
+          "textEntry": false
+        },
+        {
+          "id": "2",
+          "text": "The AI assistant is reliable.",
+          "textEntry": false
+        },
+        {
+          "id": "3",
+          "text": "I can trust the AI assistant.",
+          "textEntry": false
+        }
+      ],
+      "answers": [
+        {
+          "id": "1",
+          "text": "1 (Not at all)",
+          "textEntry": false
+        },
+        {
+          "id": "2",
+          "text": "2",
+          "textEntry": false
+        },
+        {
+          "id": "3",
+          "text": "3",
+          "textEntry": false
+        },
+        {
+          "id": "4",
+          "text": "4",
+          "textEntry": false
+        },
+        {
+          "id": "5",
+          "text": "5",
+          "textEntry": false
+        },
+        {
+          "id": "6",
+          "text": "6",
+          "textEntry": false
+        },
+        {
+          "id": "7",
+          "text": "7 (Extremely)",
+          "textEntry": false
+        }
+      ],
       "required": true,
       "min": 0,
       "max": 100,

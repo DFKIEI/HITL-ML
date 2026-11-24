@@ -1,6 +1,7 @@
 {
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv-cuda\\Scripts\\python.exe",
     "python.analysis.extraPaths": [
     ],
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "python-envs.defaultPackageManager": "ms-python.python:pip"
 }

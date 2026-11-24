@@ -11,7 +11,8 @@
             "request": "launch",
             "program": "${workspaceFolder}/code/main.py",
             "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}\\.venv-cuda\\Scripts\\python.exe"
         }
     ]
 }

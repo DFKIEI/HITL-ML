@@ -1,5 +1,5 @@
 """Local survey and recording storage. Run: python study/server.py"""
-import argparse,json,re,threading,uuid,os
+import argparse,json,re,threading
 from datetime import datetime,timezone
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
@@ -10,6 +10,36 @@ LOCK=threading.Lock()
 def identifier(value):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',value):raise ValueError('Invalid session identifier')
     return value
+def study_label(value):
+    return re.sub(r'[^A-Za-z0-9_-]+','-',str(value)).strip('-_')[:80] or 'participant'
+
+def timestamp():
+    return datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%SZ')
+
+def available_path(path):
+    candidate=path
+    number=2
+    while candidate.exists():
+        candidate=path.with_name(f'{path.stem}-{number}{path.suffix}')
+        number+=1
+    return candidate
+
+def session_folder(output,sid,study_id):
+    legacy=output/sid
+    if legacy.is_dir():
+        return legacy
+    index=output/'.sessions'
+    index.mkdir(exist_ok=True)
+    entry=index/sid
+    if entry.is_file():
+        return output/entry.read_text()
+    folder=available_path(output/f'{study_label(study_id)}-{timestamp()}')
+    folder.mkdir()
+    temp=entry.with_suffix('.tmp')
+    temp.write_text(folder.name)
+    temp.replace(entry)
+    return folder
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT/'web'),**kwargs)
     def log_message(self,format,*args):pass
@@ -27,22 +57,27 @@ class Handler(SimpleHTTPRequestHandler):
                 if not isinstance(payload.get('answers'),dict):raise ValueError('Answers missing')
                 payload['saved_at_utc']=datetime.now(timezone.utc).isoformat()
                 with LOCK:
-                    folder=self.server.output/sid;folder.mkdir(parents=True,exist_ok=True)
-                    temp=folder/'response.tmp';temp.write_text(json.dumps(payload,indent=2,ensure_ascii=False));temp.replace(folder/'response.json')
+                    folder=session_folder(self.server.output,sid,payload.get('study_id',''))
+                    response=folder/('response.json' if folder.name==sid else f'{folder.name}.json')
+                    temp=folder/'response.tmp';temp.write_text(json.dumps(payload,indent=2,ensure_ascii=False),encoding='utf-8');temp.replace(response)
                 return self.reply(200,{'saved':True,'session_id':sid})
             if parsed.path=='/api/recordings':
                 q=parse_qs(parsed.query);sid=identifier(q['session'][0]);rid=identifier(q['recording'][0]);part=int(q['part'][0])
                 mime=q['mime'][0].split(';')[0]
                 if mime not in ('video/webm','video/mp4') or part<0:raise ValueError('Invalid media metadata')
                 with LOCK:
-                    folder=self.server.output/sid;folder.mkdir(parents=True,exist_ok=True)
+                    folder=session_folder(self.server.output,sid,q.get('study_id',[''])[0])
                     manifest=folder/(rid+'.json')
                     meta=json.loads(manifest.read_text()) if manifest.exists() else {'parts':0,'mime':mime,'created_at_utc':datetime.now(timezone.utc).isoformat()}
                     if part!=meta['parts']:raise ValueError('Recording part out of order')
                     extension='webm' if mime=='video/webm' else 'mp4'
-                    with (folder/(rid+'.'+extension)).open('ab') as f:f.write(body)
+                    if not manifest.exists():
+                        video=available_path(folder/f'{study_label(q.get("study_id",[""])[0])}-{timestamp()}.{extension}')
+                        meta['filename']=video.name
+                    filename=meta.get('filename',f'{rid}.{extension}')
+                    with (folder/filename).open('ab') as f:f.write(body)
                     meta['parts']+=1;manifest.write_text(json.dumps(meta,indent=2))
-                return self.reply(200,{'saved':True,'part':part})
+                return self.reply(200,{'saved':True,'part':part,'filename':filename})
             self.reply(404,{'error':'Unknown endpoint'})
         except (ValueError,KeyError,TypeError,json.JSONDecodeError) as exc:self.reply(400,{'error':str(exc)})
         except Exception:self.reply(500,{'error':'Could not save locally. Check server output directory.'})
