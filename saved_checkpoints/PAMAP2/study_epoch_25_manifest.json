@@ -1,0 +1,16 @@
+{
+  "dataset": "PAMAP2",
+  "model": "CNN_PAMAP2",
+  "epoch": 25,
+  "source": "/Users/vishalbanwari/Documents/GitHub/HITL-ML/saved_checkpoints/PAMAP2/checkpoint_epoch_20.pt",
+  "seed": 0,
+  "device": "mps",
+  "batch": 512,
+  "objective": "cross_entropy_and_existing_scale_regularizer",
+  "note": "Continues historical checkpoint; original training seed and split are not known.",
+  "sha256": "62ccdbadc1b492418a72dd7f28cc1dac8945afece749091a6e1471eb03296e0a",
+  "metrics": {
+    "val_accuracy": 69.7836754440528,
+    "test_accuracy": 71.30242825607064
+  }
+}

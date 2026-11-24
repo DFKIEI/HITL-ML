@@ -84,6 +84,8 @@ def compute_structure_for_strategy(strategy, plot, device, llm_suggestions):
     - 2D strategies (1, 3, 4): the operator's dragged/LLM-applied 2D
       scatter-plot positions (``compute_ideal_structure``).
     """
+    if plot is None:
+        return None
     if strategy.space == 'high_dim':
         latent_ref_points = torch.tensor(plot.latent_features, dtype=torch.float32, device=device)
         return compute_llm_ideal_structure(

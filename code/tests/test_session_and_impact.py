@@ -168,3 +168,23 @@ def test_overlay_only_draws_the_suggestion_on_screen():
     assert _shown_suggestions(ui) == []
     ui.llm_focus_suggestion = None
     assert _shown_suggestions(ui) == [first]
+
+
+def test_participant_log_only_contains_events_inside_study_mode(tmp_path):
+    events=SessionRecorder('p1','A1',str(tmp_path))
+    events.log('SETUP_EDIT',text='before study')
+    first=events.start_experiment(dataset='CIFAR10',epoch=25)
+    events.log('SUGGESTION_TEXT_CHANGED',text='participant edit')
+    events.log('MODIFICATION',kind='center_drag')
+    events.end_experiment()
+    events.log('SETUP_EDIT',text='between studies')
+    second=events.start_experiment(dataset='PAMAP2',epoch=25)
+    events.log('STUDY_INTERACTION',number=1)
+    events.close()
+    assert first!=second
+    records=[json.loads(line) for line in (tmp_path/f'experiment_{first}.jsonl').read_text().splitlines()]
+    assert [r['type'] for r in records]==['EXPERIMENT_STARTED','SUGGESTION_TEXT_CHANGED','MODIFICATION','EXPERIMENT_ENDED']
+    assert all(r['experiment_id']==first and r['study_elapsed_s']>=0 for r in records)
+    records=[json.loads(line) for line in (tmp_path/f'experiment_{second}.jsonl').read_text().splitlines()]
+    assert records[-1]['type']=='EXPERIMENT_ENDED' and records[-1]['reason']=='window_closed'
+    assert all(r['type']!='SETUP_EDIT' for r in records)

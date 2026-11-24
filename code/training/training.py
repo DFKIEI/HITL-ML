@@ -27,6 +27,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
     amp_device = device.type if device.type in ('cuda', 'mps') else 'cpu'
     scaler = torch.amp.GradScaler(amp_device, enabled=amp_device != 'cpu')
 
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
     ce_criterion = nn.CrossEntropyLoss()
     for param in model.projection_layer.parameters():
         param.requires_grad = False
@@ -36,14 +38,17 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
     current_strategy = get_strategy(strategy_var.get() if strategy_var is not None else DEFAULT_STRATEGY_ID)
 
     target_needs_refresh = False
+    paused_seconds = 0.0
+    alpha_val = alpha_var.get()
 
     def wait_for_resume():
-        nonlocal target_needs_refresh
+        nonlocal target_needs_refresh, paused_seconds
         if stop_training and stop_training.is_set():
             return False
         if pause_event is None or not pause_event.is_set():
             return True
         target_needs_refresh = True
+        pause_started = time.perf_counter()
         if paused_state is not None:
             paused_state.set()
         try:
@@ -52,13 +57,15 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                     return False
                 time.sleep(0.05)
         finally:
+            paused_seconds += time.perf_counter() - pause_started
             if paused_state is not None:
                 paused_state.clear()
         return not (stop_training and stop_training.is_set())
 
     def rebuild_target(epoch_number):
-        nonlocal current_strategy, ideal_structure, target_needs_refresh
+        nonlocal current_strategy, ideal_structure, target_needs_refresh, alpha_val
         target_needs_refresh = False
+        alpha_val = alpha_var.get()
         current_strategy = get_strategy(strategy_var.get() if strategy_var is not None else DEFAULT_STRATEGY_ID)
         suggestions = llm_suggestions_callback() if llm_suggestions_callback else None
         ideal_structure = compute_structure_for_strategy(current_strategy, plot, device, suggestions)
@@ -69,6 +76,9 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         if not wait_for_resume():
             return
         model.train()
+        paused_seconds = 0.0
+        train_started = time.perf_counter()
+        epoch_examples = 0
         running_loss = 0.0
         ce_running_loss = 0.0
         interaction_running_loss = 0.0
@@ -92,17 +102,9 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             if stop_training and stop_training.is_set():
                 return
 
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 
-            batch_size = inputs.size(0)
-            if batch_size % 10 != 0:
-                inputs = inputs[:-(batch_size % 10)]
-                labels = labels[:-(batch_size % 10)]
-                batch_size = inputs.size(0)
-
-            optimizer.zero_grad()
-
-            alpha_val = alpha_var.get()
+            optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast(device_type=amp_device, dtype=torch.float16, enabled=amp_device != 'cpu'):
                 outputs, reduced_features, latent_features = model(inputs)
@@ -138,22 +140,23 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             scaler.update()
 
             # Update metrics
-            running_loss += loss.item()
-            ce_running_loss += ce_loss.item()
-            interaction_running_loss += interaction_loss.item()
-            epoch_loss_sum += loss.item()
-            epoch_ce_loss_sum += ce_loss.item()
-            epoch_interaction_loss_sum += interaction_loss.item()
-            correct_predictions += (outputs.argmax(dim=1) == labels).sum().item()
+            running_loss += loss.detach()
+            ce_running_loss += ce_loss.detach()
+            interaction_running_loss += interaction_loss.detach()
+            epoch_loss_sum += loss.detach()
+            epoch_ce_loss_sum += ce_loss.detach()
+            epoch_interaction_loss_sum += interaction_loss.detach()
+            correct_predictions += (outputs.argmax(dim=1) == labels).sum().detach()
             total_predictions += labels.size(0)
+            epoch_examples += labels.size(0)
             batches_since_print += 1
 
             is_last_batch = (i + 1) == len(trainloader)
             if (i + 1) % freq == 0 or is_last_batch:
-                avg_loss = running_loss / batches_since_print
-                ce_avg_loss = ce_running_loss / batches_since_print
-                interaction_avg_loss = interaction_running_loss / batches_since_print
-                accuracy = 100. * correct_predictions / total_predictions
+                avg_loss = float(running_loss / batches_since_print)
+                ce_avg_loss = float(ce_running_loss / batches_since_print)
+                interaction_avg_loss = float(interaction_running_loss / batches_since_print)
+                accuracy = float(100. * correct_predictions / total_predictions)
 
                 log_message = f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.2f}%"
                 print(log_message)
@@ -169,6 +172,10 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 correct_predictions = 0
                 total_predictions = 0
                 batches_since_print = 0
+
+        train_seconds = time.perf_counter() - train_started - paused_seconds
+        throughput = epoch_examples / max(train_seconds, 1e-9)
+        print(f'Epoch {epoch + 1} training: {train_seconds:.1f}s, {throughput:.1f} samples/s', flush=True)
 
         # Validation and Testing
         val_accuracy, val_f1 = evaluate_model(model, valloader, device)
@@ -189,20 +196,22 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         if metrics_callback:
             metrics_callback({
                 'epoch': epoch + 1,
+                'train_seconds': train_seconds,
+                'train_samples_per_second': throughput,
                 'val_accuracy': val_accuracy,
                 'val_f1': val_f1,
                 'test_accuracy': test_accuracy,
                 'test_f1': test_f1,
-                'train_loss': epoch_loss_sum / len(trainloader),
-                'ce_loss': epoch_ce_loss_sum / len(trainloader),
-                'interaction_loss': epoch_interaction_loss_sum / len(trainloader),
+                'train_loss': float(epoch_loss_sum / len(trainloader)),
+                'ce_loss': float(epoch_ce_loss_sum / len(trainloader)),
+                'interaction_loss': float(epoch_interaction_loss_sum / len(trainloader)),
                 'alpha': alpha_val,
                 'strategy': current_strategy.id,
             })
 
-        save_report(epoch, epoch_loss_sum / len(trainloader), val_accuracy, "custom", report_dir,
-                    alpha_val, epoch_interaction_loss_sum / len(trainloader),
-                    epoch_ce_loss_sum / len(trainloader),
+        save_report(epoch, float(epoch_loss_sum / len(trainloader)), val_accuracy, "custom", report_dir,
+                    alpha_val, float(epoch_interaction_loss_sum / len(trainloader)),
+                    float(epoch_ce_loss_sum / len(trainloader)),
                     strategy_id=current_strategy.id)
 
         # Checkpoint cadence is independent of the interaction pause schedule.
@@ -240,20 +249,20 @@ def evaluate_model(model, dataloader, device):
 
     with torch.no_grad():
         for inputs, labels in dataloader:
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
             outputs, _, _ = model(inputs)
 
             if outputs.dim() > 2:
                 outputs = outputs.view(outputs.size(0), -1)
 
-            if outputs.size(1) != labels.max() + 1:
-                outputs = outputs[:, :labels.max() + 1]  # Truncate extra classes if any
-
             predictions = outputs.argmax(dim=1)
 
             # Collect all labels and predictions
-            all_labels.extend(labels.cpu().numpy())
-            all_predictions.extend(predictions.cpu().numpy())
+            all_labels.append(labels.detach())
+            all_predictions.append(predictions.detach())
+
+    all_labels = torch.cat(all_labels).cpu().tolist()
+    all_predictions = torch.cat(all_predictions).cpu().tolist()
 
     # Compute accuracy
     correct_predictions = sum([1 for l, p in zip(all_labels, all_predictions) if l == p])

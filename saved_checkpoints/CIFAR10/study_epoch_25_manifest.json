@@ -1,0 +1,16 @@
+{
+  "dataset": "CIFAR10",
+  "model": "CNN_CIFAR10",
+  "epoch": 25,
+  "source": "/Users/vishalbanwari/Documents/GitHub/HITL-ML/saved_checkpoints/CIFAR10/checkpoint_epoch_20.pt",
+  "seed": 0,
+  "device": "mps",
+  "batch": 512,
+  "objective": "cross_entropy_and_existing_scale_regularizer",
+  "note": "Continues historical checkpoint; original training seed and split are not known.",
+  "sha256": "c09935ea9ea38ca0d12b8232d7dacd249a68645fdf381289d88362a148c2683b",
+  "metrics": {
+    "val_accuracy": 85.56,
+    "test_accuracy": 85.62
+  }
+}

@@ -307,6 +307,9 @@ class SessionRecorder:
         self._open_segments = {}
         self.totals = {}
         self.closed = False
+        self._experiment_file = None
+        self.experiment_id = None
+        self._experiment_start = None
         self.log('SESSION_START', probant_id=probant_id, scenario=scenario, log_path=log_path,
                  wall_clock=self._time.strftime('%Y-%m-%d %H:%M:%S %z'))
 
@@ -328,9 +331,47 @@ class SessionRecorder:
                 'type': event_type,
             }
             record.update(_to_jsonable(payload))
+            if self._experiment_file is not None:
+                record['experiment_id'] = self.experiment_id
+                record['study_elapsed_s'] = round(self._time.monotonic() - self._experiment_start, 3)
+                participant_record = dict(record)
+                include = True
+                if event_type == 'TIME_SEGMENT':
+                    boundary = self._experiment_start - self._start
+                    start = max(float(record['start_s']), boundary)
+                    end = float(record['end_s'])
+                    include = end > start
+                    participant_record.update(start_s=round(max(0., start-boundary), 3),
+                        end_s=round(max(0., end-boundary), 3), duration_s=round(max(0., end-start), 3))
+                if include:
+                    self._experiment_file.write(json.dumps(participant_record) + '\n')
+                    self._experiment_file.flush()
             self._file.write(json.dumps(record) + '\n')
             self._file.flush()
             return self.seq
+
+    def start_experiment(self, **context):
+        """Create a participant record only when Study mode is enabled."""
+        import uuid
+        if self._experiment_file is not None:
+            return self.experiment_id
+        with self._lock:
+            self.experiment_id = uuid.uuid4().hex
+            self._experiment_start = self._time.monotonic()
+            name = f'experiment_{self.experiment_id}.jsonl'
+            self._experiment_file = open(os.path.join(self.log_path, name), 'x', encoding='utf-8')
+        self.log('EXPERIMENT_STARTED', **context)
+        return self.experiment_id
+
+    def end_experiment(self, reason='study_mode_disabled'):
+        if self._experiment_file is None:
+            return
+        self.log('EXPERIMENT_ENDED', reason=reason)
+        with self._lock:
+            self._experiment_file.close()
+            self._experiment_file = None
+            self.experiment_id = None
+            self._experiment_start = None
 
     # ------------------------------------------------------------- snapshots
     def save_space(self, **arrays):
@@ -393,6 +434,7 @@ class SessionRecorder:
             self._close_segment(kind, segment, now)
         self._open_segments = {}
         totals = {kind: {k: round(v, 3) for k, v in keys.items()} for kind, keys in self.totals.items()}
+        self.end_experiment(reason='window_closed')
         self.log('SESSION_END', duration_s=round(now, 3), time_spent=totals)
         with self._lock:
             self.closed = True

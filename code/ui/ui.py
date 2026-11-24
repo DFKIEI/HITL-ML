@@ -105,6 +105,8 @@ class UI(StudyControls):
         self.create_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self._tick_session_clock()
+        from ui.study_bridge import StudyBridge
+        self.study_bridge = StudyBridge(self)
 
     def create_ui(self):
         apply_theme(self.root)
@@ -199,6 +201,14 @@ class UI(StudyControls):
         self.llm_panel.pack(side=tk.LEFT, fill=tk.Y)
         self.collapsed_sidebars = set()
 
+        self.study_toolbar = ttk.Frame(main_frame)
+        self.study_toolbar.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(self.study_toolbar, textvariable=self.study_status).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.study_toolbar, text='Begin / reset task', command=self.begin_study_task).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.study_toolbar, text='Resume Training', command=self.resume_study_training).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.study_toolbar, text='Stop Training', command=self.stop_training_clicked).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.study_toolbar, text='Return to survey', command=self.return_to_survey).pack(side=tk.RIGHT, padx=5)
+        self.study_toolbar.pack_forget()
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
@@ -273,8 +283,8 @@ class UI(StudyControls):
                 'eval_frequency': self.freq_var.get(),
                 'llm_model': self.llm_panel.model_var.get() if self.llm_panel is not None else None}
 
-    def toggle_training(self):
-        if self.study_mode_var.get():
+    def toggle_training(self, allow_study=False):
+        if self.study_mode_var.get() and not allow_study:
             self.status_var.set('Training is disabled in study mode.')
             return
         if self.training_thread is None or not self.training_thread.is_alive():
@@ -329,7 +339,7 @@ class UI(StudyControls):
                     strategy_var=self.strategy_var,
                     llm_suggestions_callback=self.get_latest_llm_suggestions,
                     target_callback=self.record_training_target,
-                    start_epoch=getattr(self, 'loaded_checkpoint_epoch', 0),
+                    start_epoch=(self.latest_metrics or {}).get('epoch', getattr(self, 'loaded_checkpoint_epoch', 0)),
                     paused_state=self.training_paused)
         self.events.log('TRAINING_FINISHED', stopped=self.stop_training.is_set())
         self.events.enter('phase', 'finished')

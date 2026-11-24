@@ -155,7 +155,7 @@ class InteractivePlot:
         total_diff = np.abs(moved_latent_space - self.original_2d_points)
         print(f"Max/min change from last step: {np.max(step_diff)} / {np.min(step_diff)}")
         print(f"Max/min change from original layout: {np.max(total_diff)} / {np.min(total_diff)}")
-        self.moved_2d_points = moved_latent_space
+        self.moved_2d_points = np.asarray(moved_latent_space).copy()
         self.movement_occured = True
         print(f"moved_2d_points updated, shape: {self.moved_2d_points.shape}")
 

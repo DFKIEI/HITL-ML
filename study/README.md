@@ -106,3 +106,72 @@ locked during the task. Disabling study mode leaves training paused; click
 Resume explicitly when ready. The training target is rebuilt from the
 applied study edits before the next model update. A completed trained epoch
 is accepted as the task's model source and its epoch is included in the log.
+
+### Survey/tool handoff and participant layout
+
+Run `python study/server.py` and the desktop tool on the same computer. Use the
+**same Study ID** in both. In the tool, select the dataset, load the checkpoint,
+and select the study's strategy before continuing the survey. The two
+“Please switch to the tool” pages now send a local handoff request. The running
+tool checks once per second, raises its window, enables study mode, and begins
+the task when the model is paused or idle. No model, dataset, or strategy is
+silently changed by a handoff. If training is still running, pause it and use
+**Begin / reset task** in the main toolbar.
+
+Study mode hides the left configuration sidebar. Its main toolbar retains the
+interaction count/timer, task controls, **Resume Training**, **Stop Training**,
+and **Return to survey**. Resume explicitly ends the editing phase and starts
+training against the applied target; the participant layout stays visible.
+Edits are blocked during training. Begin another task once training is paused.
+At three interactions or five minutes the tool reports completion and minimizes;
+the open survey continues to the questionnaire. Returning early is logged too.
+Browser/OS focus restrictions can require selecting the survey window manually;
+the questionnaire still advances. Keep the original survey tab and recording open.
+
+The survey stores handoff and browser-focus events alongside answers. Tool logs
+store `SURVEY_TOOL_HANDOFF`, `TOOL_SURVEY_HANDOFF`, `TOOL_FOCUS_CHANGED`, and normal
+study events; incoming handoffs contain the survey session ID, page, and sequence.
+The bridge requires the local server to remain running and defaults to port 8765.
+For another local port, set `HITL_SURVEY_URL` before launching the tool.
+
+### Preparing epoch-25 study models
+
+From the repository root:
+
+```sh
+python code/tools/prepare_study_checkpoints.py --datasets CIFAR10 PAMAP2
+```
+
+This continues each existing epoch-20 model for five epochs using cross-entropy
+and the existing scale regularizer, without LLM calls. It leaves source files
+unchanged and writes `saved_checkpoints/<dataset>/checkpoint_epoch_25.pt` plus a
+manifest. Existing epoch-25 files are skipped. Historical checkpoint seeds/splits
+are unknown, so these files are study starting points rather than a controlled
+accuracy comparison. Copy both checkpoint files to the study computer.
+
+### CUDA training throughput
+
+Image loaders now use up to four persistent preprocessing workers, prefetching,
+and pinned memory on CUDA machines. `HITL_NUM_WORKERS` overrides the worker count
+(for example `$env:HITL_NUM_WORKERS="4"` in PowerShell). Transfers are nonblocking,
+cuDNN tunes fixed input sizes, and metrics synchronize at reporting boundaries
+rather than every batch. The interaction loss uses batched class calculations;
+loss and gradient equivalence are tested, including missing classes. Float32
+geometry is retained during mixed precision to avoid squared-distance overflow.
+PAMAP2 keeps its memory-backed single-process loader to avoid duplicating a large
+in-memory dataset on Windows. Batch size remains unchanged; compare samples per
+second on the RTX A6000, since utilization alone does not measure throughput.
+
+### Participant logging starts with Study mode
+
+Each time Study mode is enabled, the tool creates a new
+`user_study_logs/<participant>_<scenario>/experiment_<id>.jsonl`.
+It starts with `EXPERIMENT_STARTED`, model/checkpoint/strategy information,
+current suggestions, and a saved snapshot of the starting layout. Text edits,
+movement edits, Apply actions, training, and handoffs are recorded while Study
+mode stays enabled. `study_elapsed_s` starts at activation; recorded time segments
+exclude time spent in setup. Disabling Study mode (including returning to the
+survey) writes `EXPERIMENT_ENDED` and closes that participant record. Re-enabling
+it creates a separate file. Closing the tool also ends an active record.
+The existing session and legacy logs remain application diagnostics and can
+contain setup activity; use `experiment_*.jsonl` for participant analysis.

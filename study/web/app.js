@@ -1,6 +1,40 @@
 'use strict';
 const $=id=>document.getElementById(id), KEY='hitl-local-survey-v1';
 let startingNewParticipant=false;
+let handoffPage=null, handoffSequence=0, handoffTimer;
+async function requestTool(){
+ const sourcePage=page;
+ const response=await fetch('/api/handoff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({study_id:state.study_id,session_id:state.session_id,page:sourcePage})});
+ if(!response.ok)throw Error('Could not connect to tool');
+ handoffSequence=(await response.json()).sequence;
+ handoffPage=sourcePage;
+ state.events.push({type:'survey_tool_handoff',page,sequence:handoffSequence,time:new Date().toISOString()});
+ saveNow().catch(()=>{});
+}
+function toolHandoff(){
+ clearInterval(handoffTimer);
+ if(!pages[page]?.ids.includes('QID175'))return;
+ const note=element('p','Opening the tool. Keep this survey tab open; it will continue when the task finishes. Use the same Study ID in both windows.');
+ const retry=element('button','Open tool again',{type:'button'});
+ retry.onclick=()=>requestTool().catch(e=>note.textContent=e.message);
+ $('questions').append(note,retry);
+ requestTool().catch(e=>note.textContent=e.message);
+ handoffTimer=setInterval(async()=>{
+  try{
+   const r=await fetch('/api/tool?'+new URLSearchParams({study_id:state.study_id}));
+   const status=await r.json();
+   if(status.sequence!==handoffSequence)return;
+   if(status.state==='active')note.textContent='Task active in the tool. This survey will continue when you finish.';
+   if(status.state==='waiting_for_pause')note.textContent='Pause training in the tool, then begin the study task.';
+   if(status.state==='complete'&&page===handoffPage){
+    clearInterval(handoffTimer);
+    state.events.push({type:'tool_survey_handoff',page,sequence:handoffSequence,time:new Date().toISOString()});
+    await saveNow();
+    page++;render();saveLocal();window.focus();
+   }
+  }catch{}
+ },1000);
+}
 let schema,state,page=0,pages=[],saveTimer,saveQueue=Promise.resolve(),recorder,recordStreams=[],recordChunks=[],uploadQueue=Promise.resolve(),recordId,part=0,recordingSession;
 function element(tag,text,attrs={}){const e=document.createElement(tag);if(text!==null)e.textContent=text;Object.assign(e,attrs);return e;}
 function fieldKey(q,row){return row?`${q.id}:${row}`:q.id;}
@@ -75,7 +109,7 @@ function renderQuestion(q){const box=element('fieldset',null),legend=element('le
  else if(q.type==='Matrix'){for(const c of q.choices){const row=element('div',null,{className:'matrix-row'});row.append(element('div',c.text));const scale=element('div',null,{className:'scale'});for(const a of q.answers){const label=element('label',null),input=element('input',null,{type:'radio',name:fieldKey(q,c.id),value:a.id,required:q.required});input.checked=String(state.answers[fieldKey(q,c.id)])===a.id;input.addEventListener('change',()=>changed(fieldKey(q,c.id),a.id));label.append(input,element('span',a.text));scale.append(label);}row.append(scale);box.append(row);}}
  else if(q.type==='Slider'){for(const c of q.choices){const key=fieldKey(q,c.id),row=element('div',null),label=element('label',c.text||q.text,{className:'slider-label'});const input=element('input',null,{type:'range',min:q.min,max:q.max,step:'1',value:state.answers[key]??q.min});input.dataset.answer=key;const output=element('output',state.answers[key]??'Choose a value');input.addEventListener('input',()=>{changed(key,Number(input.value));output.textContent=input.value;});label.append(input,output);const ends=element('div',null,{className:'slider-endpoints'});ends.append(element('span',q.labels[0]||String(q.min)),element('span',q.labels.at(-1)||String(q.max)));row.append(label,ends);box.append(row);}}
  return box;}
-function render(){pages=makePages();page=Math.max(0,Math.min(page,pages.length-1));const current=pages[page];$('questions').replaceChildren(...current.ids.map(id=>renderQuestion(schema.questions[id])));$('pageTitle').textContent=current.title;$('pagePosition').textContent=`${page+1} / ${pages.length}`;$('previous').disabled=page===0;$('next').textContent=page===pages.length-1?'Save and finish':'Save and continue';$('validation').textContent='';state.events.push({type:'page_view',page,block:current.title,time:new Date().toISOString()});}
+function render(){clearInterval(handoffTimer);pages=makePages();page=Math.max(0,Math.min(page,pages.length-1));const current=pages[page];$('questions').replaceChildren(...current.ids.map(id=>renderQuestion(schema.questions[id])));$('pageTitle').textContent=current.title;$('pagePosition').textContent=`${page+1} / ${pages.length}`;$('previous').disabled=page===0;$('next').textContent=page===pages.length-1?'Save and finish':'Save and continue';$('validation').textContent='';state.events.push({type:'page_view',page,block:current.title,time:new Date().toISOString()});toolHandoff();}
 function validate(){if(!$('questions').reportValidity())return false;for(const id of pages[page].ids){const q=schema.questions[id];if(q.required&&q.type==='Slider'){for(const c of q.choices)if(state.answers[fieldKey(q,c.id)]===undefined){$('validation').textContent='Please choose a value for every slider, including values at the starting position.';return false;}}}return true;}
 function showTutorialError(){
  $('videoNote').textContent='The tutorial video could not load.';
@@ -168,3 +202,9 @@ window.addEventListener('beforeunload',e=>{
  $('recordMicrophone').checked=$('recordMicrophone').defaultChecked;
  $('saveStatus').textContent='Ready — saves locally';
 })().catch(e=>{$('saveStatus').textContent='Could not load survey: '+e.message;});
+
+for(const name of ['focus','blur'])window.addEventListener(name,()=>{
+ if(!state)return;
+ state.events.push({type:'survey_focus_changed',focused:name==='focus',page,time:new Date().toISOString()});
+ saveNow().catch(()=>{});
+});

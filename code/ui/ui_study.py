@@ -54,8 +54,51 @@ class StudyControls:
         self.study_started = None
         for widget in self.study_config_widgets:
             widget.configure(state='normal')
+        if enabled:
+            self.events.start_experiment(dataset=getattr(self, 'dataset_name', None),
+                checkpoint=getattr(self, 'loaded_checkpoint', None),
+                epoch=(getattr(self, 'latest_metrics', None) or {}).get('epoch', 0),
+                strategy=self.strategy_var.get() if hasattr(self, 'strategy_var') else None,
+                suggestions=[s.as_log_dict() for s in getattr(self, 'latest_llm_suggestions', [])])
+            if getattr(self, 'data', None) is not None and getattr(self, 'plot', None) is not None:
+                from ui.ui_display import _log_space_shown
+                baseline = dict(self.data, features=self.moved_points.copy())
+                _log_space_shown(self, baseline)
         self.events.log('STUDY_MODE_CHANGED', enabled=enabled)
+        if hasattr(self, 'study_toolbar'):
+            if enabled:
+                if 'controls' not in self.collapsed_sidebars:
+                    self.toggle_sidebar('controls')
+                self.left_toggle.configure(state='disabled')
+                self.study_toolbar.pack(side=tk.TOP, fill=tk.X, before=self.notebook)
+            else:
+                self.left_toggle.configure(state='normal')
+                self.study_toolbar.pack_forget()
+                if 'controls' in self.collapsed_sidebars:
+                    self.toggle_sidebar('controls')
         self.update_study_status()
+        if not enabled:
+            self.events.end_experiment()
+
+    def resume_study_training(self):
+        # Explicitly leave the editing phase while keeping the participant layout.
+        if not training_is_idle_or_paused(self):
+            self.status_var.set('Training is already running. Stop it or wait for the next pause.')
+            return
+        self.events.log('STUDY_TRAINING_REQUESTED', interactions=self.study_count)
+        self.study_started = None
+        if hasattr(self, 'study_bridge'):
+            self.study_bridge.publish('training', interactions=self.study_count)
+        self.toggle_training(allow_study=True)
+        self.update_study_status()
+
+    def return_to_survey(self):
+        self.events.log('TOOL_SURVEY_HANDOFF', interactions=self.study_count)
+        if hasattr(self, 'study_bridge'):
+            self.study_bridge.publish('complete', interactions=self.study_count, reason='returned_to_survey')
+        self.study_mode_var.set(False)
+        self.toggle_study_mode()
+        self.root.iconify()
 
     def begin_study_task(self):
         if not self.study_mode_var.get():
@@ -87,12 +130,14 @@ class StudyControls:
         self.events.log('STUDY_TASK_STARTED', checkpoint=source, base_checkpoint=self.loaded_checkpoint, epoch=epoch,
                         model_source='paused_training' if running_thread else 'current_model',
                         interaction_limit=self.study_limit_var.get(), minutes=self.study_minutes_var.get())
+        if hasattr(self, 'study_bridge'):
+            self.study_bridge.publish('active', epoch=epoch, interactions=0)
         self.update_study_status()
 
     def study_allows_apply(self):
         if not self.study_mode_var.get():
             return True
-        allowed = (self.study_started is not None and self.study_count < self.study_limit_var.get()
+        allowed = (training_is_idle_or_paused(self) and self.study_started is not None and self.study_count < self.study_limit_var.get()
                    and (not self.study_minutes_var.get() or
                         time.monotonic() - self.study_started < self.study_minutes_var.get() * 60))
         if not allowed:
@@ -114,7 +159,10 @@ class StudyControls:
         if not self.study_mode_var.get():
             self.study_status.set('Study mode off')
         elif self.study_started is None:
-            self.study_status.set('Use a loaded or paused model, then begin task. Training is locked.')
+            if not training_is_idle_or_paused(self):
+                self.study_status.set('Training is running; wait for a pause before beginning the next editing task.')
+            else:
+                self.study_status.set('Use a loaded or paused model, then begin task. Training is paused while editing.')
         else:
             elapsed = int(time.monotonic() - self.study_started)
             minutes = self.study_minutes_var.get()
@@ -125,6 +173,9 @@ class StudyControls:
                                   + (' · task complete' if complete else ''))
             if complete and not getattr(self, 'study_complete_logged', False):
                 self.study_complete_logged = True
+                if hasattr(self, 'study_bridge'):
+                    self.study_bridge.publish('complete', interactions=self.study_count, reason='task_limit')
+                    self.root.after(500, self.return_to_survey)
                 self.events.log('STUDY_TASK_COMPLETED', interactions=self.study_count,
                                 elapsed_s=elapsed, reason='interaction_limit' if self.study_count >= self.study_limit_var.get() else 'time_limit')
 
@@ -139,10 +190,17 @@ class StudyControls:
             except Exception as exc:
                 messagebox.showerror('Could not load checkpoint', str(exc))
 
-    def load_pretrained_model(self, path):
+    def load_pretrained_model(self, path, refresh=True):
         epoch, scores = load_checkpoint(self.model, self.optimizer, path)
         self.loaded_checkpoint = str(Path(path).resolve())
         self.loaded_checkpoint_epoch = epoch
+        # Discard pending redraws from the previous model before installing its replacement.
+        import queue
+        while True:
+            try:
+                self.visualization_queue.get_nowait()
+            except queue.Empty:
+                break
         self.plot = None  # a new checkpoint must not inherit the previous edited target
         self.latest_llm_suggestions = []
         self.applied_llm_suggestion_ids = set()
@@ -151,7 +209,8 @@ class StudyControls:
         self.latest_metrics = dict(scores, epoch=epoch)
         self.checkpoint_label.set(f'{Path(path).name} · epoch {epoch}')
         self.events.log('CHECKPOINT_LOADED', path=self.loaded_checkpoint, epoch=epoch, scores=scores)
-        self.update_visualization()
+        if refresh:
+            self.update_visualization()
         if self.llm_panel is not None:
             self.llm_panel.refresh_cards()
         self.update_study_status()

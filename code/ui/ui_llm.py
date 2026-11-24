@@ -881,8 +881,9 @@ class LLMSuggestionsPanel(ttk.Frame):
             # operator already saw it enacted.
             self.ui.applied_llm_suggestion_ids.add(id(suggestion))
             return True
+        self.status_var.set("Could not apply: check that both suggested classes are in the current plot and that the proposal includes a movement or tightening.")
         if status_var is not None:
-            status_var.set("could not apply - wait for the scatter plot")
+            status_var.set(self.status_var.get())
         return False
 
     def _apply_one(self, suggestion, status_var):

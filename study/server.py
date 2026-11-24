@@ -7,6 +7,7 @@ from urllib.parse import urlparse,parse_qs
 from convert_qsf import convert
 ROOT=Path(__file__).resolve().parent
 LOCK=threading.Lock()
+TOOL_SESSIONS={}
 def identifier(value):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',value):raise ValueError('Invalid session identifier')
     return value
@@ -47,11 +48,42 @@ class Handler(SimpleHTTPRequestHandler):
         data=json.dumps(payload).encode();self.send_response(status)
         self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)))
         self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(data)
+    def do_GET(self):
+        parsed=urlparse(self.path)
+        if parsed.path=='/api/tool':
+            key=parse_qs(parsed.query).get('study_id',[''])[0].strip()
+            with LOCK:
+                status=dict(TOOL_SESSIONS.get(key,{}))
+            return self.reply(200,status)
+        return super().do_GET()
     def do_POST(self):
         try:
             parsed=urlparse(self.path);length=int(self.headers.get('Content-Length','0'))
             if length<1 or length>32*1024*1024:raise ValueError('Request size invalid')
             body=self.rfile.read(length)
+            if parsed.path in ('/api/tool','/api/handoff'):
+                origin=self.headers.get('Origin')
+                if origin and origin != 'http://'+self.headers.get('Host',''):
+                    return self.reply(403,{'error':'Local survey origin required'})
+                payload=json.loads(body);key=str(payload.get('study_id','')).strip()
+                if not key or len(key)>80:raise ValueError('Study ID required')
+                with LOCK:
+                    entry=TOOL_SESSIONS.setdefault(key,{})
+                    if parsed.path=='/api/handoff':
+                        sequence=entry.get('sequence',0)+1
+                        entry.update(sequence=sequence, command={'sequence':sequence,'action':'focus_tool',
+                                     'page':payload.get('page'),'session_id':payload.get('session_id')},
+                                     state='requested')
+                        result={'requested':True,'sequence':sequence}
+                    else:
+                        entry['last_seen']=datetime.now(timezone.utc).isoformat()
+                        # An old completion must not finish a newly requested task.
+                        if payload.get('acknowledged',0)>=entry.get('sequence',0):
+                            entry['state']=payload.get('state','ready')
+                            for field in ('interactions','epoch','reason'):
+                                if field in payload:entry[field]=payload[field]
+                        result={'command':entry.get('command') if entry.get('sequence',0)>payload.get('acknowledged',0) else None}
+                return self.reply(200,result)
             if parsed.path=='/api/responses':
                 payload=json.loads(body);sid=identifier(payload['session_id'])
                 if not isinstance(payload.get('answers'),dict):raise ValueError('Answers missing')

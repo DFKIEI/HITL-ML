@@ -313,3 +313,17 @@ def test_stationary_reference_class_can_be_moved_independently(direction):
     np.testing.assert_allclose(handle(ui, 'arrow', 1)['end'], target)
     np.testing.assert_allclose(handle(ui, 'arrow', 0)['end'], first_tip)
     plt.close(ui.scatter_fig)
+
+
+def test_direct_drag_is_restricted_to_active_suggestion_even_when_all_classes_visible():
+    from ui.ui_display import draggable_classes
+    s=suggestion(class_i=0,class_j=1)
+    ui,_,_=plot_ui([s])
+    ui.llm_only_suggestion_clusters=False
+    ui.llm_focus_suggestion=s
+    assert draggable_classes(ui)=={0,1}
+    ui.llm_focus_suggestion=None
+    assert draggable_classes(ui)==set()
+    ui.strategy_var=SimpleNamespace(get=lambda:1)
+    assert draggable_classes(ui) is None
+    plt.close(ui.scatter_fig)

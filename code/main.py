@@ -59,7 +59,9 @@ def main():
     app = UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss,
        args.visualize,args.id, args.scenario)
     if args.checkpoint:
-        root.after(200, lambda: app.load_pretrained_model(args.checkpoint))
+        # Load before Tk's initial tab event builds the plot, avoiding a stale
+        # untrained layout followed by a second full feature extraction.
+        app.load_pretrained_model(args.checkpoint, refresh=False)
     root.mainloop()
 
 

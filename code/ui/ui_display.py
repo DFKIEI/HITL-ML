@@ -87,7 +87,8 @@ def log_modification(self, kind, **payload):
         return
     if kind in ('center_drag', 'point_drag', 'class_reset') and hasattr(self, 'record_study_interaction'):
         self.record_study_interaction(kind=kind, payload=payload)
-    events.log('MODIFICATION', kind=kind, **payload,
+    active = getattr(self, 'llm_focus_suggestion', None)
+    events.log('MODIFICATION', kind=kind, active_suggestion_uid=getattr(active, 'uid', None), **payload,
                state_after={'points': getattr(self, 'moved_points', data['features']),
                             'centers': data['centers']})
 
@@ -170,8 +171,6 @@ def display_scatter_plot(self, data, tab):
     def on_press(event):
         if event.inaxes is None:
             return
-        if llm_overlay_press(self, event):
-            return
         if hasattr(self, 'study_allows_apply') and not self.study_allows_apply():
             return
         if not getattr(self, 'dragging_enabled', True):
@@ -179,7 +178,7 @@ def display_scatter_plot(self, data, tab):
         self.points_last_step = self.moved_points.copy()  # backup current points
         self.last_centers = data['centers'].copy()
         for i, artist in enumerate(self.center_artists):
-            visible_classes = suggestion_view_classes(self)
+            visible_classes = draggable_classes(self)
             if visible_classes is not None and int(unique_labels[i]) not in visible_classes:
                 continue
             if artist.contains(event)[0]:
@@ -188,10 +187,13 @@ def display_scatter_plot(self, data, tab):
                                data['centers'][i][1] - event.ydata)
                 return
 
+        if llm_overlay_press(self, event):
+            return
+
         cont, ind = scatter.contains(event)
         if cont:
             candidates = ind['ind']
-            visible_classes = suggestion_view_classes(self)
+            visible_classes = draggable_classes(self)
             if visible_classes is not None:
                 candidates = [i for i in candidates if int(data['labels'][i]) in visible_classes]
             if not len(candidates):
@@ -207,6 +209,9 @@ def display_scatter_plot(self, data, tab):
         if self.dragging is not None:
             old_center = self.last_centers[self.dragging]
             new_center = data['centers'][self.dragging]
+            if np.allclose(old_center, new_center):
+                self.dragging = None
+                return
             # Log center movement
             self.point_tracker.log_center_movement(
                 unique_labels[self.dragging],
@@ -222,6 +227,9 @@ def display_scatter_plot(self, data, tab):
         elif self.dragging_point is not None and self.dragging is None:  # Logging for individual point movement
             old_position = self.points_last_step[self.dragging_point]
             new_position = self.moved_points[self.dragging_point]
+            if np.allclose(old_position, new_position):
+                self.dragging_point = None
+                return
             self.point_tracker.log_individual_point_movement(
                 self.dragging_point,
                 old_position,
@@ -269,7 +277,8 @@ def display_scatter_plot(self, data, tab):
 
         if self.dragging is not None or self.dragging_point is not None:
             self.plot.update_latent_space(self.moved_points)
-            self.plot.moved_2d_points = self.moved_points
+            self.plot.moved_2d_points = self.moved_points.copy()
+            refresh_llm_overlay(self)
             fig.canvas.draw_idle()
 
     def on_double_click(event):
@@ -280,6 +289,9 @@ def display_scatter_plot(self, data, tab):
         if not getattr(self, 'dragging_enabled', True):
             return
         for i, artist in enumerate(self.center_artists):
+            allowed = draggable_classes(self)
+            if allowed is not None and int(unique_labels[i]) not in allowed:
+                continue
             if artist.contains(event)[0]:
                 self.points_last_step = self.moved_points.copy()  # backup current points
                 self.last_centers = data['centers'].copy()
@@ -305,7 +317,7 @@ def display_scatter_plot(self, data, tab):
 
                 # Update the latent space
                 self.plot.update_latent_space(self.moved_points)
-                self.plot.moved_2d_points = self.moved_points
+                self.plot.moved_2d_points = self.moved_points.copy()
                 fig.canvas.draw_idle()
                 return
 
@@ -335,6 +347,15 @@ def class_color_hex(self, class_index, default='#98A1AD'):
     colors = getattr(self, 'class_colors', None) or {}
     color = colors.get(int(class_index))
     return matplotlib.colors.to_hex(color) if color is not None else default
+
+
+def draggable_classes(self):
+    """Strategy 4 permits direct manipulation only for the current proposal."""
+    strategy = get_strategy(self.strategy_var.get())
+    if strategy.suggestions_editable:
+        current = getattr(self, 'llm_focus_suggestion', None)
+        return {int(current.class_i), int(current.class_j)} if current is not None else set()
+    return suggestion_view_classes(self)
 
 
 def suggestion_view_classes(self):
@@ -454,7 +475,7 @@ def refresh_llm_overlay(self):
                 if owner is not None:
                     _draw_handle(self, ax, end, class_index, outline)
                     name = owner.class_i_name if class_index == owner.class_i else owner.class_j_name
-                    label = ax.annotate(f'{name}: drag to move', xy=tuple(end), xytext=(10, 12),
+                    label = ax.annotate(f'{name}: no move proposed; drag to move', xy=tuple(end), xytext=(10, 12),
                                         textcoords='offset points', fontsize=9, zorder=13,
                                         annotation_clip=False, color=self.class_colors[class_index],
                                         path_effects=outline)
@@ -766,7 +787,7 @@ def apply_llm_suggestion(self, suggestion, source='auto'):
     _fit_axes_to_points(self.ax, np.vstack([self.moved_points, data['centers']]))
 
     self.plot.update_latent_space(self.moved_points)
-    self.plot.moved_2d_points = self.moved_points
+    self.plot.moved_2d_points = self.moved_points.copy()
 
     if hasattr(self, 'record_study_interaction'):
         self.record_study_interaction(suggestion)

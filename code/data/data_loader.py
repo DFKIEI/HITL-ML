@@ -1,8 +1,20 @@
+import os
 import numpy as np
 from torch.utils.data import DataLoader, Subset, random_split
 from torchvision import datasets, transforms
 from data.PAMAP2_data import PAMAP2
 import torch
+
+
+def loader_options():
+    """Prefetch on CUDA machines; keep a safe single-process default elsewhere."""
+    workers = int(os.environ.get('HITL_NUM_WORKERS', min(4, os.cpu_count() or 1) if torch.cuda.is_available() else 0))
+    if workers < 0:
+        raise ValueError('HITL_NUM_WORKERS must be nonnegative')
+    options = dict(num_workers=workers, pin_memory=torch.cuda.is_available())
+    if workers:
+        options.update(persistent_workers=True, prefetch_factor=2)
+    return options
 
 
 def load_dataset(dataset_name, batch_size=32):
@@ -40,9 +52,9 @@ def load_pamap2(batch_size=32, window_size=200, window_step=50, frequency=50, sp
     test_dataset = PAMAP2(window_size=window_size, window_step=window_step, users='test', columns=columns,
                           train_users=[1, 3, 4, 5, 6, 8], frequency=frequency)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=torch.cuda.is_available())
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=torch.cuda.is_available())
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=torch.cuda.is_available())
 
     # Extract labels from each dataset
     train_labels = extract_labels(train_dataset)
@@ -113,9 +125,9 @@ def load_cifar100(batch_size=32, val_split=0.5):
     val_dataset, test_dataset = random_split(full_test_dataset, [val_size, test_size])
 
     # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **loader_options())
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, **loader_options())
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, **loader_options())
 
     # CIFAR-100 has 100 classes
     num_classes = 100
@@ -151,9 +163,9 @@ def load_cifar10(batch_size=32, val_split=0.5):
     val_dataset, test_dataset = random_split(full_test_dataset, [val_size, test_size])
 
     # Create DataLoaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **loader_options())
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, **loader_options())
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, **loader_options())
 
     # CIFAR-10 has 10 classes
     num_classes = 10
