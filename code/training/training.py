@@ -80,6 +80,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
         model.train()
         paused_seconds = 0.0
         train_started = time.perf_counter()
+        next_progress = train_started + 2.0
         epoch_examples = 0
         running_loss = 0.0
         ce_running_loss = 0.0
@@ -157,7 +158,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             batches_since_print += 1
 
             is_last_batch = (i + 1) == len(trainloader)
-            if (i + 1) % freq == 0 or is_last_batch:
+            if (i + 1) % freq == 0 or is_last_batch or time.perf_counter() >= next_progress:
+                next_progress = time.perf_counter() + 2.0
                 avg_loss = float(running_loss / batches_since_print)
                 ce_avg_loss = float(ce_running_loss / batches_since_print)
                 interaction_avg_loss = float(interaction_running_loss / batches_since_print)
@@ -165,11 +167,13 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
                 log_message = f"[Epoch {epoch + 1}, Batch {i + 1}] Loss: {avg_loss:.3f}, Accuracy: {accuracy:.2f}%"
                 print(log_message)
-                print(f'CE Loss: {ce_avg_loss:.3f}, interaction Loss: {interaction_avg_loss:.3f} '
-                      f'(alpha={alpha_val:.2f}, strategy={current_strategy.label})')
+                loss_message = (f'CE Loss: {ce_avg_loss:.3f}, interaction Loss: {interaction_avg_loss:.3f} '
+                                f'(alpha={alpha_val:.2f}, strategy={current_strategy.label})')
+                print(loss_message)
 
                 if log_callback:
                     log_callback(log_message)
+                    log_callback(loss_message)
 
                 running_loss = 0.0
                 ce_running_loss = 0.0
@@ -180,7 +184,10 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
 
         train_seconds = time.perf_counter() - train_started - paused_seconds
         throughput = epoch_examples / max(train_seconds, 1e-9)
-        print(f'Epoch {epoch + 1} training: {train_seconds:.1f}s, {throughput:.1f} samples/s', flush=True)
+        throughput_message = f'Epoch {epoch + 1} training: {train_seconds:.1f}s, {throughput:.1f} samples/s'
+        print(throughput_message, flush=True)
+        if log_callback:
+            log_callback(throughput_message)
 
         # Validation and Testing
         val_accuracy, val_f1 = evaluate_model(model, valloader, device)

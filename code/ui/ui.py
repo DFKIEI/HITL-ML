@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, scrolledtext
 import threading
 import queue
 import matplotlib
@@ -70,6 +70,7 @@ class UI(StudyControls):
         #        print(f"Error loading checkpoint: {str(e)}")
 
         self.visualization_queue = queue.Queue()
+        self.log_messages = queue.Queue()
         self.training_thread = None
         self.pause_event = Pause()
         self.training_paused = threading.Event()
@@ -202,7 +203,9 @@ class UI(StudyControls):
         self.llm_panel.pack(side=tk.LEFT, fill=tk.Y)
         self.collapsed_sidebars = set()
 
-        self.study_toolbar = ttk.Frame(main_frame)
+        self.center_panel = ttk.Frame(main_frame)
+        self.center_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.study_toolbar = ttk.Frame(self.center_panel)
         self.study_toolbar.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(self.study_toolbar, textvariable=self.study_status).pack(side=tk.LEFT, padx=5)
         self.study_training_button = ttk.Button(self.study_toolbar, text='Start Training', command=self.resume_study_training)
@@ -210,8 +213,17 @@ class UI(StudyControls):
         ttk.Button(self.study_toolbar, text='Stop Training', command=self.stop_training_clicked).pack(side=tk.LEFT, padx=5)
         ttk.Button(self.study_toolbar, text='Return to survey', command=self.return_to_survey).pack(side=tk.RIGHT, padx=5)
         self.study_toolbar.pack_forget()
-        self.notebook = ttk.Notebook(main_frame)
-        self.notebook.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(self.center_panel)
+        self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.training_log_frame = ttk.LabelFrame(self.center_panel, text='Training log', padding=5)
+        self.training_log_frame.pack(side=tk.BOTTOM, fill=tk.X, before=self.notebook)
+        ttk.Label(self.training_log_frame, textvariable=self.status_var).pack(anchor=tk.W)
+        self.training_log_text = scrolledtext.ScrolledText(self.training_log_frame, height=5, wrap=tk.WORD)
+        ui_theme.style_scrolled_text(self.training_log_text)
+        self.training_log_text.configure(state=tk.DISABLED)
+        self.training_log_text.pack(fill=tk.X)
+        self.root.after(100, self.process_log_queue)
 
         self.scatter_tab = ttk.Frame(self.notebook)
         self.radar_tab = ttk.Frame(self.notebook)
@@ -339,6 +351,7 @@ class UI(StudyControls):
                     target_callback=self.record_training_target,
                     start_epoch=(self.latest_metrics or {}).get('epoch', getattr(self, 'loaded_checkpoint_epoch', 0)),
                     paused_state=self.training_paused, target_changed=self.interaction_changed)
+        self.update_log('Training stopped' if self.stop_training.is_set() else 'Finished Training')
         self.events.log('TRAINING_FINISHED', stopped=self.stop_training.is_set())
         self.events.enter('phase', 'finished')
 
@@ -375,7 +388,7 @@ class UI(StudyControls):
         if self.llm_panel is not None:
             if strategy.llm_suggestions:
                 if not self.llm_sidebar.winfo_ismapped():
-                    self.llm_sidebar.pack(side=tk.RIGHT, fill=tk.Y, before=self.notebook)
+                    self.llm_sidebar.pack(side=tk.RIGHT, fill=tk.Y, before=self.center_panel)
                 self.llm_panel.refresh_for_strategy()
             else:
                 self.llm_sidebar.pack_forget()
@@ -398,8 +411,24 @@ class UI(StudyControls):
         self.strategy_combo.configure(state='readonly')
 
     def update_log(self, message):
-        self.log_text.insert(tk.END, message + "\n")
-        self.log_text.see(tk.END)
+        # Training callbacks run on a worker: update Tk only from its event loop.
+        self.log_messages.put(str(message))
+
+    def process_log_queue(self):
+        try:
+            while True:
+                message = self.log_messages.get_nowait()
+                if message in ('Finished Training', 'Training stopped'):
+                    self.status_var.set(message)
+                    self.training_button.configure(text='Start Training')
+                for widget in (self.log_text, self.training_log_text):
+                    widget.configure(state=tk.NORMAL)
+                    widget.insert(tk.END, message + "\n")
+                    widget.see(tk.END)
+                self.training_log_text.configure(state=tk.DISABLED)
+        except queue.Empty:
+            pass
+        self.root.after(100, self.process_log_queue)
 
     def show_class_selection(self):
         dataset = self.trainloader.dataset

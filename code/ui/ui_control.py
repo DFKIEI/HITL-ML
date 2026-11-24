@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
-from llm.strategies import DEFAULT_STRATEGY_ID, STRATEGIES, strategy_labels
+from llm.strategies import STRATEGIES, strategy_labels
+
+DEFAULT_UI_STRATEGY_ID = 4
 from ui import ui_theme
 
 
@@ -38,14 +40,14 @@ def create_training_controls(self):
     self.alpha_entry.pack(fill=tk.X, pady=(0, ui_theme.PAD_S))
 
     _field_label(loss_section, "Strategy")
-    self.strategy_var = tk.IntVar(value=DEFAULT_STRATEGY_ID)
-    self.strategy_display_var = tk.StringVar(value=STRATEGIES[DEFAULT_STRATEGY_ID].label)
+    self.strategy_var = tk.IntVar(value=DEFAULT_UI_STRATEGY_ID)
+    self.strategy_display_var = tk.StringVar(value=STRATEGIES[DEFAULT_UI_STRATEGY_ID].label)
     self.strategy_combo = ttk.Combobox(loss_section, textvariable=self.strategy_display_var,
                                        values=strategy_labels(), state='readonly')
     self.strategy_combo.pack(fill=tk.X)
     self.strategy_combo.bind("<<ComboboxSelected>>", self.on_strategy_change)
 
-    self.strategy_desc_var = tk.StringVar(value=STRATEGIES[DEFAULT_STRATEGY_ID].description)
+    self.strategy_desc_var = tk.StringVar(value=STRATEGIES[DEFAULT_UI_STRATEGY_ID].description)
     ttk.Label(loss_section, textvariable=self.strategy_desc_var, wraplength=300,
              justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(ui_theme.PAD_S, 2), fill=tk.X)
 

@@ -156,3 +156,8 @@ survey) writes `EXPERIMENT_ENDED` and closes that participant record. Re-enablin
 it creates a separate file. Closing the tool also ends an active record.
 The existing session and legacy logs remain application diagnostics and can
 contain setup activity; use `experiment_*.jsonl` for participant analysis.
+
+The desktop UI defaults to **strategy 4: LLM suggests, human edits (2D)**.
+A scrolling **Training log** stays below the plot, including when Study mode
+hides the left settings sidebar. It mirrors the activity log and shows training
+progress, loss/accuracy, validation/test results, pauses, and checkpoint messages.
