@@ -59,7 +59,7 @@ listed there works. Put your key in `llm_config.txt` in the project root (copy
 
 ```
 OPENROUTER_API_KEY=sk-or-...
-OPENROUTER_MODEL=anthropic/claude-opus-5
+OPENROUTER_MODEL=openai/gpt-6.2-sol
 ```
 
 `llm_config.txt` is git-ignored, so the key stays on your machine - never commit

@@ -19,7 +19,7 @@ MODEL_ENV_VAR = "OPENROUTER_MODEL"
 REASONING_ENV_VAR = "OPENROUTER_REASONING_EFFORT"
 
 # Any OpenRouter model id can be used; this is only the default shown in the UI.
-DEFAULT_MODEL = "anthropic/claude-opus-5"
+DEFAULT_MODEL = "openai/gpt-6.2-sol"
 
 # Small, cheap models that are effective enough for the latent-space
 # suggestions and are offered in the UI dropdown. Any other OpenRouter model
@@ -27,6 +27,7 @@ DEFAULT_MODEL = "anthropic/claude-opus-5"
 # field - this list is only a curated shortlist, not a restriction.
 RECOMMENDED_MODELS = [
     DEFAULT_MODEL,
+    "anthropic/claude-opus-5",
     "anthropic/claude-haiku-4.5",
     "openai/gpt-5-mini",
     "openai/gpt-5-nano",
