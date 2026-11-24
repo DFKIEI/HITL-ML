@@ -60,7 +60,7 @@ NARRATION = [
 ('5. Edit an instruction', 'Now edit the instruction in the text box. The backend asks the language model to interpret your words. Wait for the updated arrows, then review them.'),
 ('6. Apply the reviewed change', 'Click Apply when the proposal looks right. The points move, and the log saves your words and the final movements together.'),
 ('7. Inspect the measured effect', 'These measures describe the proposed change. They show movement size and class separation. A better layout does not always mean better accuracy.'),
-('8. Complete a study task', 'Enable Study mode, then click Begin or reset study task. Training stays locked. You have three interactions and five minutes. Watch the count and timer.'),
+('8. Complete a study task', 'Enable Study mode to record your session. You can apply changes, move the active groups, and start or pause training here. Return to the survey when finished.'),
 ('9. Finish and return to the survey', 'Collapse either sidebar when you want more space. After the task, return to the survey. Answer the questions, then stop and save the recording.')
 ]
 CAPTIONS = [
@@ -71,7 +71,7 @@ CAPTIONS = [
 'Edit the text. The backend LLM interprets the instruction and updates the preview automatically.',
 'Apply commits the reviewed proposal. The log stores the text and actual movements together.',
 'Impact measures describe the proposed layout. They do not guarantee better accuracy.',
-'Three interactions, five minutes. Training is disabled during the study task.',
+'Study mode records interactions and training. The count and elapsed time have no lockout.',
 'Return to the survey, answer the questions, then stop and save the screen and audio recording.'
 ]
 
@@ -269,14 +269,12 @@ def main():
     assert app.llm_panel._apply(s);capture();finish_scene()
     app.llm_panel.current_index=1;app.llm_panel.refresh_cards();capture();finish_scene()
     app.control_panel.master.yview_moveto(.3);root.update()
-    checkbox=find_text(app.control_panel,'Study mode (training locked)')
+    checkbox=find_text(app.control_panel,'Study mode (participant session)')
     capture(1.,widget_point(checkbox));capture(.5,widget_point(checkbox),True);checkbox.invoke();root.update()
-    begin=find_text(app.control_panel,'Begin / reset study task')
-    capture(1.,widget_point(begin));capture(.5,widget_point(begin),True);begin.invoke();root.update()
     capture(1.);finish_scene()
-    app.toggle_sidebar('controls');capture();finish_scene()
+    app.toggle_sidebar('llm');capture();finish_scene()
     if args.verify_ui:
-        assert str(app.training_button.cget('state'))=='disabled'
+        assert str(app.training_button.cget('state'))=='normal'
         app.on_close();print('Cursor/text UI walkthrough passed without capture or API calls.');return
     manifest=frames/'frames.txt'
     manifest.write_text(''.join(f"file '{p}'\nduration {d:.6f}\n" for p,d in timeline)+f"file '{timeline[-1][0]}'\n")

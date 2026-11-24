@@ -91,6 +91,9 @@ def log_modification(self, kind, **payload):
     events.log('MODIFICATION', kind=kind, active_suggestion_uid=getattr(active, 'uid', None), **payload,
                state_after={'points': getattr(self, 'moved_points', data['features']),
                             'centers': data['centers']})
+    changed = getattr(self, 'interaction_changed', None)
+    if changed is not None:
+        changed.set()
 
 
 def display_scatter_plot(self, data, tab):
@@ -791,6 +794,9 @@ def apply_llm_suggestion(self, suggestion, source='auto'):
 
     if hasattr(self, 'record_study_interaction'):
         self.record_study_interaction(suggestion)
+    applied_ids = getattr(self, 'applied_llm_suggestion_ids', None)
+    if applied_ids is not None:
+        applied_ids.add(id(suggestion))
     log_modification(self, 'llm_apply', source=source, uid=getattr(suggestion, 'uid', None),
                      suggestion=suggestion.as_log_dict(),
                      vectors={int(c): v for c, v in vectors.items()},

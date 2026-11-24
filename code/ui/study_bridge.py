@@ -43,17 +43,11 @@ class StudyBridge:
             ui.root.attributes('-topmost', True)
             ui.root.after(250, lambda: ui.root.attributes('-topmost', False))
             ui.root.focus_force()
-            from ui.ui_study import training_is_idle_or_paused
-            if training_is_idle_or_paused(ui):
-                if not ui.study_mode_var.get():
-                    ui.study_mode_var.set(True)
-                    ui.toggle_study_mode()
-                ui.events.log('SURVEY_TOOL_HANDOFF', **command)
-                ui.begin_study_task()
-            else:
-                ui.events.log('SURVEY_TOOL_HANDOFF', **command)
-                ui.status_var.set('Survey requested a task. Pause training first, then begin the study task.')
-                self.publish('waiting_for_pause')
+            if not ui.study_mode_var.get():
+                ui.study_mode_var.set(True)
+                ui.toggle_study_mode()
+            ui.events.log('SURVEY_TOOL_HANDOFF', **command)
+            ui.begin_study_task()
         if not self.busy:
             self.busy = True
             payload = dict(study_id=str(ui.probant_id), acknowledged=self.sequence, **self.status)

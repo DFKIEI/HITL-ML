@@ -23,7 +23,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None,
                 pause_after_n_epochs=None, plot=None,
                 checkpoint_dir=None, logger=None, metrics_callback=None,
-                strategy_var=None, llm_suggestions_callback=None, target_callback=None, start_epoch=0, paused_state=None):
+                strategy_var=None, llm_suggestions_callback=None, target_callback=None, start_epoch=0, paused_state=None, target_changed=None):
     amp_device = device.type if device.type in ('cuda', 'mps') else 'cpu'
     scaler = torch.amp.GradScaler(amp_device, enabled=amp_device != 'cpu')
 
@@ -65,6 +65,8 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
     def rebuild_target(epoch_number):
         nonlocal current_strategy, ideal_structure, target_needs_refresh, alpha_val
         target_needs_refresh = False
+        if target_changed is not None:
+            target_changed.clear()
         alpha_val = alpha_var.get()
         current_strategy = get_strategy(strategy_var.get() if strategy_var is not None else DEFAULT_STRATEGY_ID)
         suggestions = llm_suggestions_callback() if llm_suggestions_callback else None
@@ -101,6 +103,9 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 model.train()
             if stop_training and stop_training.is_set():
                 return
+
+            if target_changed is not None and target_changed.is_set():
+                rebuild_target(epoch + 1)
 
             inputs, labels = inputs.to(device, non_blocking=True), labels.to(device, non_blocking=True)
 

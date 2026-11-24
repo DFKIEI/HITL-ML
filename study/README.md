@@ -21,13 +21,12 @@ The QSF's existing A/B labels are preserved. The researcher must decide which ap
 1. Start `python code/main.py` from the repository root, using the environment and dataset setup already required by the project.
 2. Enter the same participant ID and the scenario name. Choose a pretrained model in setup, or use **Study & checkpoints → Load pretrained checkpoint** in the left sidebar.
 3. Select the study strategy. For editable LLM suggestions, choose the strategy that allows human edits.
-4. Enable **Study mode (training locked)**. The Start/Resume Training button is disabled; the training method also rejects attempts to start it.
-5. Use **3 interactions** and **5 minutes**, then choose **Begin / reset study task**. A checkpoint must be loaded before the task starts.
-6. An interaction is one committed Apply or one completed direct point/cluster movement. Preview arrow edits and text interpretation are preparation, not separate committed interactions. Undo does not refund an interaction. The timer includes waiting for LLM replies.
-7. Apply/direct movement is blocked before the task starts and after either limit is reached. The count and remaining time are displayed and the completion reason is logged.
-8. Return to the survey at the researcher handoff. Load the intended checkpoint again for a fresh baseline before the next task; resetting the counter alone does not restore prior point positions.
+4. Enable **Study mode (participant session)**. Experiment logging and the elapsed timer start immediately; there is no separate Begin step.
+5. Apply suggestions, edit their text/arrows, and drag the active suggestion's points/centers. Count and elapsed time are informational: there is no three-interaction or five-minute lockout.
+6. Use the main toolbar to start, pause, resume, or stop training while keeping Study mode and its experiment log active. Applied changes refresh the interaction-loss target before the next training batch; direct drags do so on release.
+7. Choose **Return to survey** when finished. This closes the participant experiment log and advances the waiting survey. Load the intended checkpoint before the next session for a fresh baseline.
 
-Training is disabled during the task. If the researcher later wants to train from the applied targets, disable study mode and resume separately, following the study protocol. Use consistent conditions and checkpoint assignments across participants.
+Study mode covers the participant's entire UI session, including training and interaction. It does not impose editing-only phases or automatically end a session.
 
 ## Text, movement and training logs
 
@@ -46,7 +45,7 @@ Structured session events include:
 | `SUGGESTION_APPLY_REQUESTED` | Original text, current user text and final movement together |
 | `MODIFICATION` with `llm_apply` | Actual per-class displacement vectors, tightening and resulting point/centre state |
 | `TRAINING_TARGET_BUILT` | Actual centres/spreads used by the loss, source suggestions, strategy, epoch and alpha |
-| `STUDY_TASK_STARTED`, `STUDY_INTERACTION`, `STUDY_TASK_COMPLETED` | Task limits, count, timing and completion reason |
+| `STUDY_TASK_STARTED`, `STUDY_INTERACTION`, `STUDY_TASK_COMPLETED` | Session start, interaction count, and timing |
 
 Desktop logs live under `user_study_logs/<ID>_<scenario>/`. Keep that folder together with the corresponding survey response/recordings. The participant ID is the join key; the survey UUID distinguishes browser sessions. No participant results are committed to Git.
 
@@ -91,42 +90,24 @@ python -m pytest code/tests/test_study_workflow.py -q
 node study/test_survey_logic.cjs
 ```
 
-Tests cover interpretation validation, text-plus-movement audit records, study limits, checkpoint recovery and five-epoch cadence. Survey logic tests cover both scenario orders and repeated researcher handoffs. A local HTTP smoke test verified answer persistence and ordered recording chunks. The application video was generated and visually inspected. Browser screen/microphone permission and capture still need a short practice recording on the study machine.
-
-### Study mode after a training pause
-
-Study mode can also begin after training pauses, without loading another
-checkpoint. The training loop acknowledges a pause only once model updates
-have stopped. While that acknowledgement is pending, study mode asks you to
-wait. At a scheduled epoch pause, the checkpoint (on every fifth epoch),
-evaluation and plot refresh happen before the acknowledgement.
-
-Enable study mode, then choose Begin / reset study task. Start/Resume stays
-locked during the task. Disabling study mode leaves training paused; click
-Resume explicitly when ready. The training target is rebuilt from the
-applied study edits before the next model update. A completed trained epoch
-is accepted as the task's model source and its epoch is included in the log.
+Tests cover interpretation validation, text-plus-movement audit records, unrestricted study sessions, checkpoint recovery and five-epoch cadence. Survey logic tests cover both scenario orders and repeated researcher handoffs. A local HTTP smoke test verified answer persistence and ordered recording chunks. The application video was generated and visually inspected. Browser screen/microphone permission and capture still need a short practice recording on the study machine.
 
 ### Survey/tool handoff and participant layout
 
-Run `python study/server.py` and the desktop tool on the same computer. Use the
-**same Study ID** in both. In the tool, select the dataset, load the checkpoint,
-and select the study's strategy before continuing the survey. The two
-“Please switch to the tool” pages now send a local handoff request. The running
-tool checks once per second, raises its window, enables study mode, and begins
-the task when the model is paused or idle. No model, dataset, or strategy is
-silently changed by a handoff. If training is still running, pause it and use
-**Begin / reset task** in the main toolbar.
+Run `python study/server.py` and the desktop tool on the same computer with the
+**same Study ID**. Choose the dataset, checkpoint, and strategy in the tool first.
+The survey's “Please switch to the tool” pages raise the running tool and enable
+Study mode, including if training is running. Study mode hides the left settings
+sidebar and shows elapsed time, interaction count, Start/Pause/Resume Training,
+Stop Training, and Return to survey above the plot. It has no interaction/time
+lockout and does not require a separate Begin action or a pretrained model.
 
-Study mode hides the left configuration sidebar. Its main toolbar retains the
-interaction count/timer, task controls, **Resume Training**, **Stop Training**,
-and **Return to survey**. Resume explicitly ends the editing phase and starts
-training against the applied target; the participant layout stays visible.
-Edits are blocked during training. Begin another task once training is paused.
-At three interactions or five minutes the tool reports completion and minimizes;
-the open survey continues to the questionnaire. Returning early is logged too.
-Browser/OS focus restrictions can require selecting the survey window manually;
-the questionnaire still advances. Keep the original survey tab and recording open.
+Apply and completed point/center drags signal a refreshed loss target before the
+next training batch; pending edits are also picked up on start/resume. Training
+and editing stay in the same experiment log. Use **Return to survey** explicitly
+when finished; only that action completes the survey handoff. Browser/OS focus
+restrictions can require selecting the survey tab manually. Keep the original
+survey tab and recording open. Restart both tool and server after updating code.
 
 The survey stores handoff and browser-focus events alongside answers. Tool logs
 store `SURVEY_TOOL_HANDOFF`, `TOOL_SURVEY_HANDOFF`, `TOOL_FOCUS_CHANGED`, and normal

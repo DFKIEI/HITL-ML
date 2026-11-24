@@ -23,18 +23,15 @@ def test_llm_interpretation_and_invalid_class_rejection(monkeypatch):
     with pytest.raises(ValueError,match='unknown class'):interpret_instruction('move',{0:'cat',1:'dog'},dict(class_i=0,class_j=1))
 
 
-def test_study_limits_block_apply_and_training():
+def test_study_never_blocks_apply_for_begin_count_or_time_limits():
     variable=lambda x:SimpleNamespace(get=lambda:x)
     panel=SimpleNamespace(study_mode_var=variable(True),study_started=None,study_count=0,
                           study_limit_var=variable(3),study_minutes_var=variable(5),status_var=MagicMock())
-    assert not StudyControls.study_allows_apply(panel)
-    import time
-    panel.study_started=time.monotonic()
     assert StudyControls.study_allows_apply(panel)
-    panel.study_count=3
-    assert not StudyControls.study_allows_apply(panel)
-    panel.study_count=0;panel.study_started=time.monotonic()-301
-    assert not StudyControls.study_allows_apply(panel)
+    import time
+    panel.study_count=100
+    panel.study_started=time.monotonic()-3600
+    assert StudyControls.study_allows_apply(panel)
 
 
 def test_checkpoint_loader_supports_weights_only_and_rolls_back_bad_weights(tmp_path):
@@ -154,21 +151,17 @@ def test_study_guard_covers_auto_apply_and_counts_committed_movement_once():
     plt.close(ui.scatter_fig)
 
 
-def test_study_rejects_pause_request_until_training_acknowledges_it():
+def test_study_can_enable_while_training_is_running():
     import threading
-    from ui.ui_study import training_is_idle_or_paused
-    pause,ack=threading.Event(),threading.Event()
-    pause.set()
-    ui=SimpleNamespace(training_thread=SimpleNamespace(is_alive=lambda:True),pause_event=pause,
-                       training_paused=ack,study_mode_var=MagicMock(),status_var=MagicMock())
+    ui=SimpleNamespace(training_thread=SimpleNamespace(is_alive=lambda:True),pause_event=threading.Event(),
+        training_paused=threading.Event(),study_mode_var=MagicMock(),status_var=MagicMock(),
+        training_button=MagicMock(),study_config_widgets=[],events=MagicMock(),update_study_status=MagicMock())
     ui.study_mode_var.get.return_value=True
-    assert not training_is_idle_or_paused(ui)
     StudyControls.toggle_study_mode(ui)
-    ui.study_mode_var.set.assert_called_once_with(False)
-    ack.set()
-    assert training_is_idle_or_paused(ui)
-    pause.clear()
-    assert not training_is_idle_or_paused(ui)
+    ui.study_mode_var.set.assert_not_called()
+    ui.training_button.configure.assert_called_with(state='normal')
+    ui.events.start_experiment.assert_called_once()
+    assert ui.study_started is not None
 
 
 def test_confirmed_pause_allows_study_without_resuming_training(monkeypatch,tmp_path):
@@ -206,7 +199,7 @@ def test_confirmed_pause_allows_study_without_resuming_training(monkeypatch,tmp_
             study_config_widgets=[],events=MagicMock(),update_study_status=MagicMock())
         assert training_is_idle_or_paused(ui)
         StudyControls.toggle_study_mode(ui)
-        ui.training_button.configure.assert_called_with(state='disabled')
+        ui.training_button.configure.assert_called_with(state='normal')
         assert pause.is_set() and ack.is_set() and model.calls==0
         marker['value']='study edits'
         state['enabled']=False;StudyControls.toggle_study_mode(ui)
@@ -220,7 +213,7 @@ def test_confirmed_pause_allows_study_without_resuming_training(monkeypatch,tmp_
 
 def test_study_task_can_use_current_trained_epoch_without_loading_file(tmp_path):
     import threading
-    state=SimpleNamespace(study_mode_var=SimpleNamespace(get=lambda:True),loaded_checkpoint=None,
+    state=SimpleNamespace(study_mode_var=SimpleNamespace(get=lambda:True),loaded_checkpoint=None,study_started=1.,study_count=0,
                           latest_metrics={'epoch':5},training_thread=SimpleNamespace(is_alive=lambda:True),
                           pause_event=threading.Event(),training_paused=threading.Event(),status_var=MagicMock(),
                           study_limit_var=SimpleNamespace(get=lambda:3),study_minutes_var=SimpleNamespace(get=lambda:5),
@@ -230,7 +223,7 @@ def test_study_task_can_use_current_trained_epoch_without_loading_file(tmp_path)
     StudyControls.begin_study_task(state)
     assert state.study_count==0 and state.study_started is not None
     data=state.events.log.call_args.kwargs
-    assert data['epoch']==5 and data['model_source']=='paused_training'
+    assert data['epoch']==5 and data['model_source']=='current_model'
 
 
 def test_scheduled_epoch_pause_acknowledges_and_rebuilds_after_study(monkeypatch,tmp_path):

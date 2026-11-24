@@ -69,3 +69,28 @@ def test_geometry_remains_float32_under_autocast():
     with torch.autocast(device_type='cpu',dtype=torch.bfloat16):
         result=relative_distance_loss(x,torch.tensor([0,0,1,1]),target)
     assert result.dtype==torch.float32
+
+
+def test_committed_edit_refreshes_target_before_next_training_batch(monkeypatch,tmp_path):
+    import threading
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from training import training as module
+    changed=threading.Event();seen=[];marker=['original']
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__();self.layer=torch.nn.Linear(2,2)
+            self.projection_layer=torch.nn.Linear(2,2)
+            self.scale=torch.nn.Parameter(torch.tensor(1.));self.calls=0
+        def forward(self,x):
+            self.calls+=1
+            if self.calls==1:marker[0]='applied';changed.set()
+            f=self.layer(x);return f,f,f
+    model=Model()
+    monkeypatch.setattr(module,'compute_structure_for_strategy',lambda *a:seen.append(marker[0]))
+    monkeypatch.setattr(module,'evaluate_model',lambda *a:(0.,0.))
+    loader=[(torch.randn(4,2),torch.zeros(4,dtype=torch.long))]*2
+    module.train_model(model,torch.optim.Adam(model.parameters()),loader,loader,loader,torch.device('cpu'),
+        1,100,SimpleNamespace(get=lambda:0.),str(tmp_path),logger=MagicMock(),target_changed=changed)
+    assert seen==['original','applied']
+    assert not changed.is_set()
