@@ -12,11 +12,11 @@ const context=vm.createContext({
  }
 });
 vm.runInContext(source,context);
-vm.runInContext(`state={study_id:'P01',session_id:'survey-1',events:[]};page=2;pages=[{},{},{ids:['QID175']}];
+vm.runInContext(`state={study_id:'P01',session_id:'survey-1',events:[]};page=2;pages=[{},{},{ids:['QID175']},{ids:['QID1217253034'],title:'A_Pamap'}];
  saveNow=async()=>{};saveLocal=()=>{};render=()=>{};toolHandoff();`,context);
 (async()=>{
  await new Promise(resolve=>setImmediate(resolve));
- assert.equal(posted.length,1);assert.equal(posted[0].study_id,'P01');assert.equal(posted[0].page,2);
+ assert.equal(posted.length,1);assert.equal(posted[0].study_id,'P01');assert.equal(posted[0].page,2);assert.equal(posted[0].scenario,'A');
  await poll();assert.equal(vm.runInContext('page',context),2);
  status={sequence:99,state:'complete'};await poll();assert.equal(vm.runInContext('page',context),2);
  status={sequence:1,state:'complete'};await poll();assert.equal(vm.runInContext('page',context),3);

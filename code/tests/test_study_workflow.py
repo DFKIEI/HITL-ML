@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -68,17 +67,6 @@ def test_five_epoch_checkpoints_independent_of_pause_schedule(monkeypatch,tmp_pa
     assert [call.args[2] for call in save.call_args_list]==[5,10]
     assert pause.call_count==2  # epochs 6 and 9
     assert targets.call_count==3
-
-
-def test_qsf_export_keeps_active_questions_and_both_scenario_branches(tmp_path):
-    sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'study'))
-    from convert_qsf import convert
-    schema=convert(output=tmp_path/'schema.json')
-    assert len(schema['questions'])==28
-    assert 'QID193' in schema['questions'] and 'QID194' in schema['questions']
-    assert 'QID176' in schema['questions'] and 'QID192' in schema['questions']
-    assert 'QID1' not in schema['questions']
-    assert sum(n['Type']=='Branch' for n in schema['flow'])==2
 
 
 def test_apply_logs_original_text_user_text_interpretation_and_movements(monkeypatch,tmp_path):

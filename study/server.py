@@ -4,7 +4,6 @@ from datetime import datetime,timezone
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs
-from convert_qsf import convert
 ROOT=Path(__file__).resolve().parent
 LOCK=threading.Lock()
 TOOL_SESSIONS={}
@@ -65,6 +64,7 @@ class Handler(SimpleHTTPRequestHandler):
     def launch_tool(self,key,scenario,sequence):
         if re.search(r'[\\/:*?"<>|\x00-\x1f]',key):
             raise ValueError('Use a Study ID without path punctuation.')
+        scenario_name={'A':'A_Pamap','B':'B_Cifar'}[scenario]
         dataset=STUDY_DATASETS[scenario]
         project=ROOT.parent
         checkpoint=project/'saved_checkpoints'/dataset/'checkpoint_epoch_25.pt'
@@ -73,7 +73,7 @@ class Handler(SimpleHTTPRequestHandler):
         environment=dict(os.environ,HITL_SURVEY_URL=f'http://127.0.0.1:{self.server.server_port}')
         process=subprocess.Popen(
             [sys.executable,str(project/'code'/'main.py'),f'--id={key}',
-             f'--scenario={scenario}-{dataset}',f'--dataset={dataset}',
+             f'--scenario={scenario_name}',f'--dataset={dataset}',
              f'--checkpoint={checkpoint}',f'--survey-sequence={sequence}'],
             cwd=project,env=environment,
         )
@@ -155,7 +155,7 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--port',type=int,default=8765)
     parser.add_argument('--output',type=Path,default=ROOT/'results');args=parser.parse_args()
-    convert();args.output.mkdir(parents=True,exist_ok=True)
+    args.output.mkdir(parents=True,exist_ok=True)
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler);server.output=args.output.resolve()
     print(f'Local survey: http://127.0.0.1:{args.port}\nResponses and recordings: {server.output}',flush=True)
     try:server.serve_forever()

@@ -1,304 +1,108 @@
 {
   "title": "Latent Space VIS",
-  "source": "Latent_Space_VIS.qsf",
-  "source_sha256": "b6c5a6b32a406531babe958aa6cd9bc6e2b608722893f2293139f25f21f4a797",
-  "flow": [
-    {
-      "Type": "Standard",
-      "ID": "BL_1Rhv3UnzBQ7CkOW",
-      "FlowID": "FL_2",
-      "Autofill": []
-    },
-    {
-      "Type": "Block",
-      "ID": "BL_bwMo9YHV94ojseG",
-      "FlowID": "FL_3",
-      "Autofill": []
-    },
-    {
-      "Type": "Standard",
-      "ID": "BL_bQufEN3Wct7dJdQ",
-      "FlowID": "FL_9",
-      "Autofill": []
-    },
-    {
-      "Type": "Branch",
-      "FlowID": "FL_13",
-      "Description": "New Branch",
-      "BranchLogic": {
-        "0": {
-          "0": {
-            "LogicType": "Question",
-            "QuestionID": "QID176",
-            "QuestionIsInLoop": "no",
-            "ChoiceLocator": "q://QID176/SelectableChoice/1",
-            "Operator": "Selected",
-            "QuestionIDFromLocator": "QID176",
-            "LeftOperand": "q://QID176/SelectableChoice/1",
-            "Type": "Expression",
-            "Description": "<span class=\"ConjDesc\">If</span> <span class=\"QuestionDesc\">Order of Scenarios</span> <span class=\"LeftOpDesc\">Scenario A, then B</span> <span class=\"OpDesc\">Is Selected</span> "
-          },
-          "Type": "If"
-        },
-        "Type": "BooleanExpression"
-      },
-      "Flow": [
-        {
-          "Type": "Standard",
-          "ID": "BL_1Y9sm2QoAhQYHeC",
-          "FlowID": "FL_10",
-          "Autofill": []
-        },
-        {
-          "Type": "Block",
-          "ID": "BL_bQufEN3Wct7dJdQ",
-          "FlowID": "FL_14",
-          "Autofill": []
-        },
-        {
-          "Type": "Standard",
-          "ID": "BL_5py27V2DzAAj6gm",
-          "FlowID": "FL_12",
-          "Autofill": []
-        }
+  "flow": {
+    "beforeScenarios": [
+      "setup",
+      "demographics",
+      "handoff"
+    ],
+    "scenarioOrders": {
+      "1": [
+        "pamap",
+        "handoff",
+        "cifar"
+      ],
+      "2": [
+        "cifar",
+        "handoff",
+        "pamap"
       ]
     },
-    {
-      "Type": "Branch",
-      "FlowID": "FL_16",
-      "Description": "New Branch",
-      "BranchLogic": {
-        "0": {
-          "0": {
-            "LogicType": "Question",
-            "QuestionID": "QID176",
-            "QuestionIsInLoop": "no",
-            "ChoiceLocator": "q://QID176/SelectableChoice/2",
-            "Operator": "Selected",
-            "QuestionIDFromLocator": "QID176",
-            "LeftOperand": "q://QID176/SelectableChoice/2",
-            "Type": "Expression",
-            "Description": "<span class=\"ConjDesc\">If</span> <span class=\"QuestionDesc\">Order of Scenarios</span> <span class=\"LeftOpDesc\">Scenario B, then A</span> <span class=\"OpDesc\">Is Selected</span> "
-          },
-          "Type": "If"
-        },
-        "Type": "BooleanExpression"
-      },
-      "Flow": [
-        {
-          "Type": "Block",
-          "ID": "BL_5py27V2DzAAj6gm",
-          "FlowID": "FL_17",
-          "Autofill": []
-        },
-        {
-          "Type": "Block",
-          "ID": "BL_bQufEN3Wct7dJdQ",
-          "FlowID": "FL_18",
-          "Autofill": []
-        },
-        {
-          "Type": "Block",
-          "ID": "BL_1Y9sm2QoAhQYHeC",
-          "FlowID": "FL_19",
-          "Autofill": []
-        }
-      ]
-    },
-    {
-      "Type": "Standard",
-      "ID": "BL_9ZDpGxay9pR11VY",
-      "FlowID": "FL_8",
-      "Autofill": []
-    },
-    {
-      "Type": "EndSurvey",
-      "FlowID": "FL_20"
-    }
-  ],
+    "afterScenarios": [
+      "notes"
+    ]
+  },
   "blocks": {
-    "BL_bwMo9YHV94ojseG": {
-      "id": "BL_bwMo9YHV94ojseG",
+    "demographics": {
       "title": "demographics and intro",
-      "elements": [
-        {
-          "type": "Question",
-          "question": "QID7"
-        },
-        {
-          "type": "Question",
-          "question": "QID9"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID10"
-        },
-        {
-          "type": "Question",
-          "question": "QID174"
-        }
+      "pages": [
+        [
+          "QID7",
+          "QID9"
+        ],
+        [
+          "QID10",
+          "QID174"
+        ]
       ]
     },
-    "BL_1Rhv3UnzBQ7CkOW": {
-      "id": "BL_1Rhv3UnzBQ7CkOW",
+    "setup": {
       "title": "experimenter_initial",
-      "elements": [
-        {
-          "type": "Question",
-          "question": "QID24"
-        },
-        {
-          "type": "Question",
-          "question": "QID176"
-        }
+      "pages": [
+        [
+          "QID24",
+          "QID176"
+        ]
       ]
     },
-    "BL_9ZDpGxay9pR11VY": {
-      "id": "BL_9ZDpGxay9pR11VY",
+    "notes": {
       "title": "exp_notes",
-      "elements": [
-        {
-          "type": "Question",
-          "question": "QID173"
-        }
+      "pages": [
+        [
+          "QID173"
+        ]
       ]
     },
-    "BL_bQufEN3Wct7dJdQ": {
-      "id": "BL_bQufEN3Wct7dJdQ",
+    "handoff": {
       "title": "experimenter",
-      "elements": [
-        {
-          "type": "Question",
-          "question": "QID175"
-        }
+      "pages": [
+        [
+          "QID175"
+        ]
       ]
     },
-    "BL_1Y9sm2QoAhQYHeC": {
-      "id": "BL_1Y9sm2QoAhQYHeC",
-      "title": "scenarioA",
-      "elements": [
-        {
-          "type": "Question",
-          "question": "QID177"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID1217253034"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID163"
-        },
-        {
-          "type": "Question",
-          "question": "QID164"
-        },
-        {
-          "type": "Question",
-          "question": "QID165"
-        },
-        {
-          "type": "Question",
-          "question": "QID166"
-        },
-        {
-          "type": "Question",
-          "question": "QID167"
-        },
-        {
-          "type": "Question",
-          "question": "QID168"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID193"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID133"
-        }
+    "pamap": {
+      "title": "A_Pamap",
+      "pages": [
+        [
+          "QID1217253034"
+        ],
+        [
+          "QID163",
+          "QID164",
+          "QID165",
+          "QID166",
+          "QID167",
+          "QID168"
+        ],
+        [
+          "QID193"
+        ],
+        [
+          "QID133"
+        ]
       ]
     },
-    "BL_5py27V2DzAAj6gm": {
-      "id": "BL_5py27V2DzAAj6gm",
-      "title": "scenarioB",
-      "elements": [
-        {
-          "type": "Question",
-          "question": "QID184"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID185"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID186"
-        },
-        {
-          "type": "Question",
-          "question": "QID187"
-        },
-        {
-          "type": "Question",
-          "question": "QID188"
-        },
-        {
-          "type": "Question",
-          "question": "QID189"
-        },
-        {
-          "type": "Question",
-          "question": "QID190"
-        },
-        {
-          "type": "Question",
-          "question": "QID191"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID194"
-        },
-        {
-          "type": "Page Break",
-          "question": null
-        },
-        {
-          "type": "Question",
-          "question": "QID192"
-        }
+    "cifar": {
+      "title": "B_Cifar",
+      "pages": [
+        [
+          "QID185"
+        ],
+        [
+          "QID186",
+          "QID187",
+          "QID188",
+          "QID189",
+          "QID190",
+          "QID191"
+        ],
+        [
+          "QID194"
+        ],
+        [
+          "QID192"
+        ]
       ]
     }
   },
@@ -306,7 +110,6 @@
     "QID10": {
       "id": "QID10",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Please rate your experience with machine learning models",
       "choices": [
         {
@@ -315,11 +118,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 0,
       "max": 100,
-      "showValue": true,
       "labels": [
         "I have no experience",
         "",
@@ -335,7 +136,6 @@
     "QID1217253034": {
       "id": "QID1217253034",
       "type": "Matrix",
-      "selector": "Likert",
       "text": "How much do you agree to the following statements? \nSystem refers to the tool and its visualization.",
       "choices": [
         {
@@ -386,16 +186,11 @@
           "textEntry": false
         }
       ],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     },
     "QID133": {
       "id": "QID133",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "How much do you agree with the following statements? System refers to the tool and its visualization.",
       "choices": [
         {
@@ -434,11 +229,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 0,
       "max": 100,
-      "showValue": true,
       "labels": [
         "Strongly disagree",
         "Somewhat disagree",
@@ -450,7 +243,6 @@
     "QID163": {
       "id": "QID163",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Mental Demand (How mentally demanding was the task?)",
       "choices": [
         {
@@ -459,11 +251,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -472,7 +262,6 @@
     "QID164": {
       "id": "QID164",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Physical Demand (How physically demanding was the task?)",
       "choices": [
         {
@@ -481,11 +270,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -494,7 +281,6 @@
     "QID165": {
       "id": "QID165",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Temporal Demand (How hurried or rushed was the pace of the task?)",
       "choices": [
         {
@@ -503,11 +289,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -516,7 +300,6 @@
     "QID166": {
       "id": "QID166",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Performance (How successful were you in accomplishing what you were asked to do?)",
       "choices": [
         {
@@ -525,11 +308,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Perfect",
         "Failure"
@@ -538,7 +319,6 @@
     "QID167": {
       "id": "QID167",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Effort (How hard did you have to work to accomplish your level of performance?)",
       "choices": [
         {
@@ -547,11 +327,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -560,7 +338,6 @@
     "QID168": {
       "id": "QID168",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Frustration (How insecure, discouraged, irritated, stressed, and annoyed were you?)",
       "choices": [
         {
@@ -569,11 +346,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -584,39 +359,20 @@
       "type": "TE",
       "selector": "SL",
       "text": "Interview and experimenter notes",
-      "choices": [],
-      "answers": [],
-      "required": false,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": false
     },
     "QID174": {
       "id": "QID174",
       "type": "TE",
       "selector": "SL",
       "text": "How many AI/ML models have you created and trained yourself?",
-      "choices": [],
-      "answers": [],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     },
     "QID175": {
       "id": "QID175",
       "type": "DB",
-      "selector": "TB",
       "text": "Please switch to the tool",
-      "choices": [],
-      "answers": [],
-      "required": false,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": false
     },
     "QID176": {
       "id": "QID176",
@@ -626,52 +382,20 @@
       "choices": [
         {
           "id": "1",
-          "text": "Scenario A, then B",
+          "text": "A_Pamap, then B_Cifar",
           "textEntry": false
         },
         {
           "id": "2",
-          "text": "Scenario B, then A",
+          "text": "B_Cifar, then A_Pamap",
           "textEntry": false
         }
       ],
-      "answers": [],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
-    },
-    "QID177": {
-      "id": "QID177",
-      "type": "DB",
-      "selector": "TB",
-      "text": "Scenario A",
-      "choices": [],
-      "answers": [],
-      "required": false,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
-    },
-    "QID184": {
-      "id": "QID184",
-      "type": "DB",
-      "selector": "TB",
-      "text": "Scenario B",
-      "choices": [],
-      "answers": [],
-      "required": false,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     },
     "QID185": {
       "id": "QID185",
       "type": "Matrix",
-      "selector": "Likert",
       "text": "How much do you agree to the following statements? System refers to the tool and its visualization.",
       "choices": [
         {
@@ -722,16 +446,11 @@
           "textEntry": false
         }
       ],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     },
     "QID186": {
       "id": "QID186",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Mental Demand (How mentally demanding was the task?)",
       "choices": [
         {
@@ -740,11 +459,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -753,7 +470,6 @@
     "QID187": {
       "id": "QID187",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Physical Demand (How physically demanding was the task?)",
       "choices": [
         {
@@ -762,11 +478,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -775,7 +489,6 @@
     "QID188": {
       "id": "QID188",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Temporal Demand (How hurried or rushed was the pace of the task?)",
       "choices": [
         {
@@ -784,11 +497,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -797,7 +508,6 @@
     "QID189": {
       "id": "QID189",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Performance (How successful were you in accomplishing what you were asked to do?)",
       "choices": [
         {
@@ -806,11 +516,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Perfect",
         "Failure"
@@ -819,7 +527,6 @@
     "QID190": {
       "id": "QID190",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Effort (How hard did you have to work to accomplish your level of performance?)",
       "choices": [
         {
@@ -828,11 +535,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -841,7 +546,6 @@
     "QID191": {
       "id": "QID191",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "Frustration (How insecure, discouraged, irritated, stressed, and annoyed were you?)",
       "choices": [
         {
@@ -850,11 +554,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 1,
       "max": 20,
-      "showValue": false,
       "labels": [
         "Very Low",
         "Very High"
@@ -863,7 +565,6 @@
     "QID192": {
       "id": "QID192",
       "type": "Slider",
-      "selector": "HSLIDER",
       "text": "How much do you agree with the following statements? System refers to the tool and its visualization.",
       "choices": [
         {
@@ -902,11 +603,9 @@
           "textEntry": false
         }
       ],
-      "answers": [],
       "required": true,
       "min": 0,
       "max": 100,
-      "showValue": true,
       "labels": [
         "Strongly disagree",
         "Somewhat disagree",
@@ -920,13 +619,7 @@
       "type": "TE",
       "selector": "SL",
       "text": "Study ID",
-      "choices": [],
-      "answers": [],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     },
     "QID7": {
       "id": "QID7",
@@ -960,45 +653,33 @@
           "textEntry": true
         }
       ],
-      "answers": [],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     },
     "QID9": {
       "id": "QID9",
       "type": "TE",
       "selector": "SL",
       "text": "How old are you?",
-      "choices": [],
-      "answers": [],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     },
     "QID193": {
       "id": "QID193",
       "type": "Matrix",
-      "selector": "Likert",
-      "text": "Trust in AI assistant",
+      "text": "Trust in AI assistance",
       "choices": [
         {
           "id": "1",
-          "text": "I am confident in the AI assistant.",
+          "text": "I am confident in the AI assistance.",
           "textEntry": false
         },
         {
           "id": "2",
-          "text": "The AI assistant is reliable.",
+          "text": "The AI assistance is reliable.",
           "textEntry": false
         },
         {
           "id": "3",
-          "text": "I can trust the AI assistant.",
+          "text": "I can trust the AI assistance.",
           "textEntry": false
         }
       ],
@@ -1039,31 +720,26 @@
           "textEntry": false
         }
       ],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     },
     "QID194": {
       "id": "QID194",
       "type": "Matrix",
-      "selector": "Likert",
-      "text": "Trust in AI assistant",
+      "text": "Trust in AI assistance",
       "choices": [
         {
           "id": "1",
-          "text": "I am confident in the AI assistant.",
+          "text": "I am confident in the AI assistance.",
           "textEntry": false
         },
         {
           "id": "2",
-          "text": "The AI assistant is reliable.",
+          "text": "The AI assistance is reliable.",
           "textEntry": false
         },
         {
           "id": "3",
-          "text": "I can trust the AI assistant.",
+          "text": "I can trust the AI assistance.",
           "textEntry": false
         }
       ],
@@ -1104,11 +780,7 @@
           "textEntry": false
         }
       ],
-      "required": true,
-      "min": 0,
-      "max": 100,
-      "showValue": true,
-      "labels": []
+      "required": true
     }
   }
 }

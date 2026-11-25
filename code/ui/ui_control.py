@@ -24,7 +24,7 @@ def create_info_labels(self):
     header = ttk.Frame(self.control_panel)
     header.pack(fill=tk.X, pady=(0, ui_theme.PAD_M))
     ttk.Label(header, text="HITL-ML", style='Title.TLabel').pack(anchor=tk.W)
-    ttk.Label(header, text=f"{self.model_name}  ·  {self.dataset_name}",
+    ttk.Label(header, text=f"{self.model_name}  ·  {self.scenario}",
              style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 0))
     self.session_time_var = tk.StringVar(value="Session 00:00")
     ttk.Label(header, textvariable=self.session_time_var, style='Status.TLabel').pack(anchor=tk.W, pady=(2, 0))

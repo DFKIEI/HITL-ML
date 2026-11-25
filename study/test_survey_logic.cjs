@@ -24,15 +24,15 @@ for(const order of ['1','2']){
   assert.equal(schema.questions[trust].required,true);
  }
 }
-assert(a.indexOf('QID177')<a.indexOf('QID184'));
-assert(b.indexOf('QID184')<b.indexOf('QID177'));
+assert(a.indexOf('QID1217253034')<a.indexOf('QID185'));
+assert(b.indexOf('QID185')<b.indexOf('QID1217253034'));
 assert(a.includes('QID173')&&b.includes('QID173'));
 assert(!a.includes('QID1')&&!b.includes('QID1'));
-for(const [ids,first,second] of [[a,'QID177','QID184'],[b,'QID184','QID177']]){
+for(const [ids,first,second] of [[a,'QID1217253034','QID185'],[b,'QID185','QID1217253034']]){
  const handoffs=ids.flatMap((id,index)=>id==='QID175'?[index]:[]);
  assert.equal(handoffs.length,2);
- assert(handoffs[0]<ids.indexOf(first));
- assert(ids.indexOf(first)<handoffs[1]&&handoffs[1]<ids.indexOf(second));
+ assert.equal(ids[handoffs[0]+1],first);
+ assert.equal(ids[handoffs[1]+1],second);
 }
 assert.equal(schema.questions.QID176.required,true);
 console.log('Survey logic checks passed: A/B and B/A branches, repeated handoffs, active questions only.');
@@ -50,7 +50,7 @@ assert.equal(exported.response_format_version,3);
 assert.equal(exported.answers.participant.study_id,'P01');
 assert.equal(exported.answers.participant.gender,'Other');
 assert.equal(exported.answers.participant.gender_other,'Self-described');
-assert.equal(exported.answers.scenario_order,'Scenario B, then A');
+assert.equal(exported.answers.scenario_order,'B_Cifar, then A_Pamap');
 assert.equal(exported.answers.scenario_a.usability_agreement.meets_requirements,'Neither agree nor disagree');
 assert.equal(exported.answers.scenario_b.usability_agreement.easy_to_use,'Somewhat agree');
 assert.equal(exported.answers.scenario_a.workload_1_to_20.mental_demand,13);

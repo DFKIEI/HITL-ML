@@ -279,12 +279,10 @@ def main():
     manifest=frames/'frames.txt'
     manifest.write_text(''.join(f"file '{p}'\nduration {d:.6f}\n" for p,d in timeline)+f"file '{timeline[-1][0]}'\n")
     total=sum(e['duration'] for e in entries)
-    destination=output/'tutorial_cursor_voice.mp4'
+    destination=output/'tutorial.mp4'
     subprocess.run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(manifest),'-i',str(output/'tutorial_narration.m4a'),
                     '-t',str(total),'-vf','fps=24,format=yuv420p','-c:v','libx264','-preset','fast','-crf','22',
                     '-c:a','aac','-metadata:s:a:0','language=eng','-disposition:a:0','default','-movflags','+faststart',str(destination)],check=True)
-    import shutil
-    for name in ['tutorial.mp4','tutorial_with_voice.mp4']:shutil.copyfile(destination,output/name)
     def stamp(sec):return f'{sec//3600:02d}:{sec//60%60:02d}:{sec%60:02d}.000'
     start=0;vtt=['WEBVTT\n']
     for i,e in enumerate(entries):vtt.append(f"{i+1}\n{stamp(start)} --> {stamp(start+e['duration'])}\n{e['title']}: {e['caption']}\n");start+=e['duration']

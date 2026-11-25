@@ -4,8 +4,8 @@ let startingNewParticipant=false;
 let handoffPage=null, handoffSequence=0, handoffTimer;
 function handoffScenario(pages,sourcePage){
  const next=pages[sourcePage+1]?.ids;
- if(next?.includes('QID177'))return 'A';
- if(next?.includes('QID184'))return 'B';
+ if(next?.includes('QID1217253034'))return 'A';
+ if(next?.includes('QID185'))return 'B';
 }
 async function requestTool(){
  const sourcePage=page;
@@ -21,7 +21,8 @@ async function requestTool(){
 function toolHandoff(){
  clearInterval(handoffTimer);
  if(!pages[page]?.ids.includes('QID175'))return;
- const note=element('p','Preparing the tool for this scenario. Keep this survey tab open; it will continue when the task finishes.');
+ const scenarioTitle=pages[page+1]?.title ?? 'this scenario';
+ const note=element('p',`Preparing the tool for ${scenarioTitle}. Keep this survey tab open; it will continue when the task finishes.`);
  const retry=element('button','Open tool again',{type:'button'});
  retry.onclick=()=>requestTool().catch(e=>note.textContent=e.message);
  $('questions').append(note,retry);
@@ -31,7 +32,7 @@ function toolHandoff(){
    const r=await fetch('/api/tool?'+new URLSearchParams({study_id:state.study_id}));
    const status=await r.json();
    if(status.sequence!==handoffSequence)return;
-   if(status.state==='active')note.textContent='Task active in the tool. This survey will continue when you finish.';
+   if(status.state==='active')note.textContent=`${scenarioTitle} is active in the tool. This survey will continue when you finish.`;
    if(status.state==='error')note.textContent=status.reason;
    if(status.state==='complete'&&page===handoffPage){
     clearInterval(handoffTimer);
@@ -42,11 +43,17 @@ function toolHandoff(){
   }catch{}
  },1000);
 }
-let schema,state,page=0,pages=[],saveTimer,saveQueue=Promise.resolve(),recorder,recordStreams=[],recordChunks=[],uploadQueue=Promise.resolve(),recordId,part=0,recordingSession;
+let schema,surveySha256,state,page=0,pages=[],saveTimer,saveQueue=Promise.resolve(),recorder,recordStreams=[],recordChunks=[],uploadQueue=Promise.resolve(),recordId,part=0,recordingSession;
 function element(tag,text,attrs={}){const e=document.createElement(tag);if(text!==null)e.textContent=text;Object.assign(e,attrs);return e;}
 function fieldKey(q,row){return row?`${q.id}:${row}`:q.id;}
-function branchMatches(logic){if(logic.LogicType==='Question'){if(logic.Operator!=='Selected')throw Error('Unsupported branch operator');const choice=logic.ChoiceLocator.split('/').pop();return String(state.answers[logic.QuestionID])===choice;}return Object.keys(logic).filter(k=>/^\d+$/.test(k)).every(k=>branchMatches(logic[k]));}
-function makePages(){const result=[];function walk(flow){for(const item of flow){if(item.Type==='Branch'){if(branchMatches(item.BranchLogic))walk(item.Flow||[]);}else if(item.Type==='Standard'||item.Type==='Block'){const block=schema.blocks[item.ID];let ids=[];const flush=()=>{if(ids.length)result.push({title:block.title,ids:[...ids]});ids=[];};for(const el of block.elements){if(el.type==='Page Break')flush();else if(el.question)ids.push(el.question);}flush();}}}walk(schema.flow);return result;}
+function makePages(){
+ const {beforeScenarios,scenarioOrders,afterScenarios}=schema.flow;
+ const scenarioBlocks=scenarioOrders[state.answers.QID176] ?? [];
+ return [...beforeScenarios,...scenarioBlocks,...afterScenarios].flatMap(name=>{
+  const {title,pages}=schema.blocks[name];
+  return pages.map(ids=>({title,ids}));
+ });
+}
 function scenarioAnswers(usabilityId,workloadIds,trustId,toolId){
  const raw=state.answers;
  const usability=schema.questions[usabilityId];
@@ -104,7 +111,7 @@ function snapshot(){
   scenario_b:scenarioAnswers('QID185',['QID186','QID187','QID188','QID189','QID190','QID191'],'QID194','QID192'),
   experimenter_notes:raw.QID173
  };
- return {...state,answers,response_format_version:3,page,source_sha256:schema.source_sha256,updated_at:new Date().toISOString()};
+ return {...state,answers,response_format_version:3,page,survey_sha256:surveySha256,updated_at:new Date().toISOString()};
 }
 function saveLocal(){localStorage.setItem(KEY,JSON.stringify(snapshot()));}
 function saveNow(){saveLocal();const data=JSON.stringify(snapshot());saveQueue=saveQueue.catch(()=>{}).then(async()=>{const r=await fetch('/api/responses',{method:'POST',headers:{'Content-Type':'application/json'},body:data});if(!r.ok)throw Error('Local server could not save');$('saveStatus').textContent='Saved on this computer';});return saveQueue.catch(e=>{$('saveStatus').textContent='Server save failed; browser backup retained';throw e;});}
@@ -114,7 +121,7 @@ function renderQuestion(q){const box=element('fieldset',null),legend=element('le
  if(q.type==='TE'){inputFor(q,q.id,box,q.selector==='ML'?'textarea':'text');}
  else if(q.type==='MC'){for(const c of q.choices){const row=element('label',null,{className:'choice'}),input=element('input',null,{type:q.selector?.startsWith('MA')?'checkbox':'radio',name:q.id,value:c.id,required:q.required});input.checked=Array.isArray(state.answers[q.id])?state.answers[q.id].includes(c.id):String(state.answers[q.id])===c.id;input.addEventListener('change',()=>{if(input.type==='checkbox'){const vals=[...box.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);changed(q.id,vals);}else changed(q.id,c.id);});row.append(input,element('span',c.text));box.append(row);if(c.textEntry){const extra=inputFor({...q,required:false},`${q.id}:${c.id}:text`,box);extra.placeholder='Please specify';}}}
  else if(q.type==='Matrix'){for(const c of q.choices){const row=element('div',null,{className:'matrix-row'});row.append(element('div',c.text));const scale=element('div',null,{className:'scale'});for(const a of q.answers){const label=element('label',null),input=element('input',null,{type:'radio',name:fieldKey(q,c.id),value:a.id,required:q.required});input.checked=String(state.answers[fieldKey(q,c.id)])===a.id;input.addEventListener('change',()=>changed(fieldKey(q,c.id),a.id));label.append(input,element('span',a.text));scale.append(label);}row.append(scale);box.append(row);}}
- else if(q.type==='Slider'){for(const c of q.choices){const key=fieldKey(q,c.id),row=element('div',null),label=element('label',c.text||q.text,{className:'slider-label'});const input=element('input',null,{type:'range',min:q.min,max:q.max,step:'1',value:state.answers[key]??q.min});input.dataset.answer=key;const output=element('output',state.answers[key]??'Choose a value');input.addEventListener('input',()=>{changed(key,Number(input.value));output.textContent=input.value;});label.append(input,output);const ends=element('div',null,{className:'slider-endpoints'});ends.append(element('span',q.labels[0]||String(q.min)),element('span',q.labels.at(-1)||String(q.max)));row.append(label,ends);box.append(row);}}
+ else if(q.type==='Slider'){for(const c of q.choices){const key=fieldKey(q,c.id),row=element('div',null),label=element('label',c.text,{className:'slider-label'});const input=element('input',null,{type:'range',min:q.min,max:q.max,step:'1',value:state.answers[key]??q.min});input.setAttribute('aria-label',c.text||q.text);input.dataset.answer=key;const output=element('output',state.answers[key]??'Choose a value');input.addEventListener('input',()=>{changed(key,Number(input.value));output.textContent=input.value;});label.append(input,output);const ends=element('div',null,{className:'slider-endpoints'});ends.append(element('span',q.labels[0]||String(q.min)),element('span',q.labels.at(-1)||String(q.max)));row.append(label,ends);box.append(row);}}
  return box;}
 function render(){clearInterval(handoffTimer);pages=makePages();page=Math.max(0,Math.min(page,pages.length-1));const current=pages[page];$('questions').replaceChildren(...current.ids.map(id=>renderQuestion(schema.questions[id])));$('pageTitle').textContent=current.title;$('pagePosition').textContent=`${page+1} / ${pages.length}`;$('previous').disabled=page===0;$('next').textContent=page===pages.length-1?'Save and finish':'Save and continue';$('validation').textContent='';state.events.push({type:'page_view',page,block:current.title,time:new Date().toISOString()});toolHandoff();}
 function validate(){if(!$('questions').reportValidity())return false;for(const id of pages[page].ids){const q=schema.questions[id];if(q.required&&q.type==='Slider'){for(const c of q.choices)if(state.answers[fieldKey(q,c.id)]===undefined){$('validation').textContent='Please choose a value for every slider, including values at the starting position.';return false;}}}return true;}
@@ -200,7 +207,12 @@ window.addEventListener('beforeunload',e=>{
  e.returnValue='';
 });
 (async()=>{
- schema=await(await fetch('survey.json')).json();
+ const response=await fetch('survey.json', {cache:'no-cache'});
+ if(!response.ok)throw Error(`Survey definition returned HTTP ${response.status}`);
+ const bytes=await response.arrayBuffer();
+ schema=JSON.parse(new TextDecoder().decode(bytes));
+ const hash=await crypto.subtle.digest('SHA-256',bytes);
+ surveySha256=Array.from(new Uint8Array(hash),byte=>byte.toString(16).padStart(2,'0')).join('');
  state={session_id:crypto.randomUUID(),study_id:'',answers:{},events:[],recordings:[],started_at:new Date().toISOString()};
  updateBeginAvailability();
  if($('tutorialVideo').error)showTutorialError();

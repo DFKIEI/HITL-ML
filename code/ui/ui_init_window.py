@@ -9,7 +9,7 @@ from ui import ui_theme
 def run_initial_ui():
     user_input = {}
     filename = None  # To store the selected file path
-    datasets = {'A-PAMAP2': 'PAMAP2', 'B-CIFAR10': 'CIFAR10'}
+    datasets = {'A_Pamap': 'PAMAP2', 'B_Cifar': 'CIFAR10'}
 
     def confirm_action():
         """Store user inputs and close the UI."""
