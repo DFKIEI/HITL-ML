@@ -1,5 +1,5 @@
 """Local survey and recording storage. Run: python study/server.py"""
-import argparse,json,re,threading
+import argparse,json,os,re,subprocess,sys,threading
 from datetime import datetime,timezone
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
@@ -8,6 +8,7 @@ from convert_qsf import convert
 ROOT=Path(__file__).resolve().parent
 LOCK=threading.Lock()
 TOOL_SESSIONS={}
+STUDY_DATASETS={'A':'PAMAP2','B':'CIFAR10'}
 def identifier(value):
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}',value):raise ValueError('Invalid session identifier')
     return value
@@ -54,8 +55,30 @@ class Handler(SimpleHTTPRequestHandler):
             key=parse_qs(parsed.query).get('study_id',[''])[0].strip()
             with LOCK:
                 status=dict(TOOL_SESSIONS.get(key,{}))
+                launch=getattr(self.server,'tool_launch',None)
+                if launch and launch[:2]==(key,status.get('sequence')) and status.get('state')!='complete':
+                    if launch[2].poll() is not None:
+                        status.update(state='error',reason='The study tool closed before completing the task. Click Open tool again to retry.')
             return self.reply(200,status)
         return super().do_GET()
+
+    def launch_tool(self,key,scenario,sequence):
+        if re.search(r'[\\/:*?"<>|\x00-\x1f]',key):
+            raise ValueError('Use a Study ID without path punctuation.')
+        dataset=STUDY_DATASETS[scenario]
+        project=ROOT.parent
+        checkpoint=project/'saved_checkpoints'/dataset/'checkpoint_epoch_25.pt'
+        if not checkpoint.is_file():
+            raise ValueError(f'Missing epoch-25 checkpoint for {dataset}.')
+        environment=dict(os.environ,HITL_SURVEY_URL=f'http://127.0.0.1:{self.server.server_port}')
+        process=subprocess.Popen(
+            [sys.executable,str(project/'code'/'main.py'),f'--id={key}',
+             f'--scenario={scenario}-{dataset}',f'--dataset={dataset}',
+             f'--checkpoint={checkpoint}',f'--survey-sequence={sequence}'],
+            cwd=project,env=environment,
+        )
+        self.server.tool_launch=(key,sequence,process)
+
     def do_POST(self):
         try:
             parsed=urlparse(self.path);length=int(self.headers.get('Content-Length','0'))
@@ -70,9 +93,25 @@ class Handler(SimpleHTTPRequestHandler):
                 with LOCK:
                     entry=TOOL_SESSIONS.setdefault(key,{})
                     if parsed.path=='/api/handoff':
+                        scenario=payload.get('scenario')
+                        if scenario is not None and scenario not in ('A','B'):
+                            raise ValueError('Scenario must be A or B')
+                        launch=getattr(self.server,'tool_launch',None)
+                        if scenario and launch and launch[2].poll() is None:
+                            previous=TOOL_SESSIONS[launch[0]]
+                            previous_command=previous.get('command',{})
+                            if (launch[0]==key and previous_command.get('session_id')==payload.get('session_id')
+                                    and previous_command.get('page')==payload.get('page')
+                                    and previous_command.get('scenario')==scenario
+                                    and previous.get('state')!='complete'):
+                                return self.reply(200,{'requested':True,'sequence':launch[1]})
+                            return self.reply(409,{'error':'The previous tool session is still open or closing. Close it, then click Open tool again.'})
                         sequence=entry.get('sequence',0)+1
+                        if scenario:
+                            self.launch_tool(key,scenario,sequence)
                         entry.update(sequence=sequence, command={'sequence':sequence,'action':'focus_tool',
-                                     'page':payload.get('page'),'session_id':payload.get('session_id')},
+                                     'page':payload.get('page'),'session_id':payload.get('session_id'),
+                                     'study_id':key,'scenario':scenario},
                                      state='requested')
                         result={'requested':True,'sequence':sequence}
                     else:

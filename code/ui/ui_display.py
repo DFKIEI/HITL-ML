@@ -102,7 +102,9 @@ def display_scatter_plot(self, data, tab):
     self.data = data
     self.dragging_point = None
 
-    fig, ax = plt.subplots(figsize=(20, 15))
+    fig, ax = plt.subplots(figsize=(12, 12))
+    fig.subplots_adjust(top=0.95, bottom=0.09)
+    ax.set_box_aspect(1)
     self.ax = ax
     self.scatter_fig = fig
     _style_figure(fig, ax)
@@ -160,7 +162,7 @@ def display_scatter_plot(self, data, tab):
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
 
-    cbar = plt.colorbar(sm, ax=ax, boundaries=boundaries, ticks=ticks)
+    cbar = plt.colorbar(sm, ax=ax, boundaries=boundaries, ticks=ticks, aspect=36)
     cbar.set_label('Classes')
     cbar.set_ticklabels(list(filtered_label_names.values()))
 
@@ -477,13 +479,6 @@ def refresh_llm_overlay(self):
                 # A stationary class still needs a handle so it can be moved again.
                 if owner is not None:
                     _draw_handle(self, ax, end, class_index, outline)
-                    name = owner.class_i_name if class_index == owner.class_i else owner.class_j_name
-                    label = ax.annotate(f'{name}: no move proposed; drag to move', xy=tuple(end), xytext=(10, 12),
-                                        textcoords='offset points', fontsize=9, zorder=13,
-                                        annotation_clip=False, color=self.class_colors[class_index],
-                                        path_effects=outline)
-                    self.llm_overlay_artists.append(label)
-                    self.llm_overlay_classes.append((label, class_index))
                     self.llm_handles.append({'kind': 'arrow', 'class': class_index, 'start': start,
                                              'end': end, 'owner': owner})
                 continue

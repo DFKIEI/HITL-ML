@@ -2,19 +2,26 @@
 const $=id=>document.getElementById(id), KEY='hitl-local-survey-v1';
 let startingNewParticipant=false;
 let handoffPage=null, handoffSequence=0, handoffTimer;
+function handoffScenario(pages,sourcePage){
+ const next=pages[sourcePage+1]?.ids;
+ if(next?.includes('QID177'))return 'A';
+ if(next?.includes('QID184'))return 'B';
+}
 async function requestTool(){
  const sourcePage=page;
- const response=await fetch('/api/handoff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({study_id:state.study_id,session_id:state.session_id,page:sourcePage})});
- if(!response.ok)throw Error('Could not connect to tool');
+ const scenario=handoffScenario(pages,sourcePage);
+ if(!scenario)throw Error('Could not identify the next scenario.');
+ const response=await fetch('/api/handoff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({study_id:state.study_id,session_id:state.session_id,page:sourcePage,scenario})});
+ if(!response.ok)throw Error((await response.json()).error||'Could not connect to tool');
  handoffSequence=(await response.json()).sequence;
  handoffPage=sourcePage;
- state.events.push({type:'survey_tool_handoff',page,sequence:handoffSequence,time:new Date().toISOString()});
+ state.events.push({type:'survey_tool_handoff',page,scenario,sequence:handoffSequence,time:new Date().toISOString()});
  saveNow().catch(()=>{});
 }
 function toolHandoff(){
  clearInterval(handoffTimer);
  if(!pages[page]?.ids.includes('QID175'))return;
- const note=element('p','Opening the tool. Keep this survey tab open; it will continue when the task finishes. Use the same Study ID in both windows.');
+ const note=element('p','Preparing the tool for this scenario. Keep this survey tab open; it will continue when the task finishes.');
  const retry=element('button','Open tool again',{type:'button'});
  retry.onclick=()=>requestTool().catch(e=>note.textContent=e.message);
  $('questions').append(note,retry);
@@ -25,7 +32,7 @@ function toolHandoff(){
    const status=await r.json();
    if(status.sequence!==handoffSequence)return;
    if(status.state==='active')note.textContent='Task active in the tool. This survey will continue when you finish.';
-   if(status.state==='waiting_for_pause')note.textContent='Pause training in the tool, then begin the study task.';
+   if(status.state==='error')note.textContent=status.reason;
    if(status.state==='complete'&&page===handoffPage){
     clearInterval(handoffTimer);
     state.events.push({type:'tool_survey_handoff',page,sequence:handoffSequence,time:new Date().toISOString()});

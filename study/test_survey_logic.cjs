@@ -3,6 +3,14 @@ const source=fs.readFileSync(__dirname+'/web/app.js','utf8').split("$('begin').o
 const context=vm.createContext({document:{getElementById:()=>({addEventListener(){}})},console,setTimeout,clearTimeout});vm.runInContext(source,context);
 const schema=JSON.parse(fs.readFileSync(__dirname+'/web/survey.json','utf8'));
 function route(order){context.inputSchema=schema;context.order=order;return JSON.parse(vm.runInContext('schema=inputSchema; state={answers:{QID176:order}}; JSON.stringify(makePages())',context));}
+for(const [order,expected] of [['1',['A','B']],['2',['B','A']]]){
+ context.routePages=route(order);
+ const scenarios=JSON.parse(vm.runInContext(
+  "JSON.stringify(routePages.flatMap((page,index)=>page.ids.includes('QID175')?[handoffScenario(routePages,index)]:[]))",
+  context
+ ));
+ assert.deepEqual(scenarios,expected);
+}
 const a=route('1').flatMap(p=>p.ids),b=route('2').flatMap(p=>p.ids);
 for(const order of ['1','2']){
  const pages=route(order);

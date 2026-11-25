@@ -307,7 +307,7 @@ def test_stationary_reference_class_can_be_moved_independently(direction):
     first_tip = handle(ui, 'arrow', 0)['end'].copy()
     second = handle(ui, 'arrow', 1)
     np.testing.assert_allclose(second['end'], ui.data['centers'][1])
-    assert any('drag to move' in a.get_text() for a in ui.llm_overlay_artists if hasattr(a, 'get_text'))
+    assert not any(a.get_text() for a in ui.llm_overlay_artists if hasattr(a, 'get_text'))
     target = second['start'] + [1., 1.]
     drag(ui, second['end'], target)
     np.testing.assert_allclose(handle(ui, 'arrow', 1)['end'], target)

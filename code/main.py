@@ -2,6 +2,7 @@ import tkinter as tk
 import torch
 import torch.optim as optim
 import argparse
+import ctypes
 
 import os
 import sys
@@ -18,23 +19,35 @@ from llm import openrouter
 
 
 def main():
-    user_input = run_initial_ui()
-    print(f"Initial Setup: {user_input}")
+    if sys.platform == 'win32':
+        # Set DPI awareness before creating the setup window or the main UI.
+        ctypes.windll.user32.SetProcessDPIAware()
+
     parser = argparse.ArgumentParser(description='Train and visualize neural networks')
-    parser.add_argument('--dataset', type=str, default=user_input['dataset'], help='Dataset to use')
-    parser.add_argument('--model', type=str, default=f"CNN_{user_input['dataset']}", help='Model architecture to use')
-    parser.add_argument('--checkpoint', type=str, default=user_input.get('model_path'), help='Pretrained checkpoint to load')
+    parser.add_argument('--dataset', help='Dataset to use')
+    parser.add_argument('--model', help='Model architecture to use')
+    parser.add_argument('--checkpoint', help='Pretrained checkpoint to load')
     parser.add_argument('--loss', type=str, default='cross_entropy', choices=['cross_entropy', 'custom', 'external'],
                         help='Loss function to use')
     parser.add_argument('--batch', type=int, default=512, help='Batch Size')
     parser.add_argument('--visualize', type=str, default='validation', help='Select dataset to visualize',
                         choices=['train', 'validation', 'test'])
-    parser.add_argument('--id', type=str, default=user_input['id'], help='Person ID to identifgy partisipent')
-    parser.add_argument('--scenario', type=str, default=user_input['scenario'], help='Name of scenario')
+    parser.add_argument('--id', help='Participant Study ID')
+    parser.add_argument('--scenario', help='Name of scenario')
+    parser.add_argument('--survey-sequence', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--llm-model', type=str, default=openrouter.get_default_model(),
                         dest='llm_model',
                         help='OpenRouter model id used for the latent space suggestions')
     args = parser.parse_args()
+    if args.survey_sequence is None:
+        user_input = run_initial_ui()
+        args.dataset = args.dataset or user_input['dataset']
+        args.checkpoint = args.checkpoint or user_input.get('model_path')
+        args.id = args.id or user_input['id']
+        args.scenario = args.scenario or user_input['scenario']
+    elif not all((args.dataset, args.checkpoint, args.id, args.scenario)):
+        parser.error('Survey launch requires a dataset, checkpoint, Study ID and scenario.')
+    args.model = args.model or f'CNN_{args.dataset}'
 
     # The suggestion window reads the default model from the environment
     os.environ[openrouter.MODEL_ENV_VAR] = args.llm_model
@@ -58,6 +71,7 @@ def main():
     root = tk.Tk()
     app = UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss,
        args.visualize,args.id, args.scenario)
+    app.study_bridge.managed_sequence = args.survey_sequence
     if args.checkpoint:
         # Load before Tk's initial tab event builds the plot, avoiding a stale
         # untrained layout followed by a second full feature extraction.

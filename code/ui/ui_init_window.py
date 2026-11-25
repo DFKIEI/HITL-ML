@@ -9,18 +9,19 @@ from ui import ui_theme
 def run_initial_ui():
     user_input = {}
     filename = None  # To store the selected file path
+    datasets = {'A-PAMAP2': 'PAMAP2', 'B-CIFAR10': 'CIFAR10'}
 
     def confirm_action():
         """Store user inputs and close the UI."""
         user_input['id'] = id_var.get()
-        user_input['dataset'] = dataset_var.get()
-        user_input['scenario'] = scenario_var.get()
+        user_input['scenario'] = dataset_var.get()
+        user_input['dataset'] = datasets[user_input['scenario']]
         user_input['model_path'] = filename
         root.destroy()
 
     def on_input_change(*args):
         """Enable Confirm button when all inputs are provided."""
-        if id_var.get() and dataset_var.get() and scenario_var.get():  # and filename:
+        if id_var.get() and dataset_var.get() in datasets:
             confirm_button.config(state=tk.NORMAL)
         else:
             confirm_button.config(state=tk.DISABLED)
@@ -28,24 +29,22 @@ def run_initial_ui():
     root = tk.Tk()
     ui_theme.apply_theme(root)
     root.title("HITL-ML — Initial Setup")
-    root.geometry("440x460")
-    root.minsize(400, 340)
+    minimum_width = 520
+    wrap_length = minimum_width - 2 * ui_theme.PAD_L
 
     # Input Variables
     id_var = tk.StringVar()
     dataset_var = tk.StringVar()
-    scenario_var = tk.StringVar()
 
     id_var.trace_add("write", on_input_change)
     dataset_var.trace_add("write", on_input_change)
-    scenario_var.trace_add("write", on_input_change)
 
     container = ttk.Frame(root, padding=ui_theme.PAD_L)
     container.pack(fill=tk.BOTH, expand=True)
 
     ttk.Label(container, text="Session Setup", style='Title.TLabel').pack(anchor=tk.W)
-    ttk.Label(container, text="Enter your participant ID, dataset and scenario name to begin.",
-             style='Muted.TLabel', wraplength=380, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, ui_theme.PAD_L))
+    ttk.Label(container, text="Enter the participant ID and choose the study dataset.",
+             style='Muted.TLabel', wraplength=wrap_length, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, ui_theme.PAD_L))
 
     ttk.Label(container, text="Participant ID").pack(anchor=tk.W, pady=(0, 2))
     id_entry = ttk.Entry(container, textvariable=id_var)
@@ -53,12 +52,8 @@ def run_initial_ui():
 
     ttk.Label(container, text="Dataset").pack(anchor=tk.W, pady=(0, 2))
     dataset_dropdown = ttk.Combobox(container, textvariable=dataset_var,
-                                    values=["PAMAP2", "CIFAR10"], state="readonly")
-    dataset_dropdown.pack(fill=tk.X, pady=(0, ui_theme.PAD_M))
-
-    ttk.Label(container, text="Scenario Name").pack(anchor=tk.W, pady=(0, 2))
-    scenario_entry = ttk.Entry(container, textvariable=scenario_var)
-    scenario_entry.pack(fill=tk.X, pady=(0, ui_theme.PAD_L))
+                                    values=list(datasets), state="readonly")
+    dataset_dropdown.pack(fill=tk.X, pady=(0, ui_theme.PAD_L))
 
     checkpoint_var = tk.StringVar(value='Start from a new model')
     def choose_model():
@@ -68,13 +63,15 @@ def run_initial_ui():
             filename = selected
             checkpoint_var.set(Path(selected).name)
     ttk.Button(container, text='Choose pretrained model (optional)', command=choose_model).pack(fill=tk.X)
-    ttk.Label(container, textvariable=checkpoint_var, wraplength=360).pack(anchor=tk.W, pady=(2, 8))
+    ttk.Label(container, textvariable=checkpoint_var, wraplength=wrap_length).pack(anchor=tk.W, pady=(2, 8))
 
     confirm_button = ttk.Button(container, text="Confirm", state=tk.DISABLED,
                                 style='Primary.TButton', command=confirm_action)
     confirm_button.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
 
     id_entry.focus_set()
+    root.update_idletasks()
+    root.minsize(minimum_width, max(500, root.winfo_reqheight()))
     root.mainloop()
     return user_input
 

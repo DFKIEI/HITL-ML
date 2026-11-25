@@ -59,10 +59,8 @@ class StudyControls:
             if enabled:
                 if 'controls' not in self.collapsed_sidebars:
                     self.toggle_sidebar('controls')
-                self.left_toggle.configure(state='disabled')
                 self.study_toolbar.pack(side=tk.TOP, fill=tk.X, before=self.notebook)
             else:
-                self.left_toggle.configure(state='normal')
                 self.study_toolbar.pack_forget()
                 if 'controls' in self.collapsed_sidebars:
                     self.toggle_sidebar('controls')
@@ -80,6 +78,9 @@ class StudyControls:
         self.events.log('TOOL_SURVEY_HANDOFF', interactions=self.study_count)
         if hasattr(self, 'study_bridge'):
             self.study_bridge.publish('complete', interactions=self.study_count, reason='returned_to_survey')
+            if self.study_bridge.managed_sequence is not None:
+                self.stop_training.set()
+                self.pause_event.clear()
         self.study_mode_var.set(False)
         self.toggle_study_mode()
         self.root.iconify()

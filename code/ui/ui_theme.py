@@ -14,6 +14,20 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
 
+
+def hide_fitting_scrollbar(canvas, scrollbar):
+    """Show a vertical scrollbar only while part of the canvas is out of view."""
+    def update(first, last):
+        scrollbar.set(first, last)
+        fits = float(first) <= 0.0 and float(last) >= 1.0
+        if fits and scrollbar.winfo_manager():
+            scrollbar.pack_forget()
+        elif not fits and not scrollbar.winfo_manager():
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=canvas)
+
+    canvas.configure(yscrollcommand=update)
+
+
 # ---------------------------------------------------------------- palette
 BG = "#F4F6F9"
 SURFACE = "#FFFFFF"

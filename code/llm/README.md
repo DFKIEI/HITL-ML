@@ -208,10 +208,8 @@ still initially proposes movements for both classes.
 
 Every class named in an editable suggestion has a movement handle, including
 the reference class in "closer to", "into open space" and custom-direction
-suggestions. A class with no requested movement shows a handle labelled
-"drag to move" at its centre; dragging it adds an independent movement
-without changing the first class. The label does not represent a movement
-that would be applied before dragging.
+suggestions. A class with no requested movement shows a handle at its centre.
+Dragging it adds an independent movement without changing the first class.
 
 ## LLM interpretation of edited instructions
 

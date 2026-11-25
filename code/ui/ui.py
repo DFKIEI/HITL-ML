@@ -16,7 +16,7 @@ SHOW_EXTRA_PLOTS = False
 
 from plots.plots import InteractivePlot
 from training.training import train_model
-from ui.ui_control import create_info_labels, create_training_controls, create_visualization_controls
+from ui.ui_control import create_info_labels, create_training_controls
 from ui.ui_display import (display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names,
                            log_modification)
 from training.training_utils import find_latest_checkpoint, load_checkpoint
@@ -82,6 +82,8 @@ class UI(StudyControls):
         self.selected_point_index = None
 
         self.selected_layer = None
+        self.layer_var = tk.StringVar(master=root, value="final")
+        self.selected_classes_var = tk.StringVar(master=root)
 
         self.num_features = None
 
@@ -136,14 +138,14 @@ class UI(StudyControls):
                                       command=lambda: self.toggle_sidebar('controls'))
         self.left_toggle.pack(side=tk.TOP, pady=(0, ui_theme.PAD_S))
 
-        canvas = tk.Canvas(self.left_sidebar, bg=ui_theme.BG, highlightthickness=0, width=360)
+        sidebar_width = min(420, max(360, int(self.root.winfo_screenwidth() * 0.28)))
+        canvas = tk.Canvas(self.left_sidebar, bg=ui_theme.BG, highlightthickness=0, width=sidebar_width)
         scrollbar = ttk.Scrollbar(self.left_sidebar, orient="vertical", command=canvas.yview)
         self.control_panel = ttk.Frame(canvas, padding=(ui_theme.PAD_M, ui_theme.PAD_M))
 
         # Configure the canvas
-        canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="y")
-        scrollbar.pack(side="left", fill="y")
+        ui_theme.hide_fitting_scrollbar(canvas, scrollbar)
 
         # Add the control panel to the canvas
         panel_window = canvas.create_window((0, 0), window=self.control_panel, anchor="nw")
@@ -186,7 +188,6 @@ class UI(StudyControls):
         create_info_labels(self)
         create_training_controls(self)
         self.create_study_controls()
-        create_visualization_controls(self)
 
         ttk.Separator(main_frame, orient=tk.VERTICAL).pack(side="left", fill="y", padx=ui_theme.PAD_M)
 

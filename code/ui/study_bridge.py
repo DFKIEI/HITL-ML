@@ -12,6 +12,8 @@ class StudyBridge:
         self.results = queue.Queue()
         self.busy = False
         self.sequence = 0
+        self.managed_sequence = None
+        self.completion_sent = threading.Event()
         self.status = {'state': 'ready'}
         self.url = os.environ.get('HITL_SURVEY_URL', 'http://127.0.0.1:8765').rstrip('/')
         self.focused = None
@@ -32,11 +34,15 @@ class StudyBridge:
 
     def poll(self):
         ui = self.ui
+        if self.completion_sent.is_set():
+            ui.on_close()
+            return
         try:
             command = self.results.get_nowait()
         except queue.Empty:
             command = None
-        if command and command.get('sequence', 0) > self.sequence:
+        if (command and command.get('sequence', 0) > self.sequence
+                and self.managed_sequence in (None, command['sequence'])):
             self.sequence = command['sequence']
             ui.root.deiconify()
             ui.root.lift()
@@ -57,6 +63,8 @@ class StudyBridge:
                                       headers={'Content-Type': 'application/json'})
                     with urlopen(request, timeout=1) as response:
                         result = json.load(response)
+                    if self.managed_sequence is not None and payload['state'] == 'complete':
+                        self.completion_sent.set()
                     if result.get('command'):
                         self.results.put(result['command'])
                 except (OSError, ValueError):

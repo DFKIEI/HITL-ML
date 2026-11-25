@@ -12,19 +12,19 @@ python study/server.py
 
 Open **http://127.0.0.1:8765** in Chrome or Edge. No Qualtrics account, public hosting or internet connection is needed to answer the survey. Keep the server running until responses and recordings have finished saving.
 
-Use the same Study ID in the survey and desktop application. New sessions save under `study/results/<Study ID>-<UTC timestamp>/`. The response JSON shares the folder name. Each video filename starts with the Study ID and its own UTC timestamp. The server adds a number if a name is already taken. Keep the `.sessions` index with the results if moving the directory. The file includes the Study ID, timestamps, event history and source-QSF hash. In response format version 3, `answers` groups readable fields under `participant`, `scenario_a`, and `scenario_b`, with `scenario_order` and `experimenter_notes` alongside them. Workload scores use the original 1-20 scale, including performance from Perfect to Failure. Tool rating scores use the original 0-100 scale. Each scenario includes a separate S-TIAS page after NASA-TLX. The export stores the three 1-7 responses and their mean once all three are answered. Version 2 exports also contained `answers_by_qid`. Older exports stored Qualtrics IDs directly in `answers`. Browser local storage is a recovery copy; successful server saving is shown at the top. The optional backup button on the final screen downloads both the recording and a JSON copy of the responses. Opening or reloading the survey starts a fresh session. After you interact with the page, Chrome asks for confirmation before reloading or leaving it. Use **New participant** after saving the recording to start a fresh session directly.
+Enter the Study ID in the survey. Automatic tool launches reuse it. New sessions save under `study/results/<Study ID>-<UTC timestamp>/`. The response JSON shares the folder name. Each video filename starts with the Study ID and its own UTC timestamp. The server adds a number if a name is already taken. Keep the `.sessions` index with the results if moving the directory. The file includes the Study ID, timestamps, event history and source-QSF hash. In response format version 3, `answers` groups readable fields under `participant`, `scenario_a`, and `scenario_b`, with `scenario_order` and `experimenter_notes` alongside them. Workload scores use the original 1-20 scale, including performance from Perfect to Failure. Tool rating scores use the original 0-100 scale. Each scenario includes a separate S-TIAS page after NASA-TLX. The export stores the three 1-7 responses and their mean once all three are answered. Version 2 exports also contained `answers_by_qid`. Older exports stored Qualtrics IDs directly in `answers`. Browser local storage is a recovery copy; successful server saving is shown at the top. The optional backup button on the final screen downloads both the recording and a JSON copy of the responses. Opening or reloading the survey starts a fresh session. After you interact with the page, Chrome asks for confirmation before reloading or leaving it. Use **New participant** after saving the recording to start a fresh session directly.
 
-The QSF's existing A/B labels are preserved. The researcher must decide which application condition/checkpoint corresponds to A and B and record that mapping; the survey does not invent it. Workload sliders require an explicit selection rather than silently treating the initial position as an answer.
+The survey launches **A-PAMAP2** with the PAMAP2 epoch-25 checkpoint and **B-CIFAR10** with the CIFAR10 epoch-25 checkpoint. Workload sliders require an explicit selection rather than silently treating the initial position as an answer.
 
 ## Desktop study task
 
-1. Start `python code/main.py` from the repository root, using the environment and dataset setup already required by the project.
-2. Enter the same participant ID and the scenario name. Choose a pretrained model in setup, or use **Study & checkpoints → Load pretrained checkpoint** in the left sidebar.
+1. Run the survey server using the Python environment with the tool dependencies. Continue to **Please switch to the tool** to launch a fresh tool session with the Study ID, dataset, and epoch-25 checkpoint already set.
+2. For manual setup, run `python code/main.py`. The **Dataset** dropdown offers **A-PAMAP2** and **B-CIFAR10** and sets the scenario label automatically. Choose a pretrained model in setup, or use **Study & checkpoints → Load pretrained checkpoint** in the left sidebar.
 3. Select the study strategy. For editable LLM suggestions, choose the strategy that allows human edits.
 4. Enable **Study mode (participant session)**. Experiment logging and the elapsed timer start immediately; there is no separate Begin step.
 5. Apply suggestions, edit their text/arrows, and drag the active suggestion's points/centers. Count and elapsed time are informational: there is no three-interaction or five-minute lockout.
 6. Use the main toolbar to start, pause, resume, or stop training while keeping Study mode and its experiment log active. Applied changes refresh the interaction-loss target before the next training batch; direct drags do so on release.
-7. Choose **Return to survey** when finished. This closes the participant experiment log and advances the waiting survey. Load the intended checkpoint before the next session for a fresh baseline.
+7. Choose **Return to survey** when finished. This closes the participant experiment log and advances the waiting survey. A survey-launched tool closes automatically, and the next handoff opens a fresh tool session.
 
 Study mode covers the participant's entire UI session, including training and interaction. It does not impose editing-only phases or automatically end a session.
 
@@ -94,10 +94,7 @@ Tests cover interpretation validation, text-plus-movement audit records, unrestr
 
 ### Survey/tool handoff and participant layout
 
-Run `python study/server.py` and the desktop tool on the same computer with the
-**same Study ID**. Choose the dataset, checkpoint, and strategy in the tool first.
-The survey's “Please switch to the tool” pages raise the running tool and enable
-Study mode, including if training is running. Study mode hides the left settings
+Run the survey server in the desktop tool's Python environment. At each “Please switch to the tool” page the server launches the scenario-specific dataset and epoch-25 checkpoint, then the tool enters Study mode. Study mode hides the left settings
 sidebar and shows elapsed time, interaction count, Start/Pause/Resume Training,
 Stop Training, and Return to survey above the plot. It has no interaction/time
 lockout and does not require a separate Begin action or a pretrained model.

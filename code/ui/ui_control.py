@@ -96,16 +96,3 @@ def create_training_controls(self):
     ui_theme.style_scrolled_text(self.log_text)
     self.log_text.pack(fill=tk.X)
 
-
-def create_visualization_controls(self):
-    viz_section = _section(self.control_panel, "Visualization")
-
-    self.selected_classes_var = tk.StringVar()
-    ttk.Label(viz_section, textvariable=self.selected_classes_var, style='Muted.TLabel',
-             wraplength=300, justify=tk.LEFT).pack(anchor=tk.W, fill=tk.X, pady=(0, ui_theme.PAD_S))
-    ttk.Button(viz_section, text="Select Classes to Visualize",
-              command=self.show_class_selection).pack(fill=tk.X, pady=(0, ui_theme.PAD_S))
-
-    self.layer_var = tk.StringVar(value="final")
-    ttk.Button(viz_section, text="Undo Last Change", command=self.undo_last_step).pack(fill=tk.X)
-

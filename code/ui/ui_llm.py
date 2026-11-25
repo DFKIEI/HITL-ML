@@ -28,14 +28,14 @@ from llm.interpretation import interpret_instruction
 from ui.ui_display import apply_llm_suggestion, class_color_hex, highlight_classes, refresh_llm_overlay
 from ui import ui_theme
 
-PANEL_WIDTH = 440
-WRAP_LENGTH = 380
 TEXT_PARSE_DELAY_MS = 600
 
 
 class LLMSuggestionsPanel(ttk.Frame):
     def __init__(self, parent, ui):
-        super().__init__(parent, width=PANEL_WIDTH, padding=(ui_theme.PAD_M, 0, 0, 0))
+        panel_width = min(600, max(440, int(parent.winfo_screenwidth() * 0.38)))
+        super().__init__(parent, width=panel_width, padding=(ui_theme.PAD_M, 0, 0, 0))
+        self.wrap_length = panel_width - 60
         self.pack_propagate(False)
         self.ui = ui
 
@@ -97,17 +97,18 @@ class LLMSuggestionsPanel(ttk.Frame):
         ttk.Button(buttons, text="Clear", command=self._clear_all).pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
 
         self.status_var = tk.StringVar(value=self._key_status())
-        ttk.Label(frame, textvariable=self.status_var, wraplength=WRAP_LENGTH,
-                  justify=tk.LEFT, style='Muted.TLabel').grid(
+        status_label = ttk.Label(frame, textvariable=self.status_var, wraplength=self.wrap_length,
+                                 justify=tk.LEFT, style='Muted.TLabel')
+        status_label.grid(
             row=4, column=0, columnspan=2, sticky=tk.W, pady=(ui_theme.PAD_S, 0))
-        ttk.Label(frame, text="On the plot: dashed arrow = the shown suggestion's move; dashed "
-                              "circle = the tighter size it suggests for that class. Hover the card "
-                              "to highlight its classes. Drag an arrow's tip or a circle's edge (the "
-                              "white handles) to reshape it. Each arrow moves independently. "
-                              "A stationary class has a handle labelled 'drag to move'. "
-                              "Skip moves on to the next one.",
-                  wraplength=WRAP_LENGTH, justify=tk.LEFT, style='Status.TLabel').grid(
-            row=5, column=0, columnspan=2, sticky=tk.W, pady=(2, ui_theme.PAD_S))
+
+        def update_status_visibility(*_):
+            if self.status_var.get():
+                status_label.grid()
+            else:
+                status_label.grid_remove()
+
+        self.status_var.trace_add('write', update_status_visibility)
 
         frame.columnconfigure(1, weight=1)
 
@@ -129,13 +130,12 @@ class LLMSuggestionsPanel(ttk.Frame):
         container = ttk.Frame(self)
         container.pack(fill=tk.BOTH, expand=True)
 
-        self.canvas = tk.Canvas(container, highlightthickness=0, bg=ui_theme.BG)
+        self.canvas = tk.Canvas(container, width=1, highlightthickness=0, bg=ui_theme.BG)
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
         self.suggestion_frame = ttk.Frame(self.canvas)
 
-        self.canvas.configure(yscrollcommand=scrollbar.set)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        ui_theme.hide_fitting_scrollbar(self.canvas, scrollbar)
 
         frame_window = self.canvas.create_window((0, 0), window=self.suggestion_frame, anchor="nw")
         self.suggestion_frame.bind(
@@ -236,6 +236,9 @@ class LLMSuggestionsPanel(ttk.Frame):
         try:
             global_summary, suggestions, state, raw = request_suggestions(
                 self.ui, model=model, user_goal=goal)
+            if not suggestions:
+                self.result_queue.put(('error', 'The model returned no usable suggestions. Click Get Suggestions to try again.'))
+                return
             latency = time.monotonic() - started
             self.result_queue.put(('ok', (global_summary, suggestions, state, raw, model, goal, latency)))
         except Exception as e:  # network, parsing and validation errors alike
@@ -293,13 +296,7 @@ class LLMSuggestionsPanel(ttk.Frame):
 
         self._render_cards()
 
-        if strategy.space == 'high_dim':
-            note = "They drive training directly in the model's real latent space."
-        elif strategy.llm_auto_apply:
-            note = "Applied to the plot automatically."
-        else:
-            note = "Edit, remove or add suggestions, then Apply them to the plot one by one."
-        self.status_var.set(f"{len(suggestions)} suggestion(s) from {model}. {note}")
+        self.status_var.set('')
         self.ui.update_log(f"LLM: {len(suggestions)} suggestion(s) received.")
 
     # ------------------------------------------------------------------ cards
@@ -413,10 +410,10 @@ class LLMSuggestionsPanel(ttk.Frame):
                               padding=(ui_theme.PAD_M, ui_theme.PAD_S))
         card.pack(fill=tk.X, padx=(0, 5), pady=(0, 6))
         if global_summary.issue:
-            ttk.Label(card, text=global_summary.issue, wraplength=WRAP_LENGTH - 20,
+            ttk.Label(card, text=global_summary.issue, wraplength=self.wrap_length - 20,
                       justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
         if global_summary.strategy:
-            ttk.Label(card, text=f"Plan: {global_summary.strategy}", wraplength=WRAP_LENGTH - 20,
+            ttk.Label(card, text=f"Plan: {global_summary.strategy}", wraplength=self.wrap_length - 20,
                       justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(4, 2))
         pending = self._pending()
         impact = self._impact(pending) if len(pending) > 1 else None
@@ -424,7 +421,7 @@ class LLMSuggestionsPanel(ttk.Frame):
             ttk.Label(card, text=(f"All {len(pending)} open suggestions together: separation "
                                   f"{impact['silhouette_before']:+.2f} → {impact['silhouette_after']:+.2f}, "
                                   f"shift {impact['shift_ratio']:.2f}x typical class gap"),
-                      wraplength=WRAP_LENGTH - 20, justify=tk.LEFT, style='Status.TLabel').pack(
+                      wraplength=self.wrap_length - 20, justify=tk.LEFT, style='Status.TLabel').pack(
                 anchor=tk.W, pady=(2, 0))
 
     def _bind_hover(self, card, suggestion):
@@ -534,7 +531,7 @@ class LLMSuggestionsPanel(ttk.Frame):
         box = ttk.Frame(card)
         box.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
         ttk.Label(box, text=title, style='Status.TLabel').pack(anchor=tk.W)
-        ttk.Label(box, textvariable=impact_var, wraplength=WRAP_LENGTH - 20, justify=tk.LEFT,
+        ttk.Label(box, textvariable=impact_var, wraplength=self.wrap_length - 20, justify=tk.LEFT,
                   style='Muted.TLabel').pack(anchor=tk.W)
 
     def _build_readonly_body(self, card, suggestion):
@@ -547,9 +544,9 @@ class LLMSuggestionsPanel(ttk.Frame):
         ttk.Label(header, text=suggestion.class_j_name, style='Heading.TLabel').pack(side=tk.LEFT)
 
         if suggestion.suggestion:
-            ttk.Label(card, text=suggestion.suggestion, wraplength=WRAP_LENGTH - 20,
+            ttk.Label(card, text=suggestion.suggestion, wraplength=self.wrap_length - 20,
                       justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 0))
-        ttk.Label(card, text=describe_movement(suggestion), wraplength=WRAP_LENGTH - 20,
+        ttk.Label(card, text=describe_movement(suggestion), wraplength=self.wrap_length - 20,
                   justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 2))
 
     def _current_angle(self, suggestion):
@@ -633,7 +630,7 @@ class LLMSuggestionsPanel(ttk.Frame):
             text.insert('1.0', value)
         self.text_setters[suggestion.uid] = replace_editor
         text.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(card, textvariable=summary_var, wraplength=WRAP_LENGTH - 20,
+        ttk.Label(card, textvariable=summary_var, wraplength=self.wrap_length - 20,
                   justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 0))
 
         def sync_widgets():
