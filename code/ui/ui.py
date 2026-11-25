@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import threading
+import traceback
 import queue
 import matplotlib
 from matplotlib import pyplot as plt
@@ -31,7 +32,8 @@ from ui.ui_study import StudyControls
 
 class UI(StudyControls):
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name,
-                 loss_type, visualization, probant_id, scenario, *, study_output=None, study_session_id=None):
+                 loss_type, visualization, probant_id, scenario, *, study_output=None, study_session_id=None,
+                 study_plot_loader=None):
         self.root = root
         self.model = model
         self.optimizer = optimizer
@@ -43,6 +45,7 @@ class UI(StudyControls):
         self.model_name = model_name
         self.loss_type = loss_type
         self.visualization = visualization
+        self.study_plot_loader = study_plot_loader
         self.probant_id = probant_id
         self.scenario = scenario
 
@@ -74,6 +77,7 @@ class UI(StudyControls):
         self.visualization_queue = queue.Queue()
         self.log_messages = queue.Queue()
         self.training_thread = None
+        self.training_error = None
         self.pause_event = Pause()
         self.training_paused = threading.Event()
         self.interaction_changed = threading.Event()
@@ -215,10 +219,14 @@ class UI(StudyControls):
         self.study_toolbar = ttk.Frame(self.center_panel)
         self.study_toolbar.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(self.study_toolbar, textvariable=self.study_status).pack(side=tk.LEFT, padx=5)
-        self.study_training_button = ttk.Button(self.study_toolbar, text='Start Training', command=self.resume_study_training)
+        self.study_training_button = ttk.Button(self.study_toolbar, text='Start Training',
+                                                style='Primary.TButton', command=self.resume_study_training)
         self.study_training_button.pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.study_toolbar, text='Stop Training', command=self.stop_training_clicked).pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.study_toolbar, text='Return to survey', command=self.return_to_survey).pack(side=tk.RIGHT, padx=5)
+        self.study_stop_button = ttk.Button(self.study_toolbar, text='Stop Training',
+                                            command=self.stop_training_clicked, state='disabled')
+        self.study_stop_button.pack(side=tk.LEFT, padx=5)
+        self.study_return_button = ttk.Button(self.study_toolbar, text='Return to survey', command=self.return_to_survey)
+        self.study_return_button.pack(side=tk.RIGHT, padx=5)
         self.study_toolbar.pack_forget()
         self.notebook = ttk.Notebook(self.center_panel)
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -274,7 +282,7 @@ class UI(StudyControls):
         self.update_study_status()
         acknowledged = self.training_paused.is_set() and self.pause_event.is_set()
         if acknowledged and not self._pause_was_acknowledged:
-            self.status_var.set('Paused — study mode available')
+            self.status_var.set('Training paused')
             self.events.log('TRAINING_PAUSE_CONFIRMED', epoch=self.latest_metrics.get('epoch'))
         self._pause_was_acknowledged = acknowledged
         self.session_time_var.set(
@@ -296,12 +304,14 @@ class UI(StudyControls):
         self.stop_training.set()
         self.events.log('TRAINING_STOPPED')
         self.events.enter('phase', 'stopped')
+        self.update_study_status()
 
     def _training_settings(self):
-        return {'epochs': self.epoch_var.get(), 'pause_every': self.pause_epochs_var.get(),
+        start_epoch, epochs, pause_every = self.training_schedule()
+        return {'start_epoch': start_epoch, 'epochs': epochs, 'pause_every': pause_every,
                 'alpha': self.alpha_var.get(), 'strategy': self.strategy_var.get(),
                 'eval_frequency': self.freq_var.get(),
-                'llm_model': self.llm_panel.model_var.get() if self.llm_panel is not None else None}
+                'llm_model': self.llm_panel.active_model() if self.llm_panel is not None else None}
 
     def toggle_training(self):
         if self.training_thread is None or not self.training_thread.is_alive():
@@ -309,7 +319,7 @@ class UI(StudyControls):
             self.events.enter('phase', 'training')
             self.pause_event.clear()
             self.stop_training.clear()
-            pause_after_n_epochs = self.pause_epochs_var.get()
+            self.training_error = None
             self.training_thread = threading.Thread(target=self.run_training)
             self.training_thread.start()
             self.training_button.config(text="Pause Training")
@@ -342,22 +352,32 @@ class UI(StudyControls):
         self.all_datapoints_tracker.log_datapoints_state(self.data, self.moved_points)
 
     def run_training(self):
-        train_model(self.model, self.optimizer, self.trainloader, self.valloader,
-                    self.testloader, self.device, self.epoch_var.get(), self.freq_var.get(), self.alpha_var,
-                    self.report_dir,
-                    log_callback=self.update_log,
-                    pause_event=self.pause_event,
-                    stop_training=self.stop_training,
-                    epoch_end_callback=self.on_epoch_end,
-                    pause_after_n_epochs=self.pause_epochs_var.get(),
-                    plot=self.plot,
-                    checkpoint_dir=self.probant_scenario_dir, logger=self.model_tracker,
-                    metrics_callback=self.record_metrics,
-                    strategy_var=self.strategy_var,
-                    llm_suggestions_callback=self.get_latest_llm_suggestions,
-                    target_callback=self.record_training_target,
-                    start_epoch=(self.latest_metrics or {}).get('epoch', getattr(self, 'loaded_checkpoint_epoch', 0)),
-                    paused_state=self.training_paused, target_changed=self.interaction_changed)
+        try:
+            start_epoch, epochs, pause_every = self.training_schedule()
+            train_model(self.model, self.optimizer, self.trainloader, self.valloader,
+                        self.testloader, self.device, epochs, self.freq_var.get(), self.alpha_var,
+                        self.report_dir,
+                        log_callback=self.update_log,
+                        pause_event=self.pause_event,
+                        stop_training=self.stop_training,
+                        epoch_end_callback=self.on_epoch_end,
+                        pause_after_n_epochs=pause_every,
+                        plot=self.plot,
+                        checkpoint_dir=self.probant_scenario_dir, logger=self.model_tracker,
+                        metrics_callback=self.record_metrics,
+                        strategy_var=self.strategy_var,
+                        llm_suggestions_callback=self.get_latest_llm_suggestions,
+                        target_callback=self.record_training_target,
+                        start_epoch=start_epoch,
+                        paused_state=self.training_paused, target_changed=self.interaction_changed,
+                        pause_at_end=not (self.llm_panel and self.llm_panel.guided_review()))
+        except Exception as error:
+            self.training_error = str(error) or type(error).__name__
+            self.events.log('TRAINING_ERROR', error=self.training_error)
+            self.events.enter('phase', 'failed')
+            self.update_log(f'Training failed: {self.training_error}')
+            traceback.print_exc()
+            return
         self.update_log('Training stopped' if self.stop_training.is_set() else 'Finished Training')
         self.events.log('TRAINING_FINISHED', stopped=self.stop_training.is_set())
         self.events.enter('phase', 'finished')
@@ -375,6 +395,8 @@ class UI(StudyControls):
         """Keep the newest scores so the LLM sees how the model is doing."""
         self.latest_metrics = metrics
         self.loaded_checkpoint_epoch = metrics['epoch']
+        if self.study_schedule_enabled():
+            self.record_study_test(metrics)
         self.events.log('EPOCH_END', **metrics)
 
     def get_latest_llm_suggestions(self):
@@ -410,8 +432,10 @@ class UI(StudyControls):
         self.pause_event.set()
         self.update_visualization()
         self.training_button.config(text="Resume Training")
-        self.status_var.set("Paused after N epochs")
-        self.update_log("Training paused after N epochs. Press 'Resume Training' to continue.")
+        self.status_var.set("Training paused")
+        self.update_log("Training paused. Review suggestions before continuing." if
+                        getattr(self, 'llm_panel', None) and self.llm_panel.guided_review()
+                        else "Training paused. Press 'Resume Training' to continue.")
         # Enable pause epochs slider when pausing
         self.pause_slider.configure(state='active')
         self.alpha_entry.configure(state='active')
@@ -425,7 +449,7 @@ class UI(StudyControls):
         try:
             while True:
                 message = self.log_messages.get_nowait()
-                if message in ('Finished Training', 'Training stopped'):
+                if message in ('Finished Training', 'Training stopped') or message.startswith('Training failed:'):
                     self.status_var.set(message)
                     self.training_button.configure(text='Start Training')
                 for widget in (self.log_text, self.training_log_text):
@@ -488,7 +512,8 @@ class UI(StudyControls):
         # selected_classes = self.get_selected_classes()
         if self.plot is None:
             if self.visualization == 'train':
-                self.plot = InteractivePlot(self.model, self.trainloader, self.current_plot_type,
+                plot_loader = self.study_plot_loader if self.study_plot_loader is not None else self.trainloader
+                self.plot = InteractivePlot(self.model, plot_loader, self.current_plot_type,
                                             self.dataset_name, self.num_features.get(),
                                             selected_layer=self.selected_layer)
             elif self.visualization == 'validation':

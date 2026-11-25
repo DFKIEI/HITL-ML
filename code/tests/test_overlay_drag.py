@@ -96,6 +96,18 @@ def test_drag_arrow_off_axis_sets_custom_direction_and_follows_pointer():
     ui.llm_panel.refresh_cards.assert_called_once()
 
 
+def test_clicking_an_edited_handle_does_not_log_another_plot_edit():
+    s = suggestion(edited=True)
+    ui, *_ = plot_ui([s])
+    tip = handle(ui, 'arrow', 0)['end']
+    click = event(ui, tip)
+    assert llm_overlay_press(ui, click)
+    assert llm_overlay_motion(ui, click)
+    assert llm_overlay_release(ui, click)
+    ui.llm_tracker.log_edited_on_plot.assert_not_called()
+    ui.llm_panel.refresh_cards.assert_not_called()
+
+
 def test_drag_arrow_along_its_direction_keeps_direction():
     s = suggestion()
     ui, *_ = plot_ui([s])
@@ -179,25 +191,36 @@ def test_snap_threshold(degrees, snapped):
     assert (s.direction == 'away_from_j') == snapped
 
 
-def test_suggestion_view_hides_other_clusters_and_restores_everything():
+def test_suggestion_view_dims_other_clusters_like_hover_and_restores_everything():
     from ui.ui_display import highlight_classes
     s = suggestion()
     ui, points, labels = plot_ui([s])
+    cmap = plt.colormaps['tab10'].resampled(3)
+    mappable = plt.cm.ScalarMappable(norm=plt.Normalize(-0.5, 2.5), cmap=cmap)
+    ui.class_legend = ui.scatter_fig.colorbar(mappable, ax=ui.ax, boundaries=[-.5, .5, 1.5, 2.5],
+                                             ticks=[0, 1, 2])
     ui.llm_focus_suggestion = s
-    ui.llm_only_suggestion_clusters = True
+    highlight_classes(ui, {0, 1})
+    hover_colors = ui.scatter.set_facecolors.call_args.args[0].copy()
+    ui.llm_highlight_suggested_classes = True
     highlight_classes(ui, None)
     colors = ui.scatter.set_facecolors.call_args.args[0]
-    assert np.all(colors[labels == 2, 3] == 0)
-    assert np.all(colors[labels != 2, 3] > 0)
-    ui.center_artists[2].set_visible.assert_called_with(False)
-    # A hover exit or redraw must not restore unrelated clusters.
+    np.testing.assert_array_equal(colors, hover_colors)
+    assert np.all((colors[labels == 2, 3] > 0) & (colors[labels == 2, 3] < ui.point_colors[labels == 2, 3]))
+    ui.center_artists[2].set_alpha.assert_called_with(0.15)
+    ui.scatter_fig.canvas.draw()
+    np.testing.assert_allclose(ui.class_legend.solids.get_facecolors()[:, 3], [1, 1, 0.22])
+    assert [label.get_alpha() for label in ui.class_legend.ax.get_yticklabels()] == [1, 1, 0.5]
+    # A hover exit or redraw keeps the checkbox's emphasis.
     refresh_llm_overlay(ui)
     colors = ui.scatter.set_facecolors.call_args.args[0]
-    assert np.all(colors[labels == 2, 3] == 0)
-    ui.llm_only_suggestion_clusters = False
+    np.testing.assert_array_equal(colors, hover_colors)
+    ui.llm_highlight_suggested_classes = False
     highlight_classes(ui, None)
     np.testing.assert_array_equal(ui.scatter.set_facecolors.call_args.args[0], ui.point_colors)
-    ui.center_artists[2].set_visible.assert_called_with(True)
+    ui.center_artists[2].set_alpha.assert_called_with(1.0)
+    ui.scatter_fig.canvas.draw()
+    np.testing.assert_array_equal(ui.class_legend.solids.get_facecolors()[:, 3], [1, 1, 1])
     np.testing.assert_array_equal(ui.moved_points, points)
     plt.close(ui.scatter_fig)
 
@@ -206,20 +229,20 @@ def test_suggestion_view_tracks_current_pair_while_editing_and_navigation():
     from ui.ui_display import highlight_classes
     s = suggestion()
     ui, _, labels = plot_ui([s])
-    ui.llm_only_suggestion_clusters = True
+    ui.llm_highlight_suggested_classes = True
     ui.llm_focus_suggestion = s
     s.class_j = 2  # dropdown/text edit changes the current pair in place
     refresh_llm_overlay(ui)
     colors = ui.scatter.set_facecolors.call_args.args[0]
-    assert np.all(colors[labels == 1, 3] == 0)
-    assert np.all(colors[labels == 2, 3] > 0)
+    assert np.all(colors[labels == 1, 3] < ui.point_colors[labels == 1, 3])
+    np.testing.assert_array_equal(colors[labels == 2], ui.point_colors[labels == 2])
     ui.llm_focus_suggestion = suggestion(class_i=1, class_j=2)
     highlight_classes(ui, None)
     colors = ui.scatter.set_facecolors.call_args.args[0]
-    assert np.all(colors[labels == 0, 3] == 0)
+    assert np.all(colors[labels == 0, 3] < ui.point_colors[labels == 0, 3])
     ui.llm_focus_suggestion = None
     highlight_classes(ui, None)
-    assert np.all(ui.scatter.set_facecolors.call_args.args[0][:, 3] > 0)
+    np.testing.assert_array_equal(ui.scatter.set_facecolors.call_args.args[0], ui.point_colors)
     plt.close(ui.scatter_fig)
 
 
@@ -319,7 +342,7 @@ def test_direct_drag_is_restricted_to_active_suggestion_even_when_all_classes_vi
     from ui.ui_display import draggable_classes
     s=suggestion(class_i=0,class_j=1)
     ui,_,_=plot_ui([s])
-    ui.llm_only_suggestion_clusters=False
+    ui.llm_highlight_suggested_classes=False
     ui.llm_focus_suggestion=s
     assert draggable_classes(ui)=={0,1}
     ui.llm_focus_suggestion=None

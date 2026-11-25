@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timezone
 import numpy as np
 from typing import Optional
 import os
@@ -327,6 +328,7 @@ class SessionRecorder:
                 'seq': self.seq,
                 'time': self._time.strftime('%Y-%m-%dT%H:%M:%S', self._time.localtime(now))
                 + f'.{int(now * 1000) % 1000:03d}',
+                'time_utc': datetime.fromtimestamp(now, timezone.utc).isoformat(timespec='milliseconds'),
                 'elapsed_s': round(self.elapsed(), 3),
                 'round': self.round,
                 'type': event_type,

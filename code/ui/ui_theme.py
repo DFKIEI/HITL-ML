@@ -166,6 +166,12 @@ def apply_theme(root):
              background=[('disabled', DISABLED_BG), ('pressed', PRIMARY_ACTIVE), ('active', PRIMARY_HOVER)],
              foreground=[('disabled', DISABLED_FG)])
 
+    style.configure('Success.TButton', background=SUCCESS, foreground=TEXT_ON_ACCENT,
+                    font=f['body_bold'], padding=(14, 9), relief='flat', borderwidth=0)
+    style.map('Success.TButton',
+              background=[('disabled', DISABLED_BG), ('pressed', '#0B4B27'), ('active', '#105A31')],
+              foreground=[('disabled', DISABLED_FG)])
+
     style.configure('Danger.TButton', background=DANGER, foreground=TEXT_ON_ACCENT,
                     font=f['body_bold'], padding=(14, 9), relief='flat', borderwidth=0)
     style.map('Danger.TButton',

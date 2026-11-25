@@ -23,7 +23,7 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
                 log_callback=None, pause_event=None, stop_training=None, epoch_end_callback=None,
                 pause_after_n_epochs=None, plot=None,
                 checkpoint_dir=None, logger=None, metrics_callback=None,
-                strategy_var=None, llm_suggestions_callback=None, target_callback=None, start_epoch=0, paused_state=None, target_changed=None):
+                strategy_var=None, llm_suggestions_callback=None, target_callback=None, start_epoch=0, paused_state=None, target_changed=None, pause_at_end=True):
     amp_device = device.type if device.type in ('cuda', 'mps') else 'cpu'
     scaler = torch.amp.GradScaler(amp_device, enabled=amp_device != 'cpu')
 
@@ -239,12 +239,13 @@ def train_model(model, optimizer, trainloader, valloader, testloader, device, nu
             if log_callback:
                 log_callback(f"Saved checkpoint at epoch {epoch + 1}")
         # Handle pause after N epochs
-        if pause_after_n_epochs and (epoch + 1) % pause_after_n_epochs == 0:
+        if (pause_after_n_epochs and (epoch + 1) % pause_after_n_epochs == 0
+                and (pause_at_end or epoch + 1 < start_epoch + num_epochs)):
             if epoch_end_callback:
                 epoch_end_callback()
             if pause_event:
                 pause_event.set()
-                log_message = f"Training paused after {epoch + 1} epochs. Press 'Resume Training' to continue."
+                log_message = f"Training paused at epoch {epoch + 1}."
                 print(log_message)
                 if log_callback:
                     log_callback(log_message)

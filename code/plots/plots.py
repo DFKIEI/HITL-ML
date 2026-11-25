@@ -54,7 +54,10 @@ class InteractivePlot:
         # Select samples for each class
         for label in unique_labels:
             indices = np.where(labels == label)[0]
-            selected_indices.extend(np.random.choice(indices, samples_to_take, replace=False))
+            if len(indices) == samples_to_take:
+                selected_indices.extend(indices)
+            else:
+                selected_indices.extend(np.random.choice(indices, samples_to_take, replace=False))
 
         return selected_indices
 

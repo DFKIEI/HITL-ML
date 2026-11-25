@@ -1,4 +1,5 @@
 import os
+from copy import copy
 import numpy as np
 from torch.utils.data import DataLoader, Subset, random_split
 from torchvision import datasets, transforms
@@ -136,6 +137,33 @@ def load_cifar100(batch_size=32, val_split=0.5):
     return train_loader, val_loader, test_loader, num_classes, input_shape
 
 
+def _cifar10_eval_transform():
+    return transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
+    ])
+
+
+def study_plot_loader(dataset_name, train_loader):
+    """Sample training examples once and project them in a stable order."""
+    dataset = train_loader.dataset
+    if dataset_name == 'CIFAR10':
+        dataset = copy(dataset)
+        dataset.transform = _cifar10_eval_transform()
+        labels = np.asarray(dataset.targets)
+    elif dataset_name == 'PAMAP2':
+        labels = np.asarray(dataset.y_data)
+    else:
+        raise ValueError(f'No study plot configured for {dataset_name}.')
+
+    classes, counts = np.unique(labels, return_counts=True)
+    per_class = min(10, int(counts.min()))
+    rng = np.random.default_rng(42)
+    indices = [int(index) for label in classes
+               for index in rng.choice(np.flatnonzero(labels == label), per_class, replace=False)]
+    return DataLoader(Subset(dataset, indices), batch_size=train_loader.batch_size, shuffle=False)
+
+
 def load_cifar10(batch_size=32, val_split=0.5):
     # Define transformations for the training data
     transform_train = transforms.Compose([
@@ -145,11 +173,7 @@ def load_cifar10(batch_size=32, val_split=0.5):
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
     ])
 
-    # Define transformations for the validation and test data
-    transform_val_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
-    ])
+    transform_val_test = _cifar10_eval_transform()
 
     # Load the training dataset
     train_dataset = datasets.CIFAR10(root='dataset', train=True, download=True, transform=transform_train)

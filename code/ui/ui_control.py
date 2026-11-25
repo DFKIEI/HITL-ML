@@ -79,7 +79,7 @@ def create_training_controls(self):
     self.features_entry.pack(fill=tk.X)
     self.features_entry.configure(state='disabled')
 
-    buttons_row = ttk.Frame(training_section)
+    self.training_buttons_row = buttons_row = ttk.Frame(training_section)
     buttons_row.pack(fill=tk.X, pady=(ui_theme.PAD_M, ui_theme.PAD_S))
     self.training_button = ttk.Button(buttons_row, text="Start Training", style='Primary.TButton',
                                       command=self.toggle_training)
@@ -88,8 +88,8 @@ def create_training_controls(self):
               command=self.stop_training_clicked).pack(side=tk.LEFT)
 
     self.status_var = tk.StringVar(value="Not started")
-    ttk.Label(training_section, textvariable=self.status_var, style='Status.TLabel').pack(
-        anchor=tk.W, pady=(0, ui_theme.PAD_S))
+    self.training_status_label = ttk.Label(training_section, textvariable=self.status_var, style='Status.TLabel')
+    self.training_status_label.pack(anchor=tk.W, pady=(0, ui_theme.PAD_S))
 
     ttk.Label(training_section, text="Activity log", style='TLabel').pack(anchor=tk.W, pady=(ui_theme.PAD_S, 2))
     self.log_text = scrolledtext.ScrolledText(training_section, height=6, width=36, wrap=tk.WORD)

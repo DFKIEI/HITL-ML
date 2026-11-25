@@ -139,7 +139,7 @@ def _preset_suggestion_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> 
     return {suggestion.class_i: _unit_away_from_crowd(center_i, centroids) * fraction * reference}
 
 
-def suggestion_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> Dict[int, np.ndarray]:
+def _configured_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> Dict[int, np.ndarray]:
     vectors = _preset_suggestion_vectors(suggestion, centroids)
     reference = configuration_scale(centroids)
     for class_index, normalized in getattr(suggestion, 'move_overrides', {}).items():
@@ -156,10 +156,38 @@ def suggestion_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> Dict[int
     return vectors
 
 
+def suggestion_vectors(suggestion, centroids: Dict[int, np.ndarray]) -> Dict[int, np.ndarray]:
+    disabled = getattr(suggestion, 'disabled_arrows', ())
+    return {c: vector for c, vector in _configured_vectors(suggestion, centroids).items()
+            if c not in disabled}
+
+
+def set_suggestion_arrow(suggestion, class_index, enabled, centroids):
+    """Toggle one arrow and give a stationary class a small starter move."""
+    if not enabled:
+        suggestion.disabled_arrows.add(class_index)
+        return
+    suggestion.disabled_arrows.discard(class_index)
+    current = _configured_vectors(suggestion, centroids).get(class_index)
+    if class_index not in centroids or (current is not None and np.any(current)):
+        return
+
+    other_class = suggestion.class_j if class_index == suggestion.class_i else suggestion.class_i
+    direction = suggestion.direction if class_index == suggestion.class_i else (
+        'toward_j' if suggestion.direction == 'toward_j' else 'toward_empty_space')
+    starter = dataclasses.replace(suggestion, class_i=class_index, class_j=other_class,
+                                  direction=direction, scale='small')
+    vector = _preset_suggestion_vectors(starter, centroids).get(class_index)
+    if vector is None or not np.any(vector):
+        starter.direction = 'toward_empty_space'
+        vector = _preset_suggestion_vectors(starter, centroids)[class_index]
+    suggestion.move_overrides[class_index] = (vector / configuration_scale(centroids)).tolist()
+
+
 def fit_independent_class_vector(suggestion, class_index, vector, centroids, base_direction=None):
     """Edit one class while freezing the other class's current movement."""
     reference = configuration_scale(centroids)
-    existing = suggestion_vectors(suggestion, centroids)
+    existing = _configured_vectors(suggestion, centroids)
     if class_index == suggestion.class_i:
         fit_suggestion_to_vector(suggestion, vector, centroids, base_direction)
         vector = _preset_suggestion_vectors(suggestion, centroids).get(class_index, np.zeros(2))
@@ -217,7 +245,7 @@ def fit_suggestion_to_vector(suggestion, vector, centroids: Dict[int, np.ndarray
 
     if base_direction is not None and base_direction != 'custom_angle':
         preset = dataclasses.replace(suggestion, direction=base_direction, scale='medium', move_overrides={})
-        preset_vector = suggestion_vectors(preset, centroids).get(suggestion.class_i)
+        preset_vector = _preset_suggestion_vectors(preset, centroids).get(suggestion.class_i)
         if preset_vector is not None and np.any(preset_vector):
             unit = preset_vector / np.linalg.norm(preset_vector)
             cosine = float(np.dot(vector, unit)) / length

@@ -12,9 +12,10 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
 from ui.ui import UI
-from data.data_loader import load_dataset
+from data.data_loader import load_dataset, study_plot_loader
 from model import get_model
 from ui.ui_init_window import run_initial_ui
+from ui.ui_study import STUDY_REVIEW_EPOCHS
 from llm import openrouter
 
 
@@ -55,7 +56,7 @@ def main():
     args.model = args.model or f'CNN_{args.dataset}'
 
     # The suggestion window reads the default model from the environment
-    os.environ[openrouter.MODEL_ENV_VAR] = args.llm_model
+    os.environ[openrouter.MODEL_ENV_VAR] = openrouter.STUDY_MODEL if managed else args.llm_model
 
     # Set up device
     if torch.cuda.is_available():
@@ -67,6 +68,9 @@ def main():
 
     # Load dataset
     trainloader, valloader, testloader, num_classes, input_shape = load_dataset(args.dataset, args.batch)
+    plot_loader = study_plot_loader(args.dataset, trainloader) if managed else None
+    if managed:
+        args.visualize = 'train'
 
     model = get_model(args.model, input_shape, num_classes).to(device)
     torch.manual_seed(42)
@@ -78,14 +82,16 @@ def main():
         root.withdraw()
     app = UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model,
              args.loss, args.visualize, args.id, args.scenario,
-             study_output=args.study_output, study_session_id=args.survey_session)
+             study_output=args.study_output, study_session_id=args.survey_session, study_plot_loader=plot_loader)
     if managed:
         app.study_bridge.managed_sequence = args.survey_sequence
         app.study_bridge.scenario = args.survey_scenario
     if args.checkpoint:
         # Load before Tk's initial tab event builds the plot, avoiding a stale
         # untrained layout followed by a second full feature extraction.
-        app.load_pretrained_model(args.checkpoint, refresh=managed)
+        epoch = app.load_pretrained_model(args.checkpoint, refresh=managed)
+        if managed and epoch != STUDY_REVIEW_EPOCHS[0]:
+            raise ValueError(f'The study requires an epoch-{STUDY_REVIEW_EPOCHS[0]} checkpoint, got epoch {epoch}.')
     root.mainloop()
 
 

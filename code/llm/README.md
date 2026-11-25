@@ -214,9 +214,10 @@ Dragging it adds an independent movement without changing the first class.
 ## LLM interpretation of edited instructions
 
 The desktop suggestion editor now uses `llm/interpretation.py` for edited
-text. The selected OpenRouter model returns validated movement fields;
-invalid output blocks Apply and can be retried with Preview text on plot. This is
-asynchronous and keeps the previous movement until a valid reply arrives.
+text. **Update plot from instruction** sends the edit to the selected
+OpenRouter model. A spinner shows while it returns validated movement fields.
+The plot keeps its previous preview until a valid reply arrives. If the preview
+fails, use the same button to retry before applying the suggestion.
 The deterministic `text_to_movement.py` module remains for older tests/tools,
 but is no longer the desktop editor's interpretation path.
 

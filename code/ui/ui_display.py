@@ -64,11 +64,15 @@ def _log_space_shown(self, data):
     if events is None:
         return
     plot = self.plot
+    samples = np.asarray(getattr(plot, 'samples_to_track', []) or [], dtype=int)
+    study_plot_loader = getattr(self, 'study_plot_loader', None)
+    training_sample_indices = (np.asarray(study_plot_loader.dataset.indices)[samples]
+                               if study_plot_loader is not None else None)
     space_file = events.save_space(
         features_2d=data['features'], centers=data['centers'], labels=data['labels'],
         predicted_labels=data['predicted_labels'],
         latent_features=getattr(plot, 'latent_features', None),
-        samples=np.asarray(getattr(plot, 'samples_to_track', []) or []))
+        samples=samples, training_sample_indices=training_sample_indices)
     metrics = getattr(self, 'latest_metrics', None) or {}
     events.log('SPACE_SHOWN', space_file=space_file, plot_type=getattr(self, 'current_plot_type', 'scatter'),
                dataset=data.get('dataset_name'), epoch=metrics.get('epoch', 0),
@@ -88,6 +92,8 @@ def log_modification(self, kind, **payload):
     if kind in ('center_drag', 'point_drag', 'class_reset') and hasattr(self, 'record_study_interaction'):
         self.record_study_interaction(kind=kind, payload=payload)
     active = getattr(self, 'llm_focus_suggestion', None)
+    if _guided_review(self):
+        payload.setdefault('review_epoch', self.llm_panel.study_review_epoch)
     events.log('MODIFICATION', kind=kind, active_suggestion_uid=getattr(active, 'uid', None), **payload,
                state_after={'points': getattr(self, 'moved_points', data['features']),
                             'centers': data['centers']})
@@ -102,9 +108,8 @@ def display_scatter_plot(self, data, tab):
     self.data = data
     self.dragging_point = None
 
-    fig, ax = plt.subplots(figsize=(12, 12))
-    fig.subplots_adjust(top=0.95, bottom=0.09)
-    ax.set_box_aspect(1)
+    fig, ax = plt.subplots(figsize=(12, 12), layout='constrained')
+    ax.set_aspect('equal', adjustable='datalim')
     self.ax = ax
     self.scatter_fig = fig
     _style_figure(fig, ax)
@@ -162,11 +167,13 @@ def display_scatter_plot(self, data, tab):
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
 
-    cbar = plt.colorbar(sm, ax=ax, boundaries=boundaries, ticks=ticks, aspect=36)
-    cbar.set_label('Classes')
+    cbar = fig.colorbar(sm, ax=ax, boundaries=boundaries, ticks=ticks,
+                       aspect=36, fraction=0.045, pad=0.018)
     cbar.set_ticklabels(list(filtered_label_names.values()))
+    self.class_legend = cbar
 
-    plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}')
+    split_label = ' training sample' if getattr(self, 'study_plot_loader', None) is not None else ''
+    plt.title(f'Scatter Plot of Latent Space - {data["dataset_name"]}{split_label}')
     plt.xlabel('Feature 1')
     plt.ylabel('Feature 2')
 
@@ -174,16 +181,19 @@ def display_scatter_plot(self, data, tab):
     _log_space_shown(self, data)
 
     def on_press(event):
-        if event.inaxes is None:
+        if event.inaxes is not ax or event.xdata is None or event.ydata is None:
             return
         if hasattr(self, 'study_allows_apply') and not self.study_allows_apply():
             return
         if not getattr(self, 'dragging_enabled', True):
             return
+        if _guided_review(self):
+            llm_overlay_press(self, event)
+            return
         self.points_last_step = self.moved_points.copy()  # backup current points
         self.last_centers = data['centers'].copy()
+        visible_classes = draggable_classes(self)
         for i, artist in enumerate(self.center_artists):
-            visible_classes = draggable_classes(self)
             if visible_classes is not None and int(unique_labels[i]) not in visible_classes:
                 continue
             if artist.contains(event)[0]:
@@ -198,7 +208,6 @@ def display_scatter_plot(self, data, tab):
         cont, ind = scatter.contains(event)
         if cont:
             candidates = ind['ind']
-            visible_classes = draggable_classes(self)
             if visible_classes is not None:
                 candidates = [i for i in candidates if int(data['labels'][i]) in visible_classes]
             if not len(candidates):
@@ -224,7 +233,7 @@ def display_scatter_plot(self, data, tab):
                 new_center
             )
             print(f"Center moved: Class {unique_labels[self.dragging]} from {old_center} to {new_center}")
-            log_modification(self, 'center_drag', class_index=unique_labels[self.dragging],
+            log_modification(self, 'center_drag', class_index=unique_labels[self.dragging], input_method='plot',
                              old_center=old_center, new_center=new_center,
                              delta=np.asarray(new_center) - np.asarray(old_center))
             self.dragging = None
@@ -241,7 +250,7 @@ def display_scatter_plot(self, data, tab):
                 new_position,
                 data['labels'][self.dragging_point]
             )
-            log_modification(self, 'point_drag', point_index=self.dragging_point,
+            log_modification(self, 'point_drag', point_index=self.dragging_point, input_method='plot',
                              class_index=data['labels'][self.dragging_point],
                              old_position=old_position, new_position=new_position)
 
@@ -252,7 +261,7 @@ def display_scatter_plot(self, data, tab):
             return
         if self.dragging is None and self.dragging_point is None:
             llm_overlay_hover(self, event)
-        if self.dragging is not None and event.inaxes is not None:
+        if self.dragging is not None and event.inaxes is ax:
             old_center = np.array(data['centers'][self.dragging])
             new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
             delta = new_center - old_center
@@ -269,7 +278,7 @@ def display_scatter_plot(self, data, tab):
             self.plot.update_center(self.dragging, new_center)
             self.current_centers = self.plot.get_current_centers()
 
-        elif self.dragging_point is not None and event.inaxes is not None:
+        elif self.dragging_point is not None and event.inaxes is ax:
             new_pos = np.array([event.xdata + self.offset[0], event.ydata + self.offset[1]])
             self.moved_points[self.dragging_point] = new_pos
             self.individually_moved_points[self.dragging_point] = new_pos
@@ -291,7 +300,7 @@ def display_scatter_plot(self, data, tab):
             return
         if hasattr(self, 'study_allows_apply') and not self.study_allows_apply():
             return
-        if not getattr(self, 'dragging_enabled', True):
+        if not getattr(self, 'dragging_enabled', True) or _guided_review(self):
             return
         for i, artist in enumerate(self.center_artists):
             allowed = draggable_classes(self)
@@ -360,30 +369,26 @@ def draggable_classes(self):
     if strategy.suggestions_editable:
         current = getattr(self, 'llm_focus_suggestion', None)
         return {int(current.class_i), int(current.class_j)} if current is not None else set()
-    return suggestion_view_classes(self)
+    return None
 
 
-def suggestion_view_classes(self):
-    """Classes visible in suggestion-only mode; None means show everything."""
+def suggestion_highlight_classes(self):
+    """The current pair emphasized by the sidebar checkbox, if enabled."""
     current = getattr(self, 'llm_focus_suggestion', None)
-    if not getattr(self, 'llm_only_suggestion_clusters', False) or current is None:
+    if not getattr(self, 'llm_highlight_suggested_classes', False) or current is None:
         return None
     return {int(current.class_i), int(current.class_j)}
 
 
 def highlight_classes(self, class_indices=None):
-    """Fade every class except ``class_indices`` on the scatter plot (points,
-    misclassified markers, centers, and the LLM overlay), or restore all of
-    them when ``class_indices`` is empty/None. Driven by hovering a
-    suggestion card, so the operator sees which clusters it talks about."""
+    """Emphasize hovered classes, or use the current suggestion when pinned."""
     scatter = getattr(self, 'scatter', None)
     base = getattr(self, 'point_colors', None)
     data = getattr(self, 'data', None)
     if scatter is None or base is None or data is None:
         return
-    keep = set(int(c) for c in class_indices) if class_indices else None
-    self.highlighted_classes = keep
-    visible_classes = suggestion_view_classes(self)
+    self.highlighted_classes = {int(c) for c in class_indices} if class_indices else None
+    keep = self.highlighted_classes or suggestion_highlight_classes(self)
 
     faded_alpha = 0.06
     colors = base.copy()
@@ -392,10 +397,6 @@ def highlight_classes(self, class_indices=None):
         in_focus = np.isin(data['labels'], list(keep))
         colors[~in_focus, 3] = faded_alpha
         incorrect_colors[~in_focus[self.incorrect_mask], 3] = faded_alpha
-    if visible_classes is not None:
-        visible = np.isin(data['labels'], list(visible_classes))
-        colors[~visible, 3] = 0
-        incorrect_colors[~visible[self.incorrect_mask], 3] = 0
     scatter.set_facecolors(colors)
     scatter.set_edgecolors(colors)
     self.incorrect_scatter.set_facecolors(incorrect_colors)
@@ -404,15 +405,21 @@ def highlight_classes(self, class_indices=None):
     self.incorrect_scatter.set_edgecolors([(0, 0, 0, a) for a in edge_alpha])
 
     for label, artist in zip(self.unique_labels, self.center_artists):
-        artist.set_visible(visible_classes is None or int(label) in visible_classes)
         focused = keep is None or int(label) in keep
         artist.set_alpha(1.0 if focused else 0.15)
         artist.set_sizes([220 if keep and focused else 100])
 
-    for artist, class_index in getattr(self, 'llm_overlay_classes', []):
-        # Editing one class must not hide the other class's movement arrow.
+    legend = getattr(self, 'class_legend', None)
+    if legend is not None:
+        focused = [keep is None or int(label) in keep for label in self.unique_labels]
+        legend.solids.set_alpha(np.where(focused, 1.0, 0.22))
+        for label, emphasized in zip(legend.ax.get_yticklabels(), focused):
+            label.set_alpha(1.0 if emphasized else 0.5)
+            label.set_fontweight('bold' if keep and emphasized else 'normal')
+
+    for artist, _ in getattr(self, 'llm_overlay_classes', []):
+        # Both suggestion handles stay visible while editing one of them.
         artist.set_alpha(0.9)
-        artist.set_visible(visible_classes is None or class_index in visible_classes)
 
     self.scatter_fig.canvas.draw_idle()
 
@@ -461,7 +468,7 @@ def refresh_llm_overlay(self):
             # Both named classes need controls, even when the preset moves only one.
             for suggestion in suggestions:
                 for c in (suggestion.class_i, suggestion.class_j):
-                    if c in centroids:
+                    if c in centroids and c not in suggestion.disabled_arrows:
                         movements.setdefault(c, np.zeros_like(centroids[c]))
 
         for class_index, vector in movements.items():
@@ -471,10 +478,9 @@ def refresh_llm_overlay(self):
             end = start + vector
             owner = None
             if editable:
-                owner = next((s for s in suggestions if s.class_i == class_index), None)
-                if owner is None:
-                    owner = next((s for s in suggestions
-                                  if class_index in (s.class_i, s.class_j)), None)
+                owners = [s for s in suggestions if class_index in (s.class_i, s.class_j)
+                          and class_index not in s.disabled_arrows]
+                owner = next((s for s in owners if s.class_i == class_index), owners[0] if owners else None)
             if not np.any(vector):
                 # A stationary class still needs a handle so it can be moved again.
                 if owner is not None:
@@ -548,8 +554,13 @@ def _shown_suggestions(self):
     pending = _pending_suggestions(self)
     focus = getattr(self, 'llm_focus_suggestion', None)
     if focus is None:
-        return pending
+        return [] if _guided_review(self) else pending
     return [s for s in pending if s is focus]
+
+
+def _guided_review(self):
+    panel = getattr(self, 'llm_panel', None)
+    return getattr(panel, 'study_mode', False) is True and panel.guided_review()
 
 
 def _overlay_editable(self):
@@ -603,10 +614,11 @@ def llm_overlay_press(self, event):
     handle = _llm_handle_at(self, event)
     if handle is None:
         return False
-    drag = dict(handle)
+    cursor = np.array([event.xdata, event.ydata], dtype=float)
+    drag = dict(handle, last_cursor=cursor, changed_suggestions=set())
     if handle['kind'] == 'arrow':
         # Keep the grab point under the pointer instead of jumping the tip to it.
-        drag['grab_offset'] = handle['end'] - np.array([event.xdata, event.ydata])
+        drag['grab_offset'] = handle['end'] - cursor
         drag['base_direction'] = handle['owner'].direction
     self.llm_drag = drag
     highlight_classes(self, {handle['class']})
@@ -622,6 +634,9 @@ def llm_overlay_motion(self, event):
     if event.inaxes is not self.ax or event.xdata is None:
         return True
     cursor = np.array([event.xdata, event.ydata], dtype=float)
+    if np.allclose(cursor, drag['last_cursor'], rtol=0, atol=1e-12):
+        return True
+    drag['last_cursor'] = cursor
     class_index = drag['class']
     pending = _shown_suggestions(self)
 
@@ -637,14 +652,17 @@ def llm_overlay_motion(self, event):
         own = wanted * (len(others) + 1) - np.sum(others, axis=0) if others else wanted
         fit_independent_class_vector(owner, class_index, own, centroids, drag['base_direction'])
         owner.edited = True
+        drag['changed_suggestions'].add(id(owner))
     else:
         factor = float(np.clip(np.linalg.norm(cursor - drag['center']) / max(drag['mean_radius'], 1e-12),
                                *CUSTOM_TIGHTEN_RANGE))
         for s in pending:
-            if s.tighten_i and s.class_i == class_index:
+            if s.tighten_i and s.class_i == class_index and not np.isclose(tighten_factor(s, class_index), factor):
                 s.tighten_amount_i, s.edited = factor, True
-            if s.tighten_j and s.class_j == class_index:
+                drag['changed_suggestions'].add(id(s))
+            if s.tighten_j and s.class_j == class_index and not np.isclose(tighten_factor(s, class_index), factor):
                 s.tighten_amount_j, s.edited = factor, True
+                drag['changed_suggestions'].add(id(s))
 
     refresh_llm_overlay(self)
     return True
@@ -659,15 +677,18 @@ def llm_overlay_release(self, event):
     self.llm_drag = None
     tracker = getattr(self, 'llm_tracker', None)
     events = getattr(self, 'events', None)
-    for s in _shown_suggestions(self):
-        if s.class_i == drag['class'] or s.class_j == drag['class']:
-            if tracker is not None and s.edited:
-                tracker.log_edited_on_plot(s)
-            if events is not None and s.edited:
-                events.log('SUGGESTION_EDITED', uid=s.uid, via='plot', handle=drag['kind'],
-                           suggestion=s.as_log_dict())
     panel = getattr(self, 'llm_panel', None)
-    if panel is not None:
+    review_epoch = getattr(panel, 'study_review_epoch', None)
+    context = {'review_epoch': review_epoch} if _guided_review(self) and review_epoch is not None else {}
+    for suggestion in _shown_suggestions(self):
+        if id(suggestion) not in drag['changed_suggestions']:
+            continue
+        if tracker is not None:
+            tracker.log_edited_on_plot(suggestion)
+        if events is not None:
+            events.log('SUGGESTION_EDITED', uid=suggestion.uid, via='plot', input_method='plot',
+                       handle=drag['kind'], class_index=drag['class'], suggestion=suggestion.as_log_dict(), **context)
+    if panel is not None and drag['changed_suggestions']:
         panel.refresh_cards()
     highlight_classes(self, None)
     return True
@@ -709,12 +730,11 @@ def _tighten_class_in_place(self, data, unique_labels, class_index, factor):
 
 
 def _fit_axes_to_points(ax, points, margin=0.05):
-    """Grow the axis limits (never shrink them) so every point stays visible.
-    set_offsets does not autoscale, so a class moved past the current limits
-    would otherwise just disappear off the plot."""
+    """Include moved points and preview endpoints in the visible data bounds."""
     points = np.asarray(points, dtype=float)
     if points.size == 0:
         return
+    ax.update_datalim(points)
     for get_lim, set_lim, values in ((ax.get_xlim, ax.set_xlim, points[:, 0]),
                                      (ax.get_ylim, ax.set_ylim, points[:, 1])):
         low, high = get_lim()
@@ -722,7 +742,7 @@ def _fit_axes_to_points(ax, points, margin=0.05):
         new_low = min(low, values.min() - pad)
         new_high = max(high, values.max() + pad)
         if (new_low, new_high) != (low, high):
-            set_lim(new_low, new_high)
+            set_lim(new_low, new_high, auto=None)
 
 
 def apply_llm_suggestion(self, suggestion, source='auto'):

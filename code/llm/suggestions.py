@@ -160,10 +160,13 @@ class PairSuggestion:
     move_overrides: Dict[int, List[float]] = field(default_factory=dict)
     # Stable id for the session log (id() is reused once an object is freed).
     uid: str = field(default_factory=lambda: f"s{next(_UIDS)}")
+    disabled_arrows: Set[int] = field(default_factory=set)
+    model_text: Optional[str] = None
 
     def set_classes(self, class_i, class_j, class_names):
         if (int(class_i), int(class_j)) != (self.class_i, self.class_j):
             self.move_overrides.clear()
+            self.disabled_arrows.clear()
         self.class_i, self.class_j = int(class_i), int(class_j)
         self.class_i_name = class_names.get(self.class_i, f"class_{self.class_i}")
         self.class_j_name = class_names.get(self.class_j, f"class_{self.class_j}")
@@ -177,6 +180,7 @@ class PairSuggestion:
             'class_j_name': self.class_j_name,
             'suggestion': self.suggestion,
             'original_text': self.original_text,
+            'model_text': self.model_text,
             'interpretation': self.interpretation,
             'direction': self.direction,
             'scale': self.scale,
@@ -187,6 +191,7 @@ class PairSuggestion:
             'move_amount': self.move_amount,
             'move_angle': self.move_angle,
             'move_overrides': self.move_overrides,
+            'disabled_arrows': sorted(self.disabled_arrows),
             'tighten_amount_i': self.tighten_amount_i,
             'tighten_amount_j': self.tighten_amount_j,
             'expected_benefit': self.expected_benefit,
@@ -214,49 +219,58 @@ def compass_word(angle_degrees):
 
 
 def describe_movement(suggestion):
-    """One plain sentence for what a suggestion will do on the plot, e.g.
-    "Move cat a lot away from dog. Also pull cat tighter together." """
-    if suggestion.scale == 'custom' and suggestion.move_amount is not None:
-        how_much = f"by a custom amount ({suggestion.move_amount:.0%})"
-    else:
-        how_much = SCALE_LABELS.get(suggestion.scale, suggestion.scale)
+    """Describe the movement and tightening using the validated class names."""
+    first = suggestion.class_i_name.replace('_', ' ')
+    second = suggestion.class_j_name.replace('_', ' ')
+    degree = {'small': 'slightly ', 'medium': '', 'large': 'much '}.get(suggestion.scale, '')
     if suggestion.direction == 'toward_j':
-        text = f"Move {suggestion.class_i_name} {how_much} closer to {suggestion.class_j_name}."
+        text = f"Move {first} {degree}closer to {second}."
     elif suggestion.direction == 'away_from_j':
-        text = f"Move {suggestion.class_i_name} {how_much} away from {suggestion.class_j_name}."
+        text = f"Move {first} {degree}farther from {second}."
     elif suggestion.direction == 'custom_angle' and suggestion.move_angle is not None:
-        text = (f"Move {suggestion.class_i_name} {how_much} {compass_word(suggestion.move_angle)} "
-                f"({suggestion.move_angle:.0f}°).")
+        amount = f" by {suggestion.move_amount:.0%} of the layout scale" if suggestion.move_amount is not None else ''
+        text = f"Move {first} {compass_word(suggestion.move_angle)}{amount} ({suggestion.move_angle:.0f}°)."
     else:
-        text = f"Move {suggestion.class_i_name} {how_much} into open space."
+        distance = {'small': 'a short distance ', 'large': 'farther '}.get(suggestion.scale, '')
+        text = f"Move {first} {distance}into open space."
 
     if suggestion.scale == 'custom' and suggestion.move_amount == 0:
-        text = f"Keep {suggestion.class_i_name} where it is."
+        text = f"Keep {first} where it is."
+
+    described_class = suggestion.class_i
+    if suggestion.class_i in suggestion.disabled_arrows:
+        text = ''
+        if suggestion.direction == 'away_from_j' and suggestion.class_j not in suggestion.disabled_arrows:
+            described_class = suggestion.class_j
+            text = f"Move {second} farther from {first}."
 
     if suggestion.move_overrides:
-        parts = []
+        parts = [text] if text and described_class not in suggestion.move_overrides else []
         for c, vector in suggestion.move_overrides.items():
-            name = suggestion.class_i_name if int(c) == suggestion.class_i else suggestion.class_j_name
+            if int(c) in suggestion.disabled_arrows:
+                continue
+            name = first if int(c) == suggestion.class_i else second
             length = float(np.linalg.norm(vector))
             if length < 1e-8:
                 parts.append(f"Keep {name} where it is.")
             else:
                 angle = float(np.degrees(np.arctan2(vector[1], vector[0])) % 360)
                 parts.append(f"Move {name} {compass_word(angle)} ({length:.0%} of the layout scale).")
-        text = ' '.join(parts)
+        if parts:
+            text = ' '.join(parts)
 
     tighten_names, shrink = [], []
-    for flag, name, amount in ((suggestion.tighten_i, suggestion.class_i_name, suggestion.tighten_amount_i),
-                               (suggestion.tighten_j, suggestion.class_j_name, suggestion.tighten_amount_j)):
+    for flag, name, amount in ((suggestion.tighten_i, first, suggestion.tighten_amount_i),
+                               (suggestion.tighten_j, second, suggestion.tighten_amount_j)):
         if flag and amount is not None:
             shrink.append(f"{name} to {amount:.0%}")
         elif flag:
             tighten_names.append(name)
     if tighten_names:
-        text += f" Also pull {' and '.join(tighten_names)} tighter together."
+        text = f"{text} Tighten {' and '.join(tighten_names)}.".strip()
     if shrink:
-        text += f" Shrink {' and '.join(shrink)} of its current size."
-    return text
+        text = f"{text} Shrink {' and '.join(shrink)} of its current size.".strip()
+    return text or 'No movement selected.'
 
 
 def request_suggestions(ui, model=None, user_goal=None):

@@ -22,15 +22,15 @@ The survey launches **A_Pamap** with the PAMAP2 epoch-25 checkpoint and **B_Cifa
 2. For manual setup, run `python code/main.py`. The **Dataset** dropdown offers **A_Pamap** and **B_Cifar** and sets the scenario label automatically. Choose a pretrained model in setup, or use **Study & checkpoints → Load pretrained checkpoint** in the left sidebar.
 3. Select the study strategy. For editable LLM suggestions, choose the strategy that allows human edits.
 4. Enable **Study mode (participant session)**. Experiment logging and the elapsed timer start immediately; there is no separate Begin step.
-5. Apply suggestions, edit their text/arrows, and drag the active suggestion's points/centers. Count and elapsed time are informational: there is no three-interaction or five-minute lockout.
-6. Use the main toolbar to start, pause, resume, or stop training while keeping Study mode and its experiment log active. Applied changes refresh the interaction-loss target before the next training batch; direct drags do so on release.
-7. Choose **Return to survey** when finished. This closes the participant experiment log and advances the waiting survey. A survey-launched tool closes automatically, and the next handoff opens a fresh tool session.
+5. Click **Get Suggestions**. Add an optional **Focus** to guide the AI. Review each suggestion in order, edit the instruction, toggle Arrow or Tighten per class, or drag its handles on the scatter plot, then **Accept** or **Reject** it.
+6. Add a custom suggestion or skip that step, then click **Continue Training** in the sidebar. Survey-launched sessions review suggestions at epochs 25, 30, 35, and 40. Each plot shows the same class-balanced training sample with up to 10 examples per class. CIFAR10 examples are displayed without random augmentation. Plot snapshots include the displayed examples’ `training_sample_indices`. During suggestion review, **Highlight suggested classes** emphasizes the suggested pair on the plot and in the legend.
+7. Training finishes at epoch 45. The sidebar shows the highest recorded test accuracy from the starting checkpoint and subsequent epochs, with the same epoch’s test macro F1 when available. The tool shows the results for 10 seconds before returning automatically. **Return to survey** starts the return countdown sooner.
 
 Study mode covers the participant's entire UI session, including training and interaction. It does not impose editing-only phases or automatically end a session.
 
 ## Text, movement and training logs
 
-Edited instructions are interpreted by the selected LLM through OpenRouter. The UI exposes **Preview text on plot** for retrying an instruction. It also interprets a completed typed edit or local dictation. Apply waits for a successful interpretation and flushes unsent text changes before it can commit anything. Failed or invalid output is shown and blocked; there is no deterministic-parser fallback. LLM interpretation requires internet and an API key, even though dictation and survey storage are local.
+Edited instructions are interpreted by the selected LLM through OpenRouter. Use **Update plot from instruction** to preview a typed edit on the scatter plot. The spinner beside the button runs while the model interprets the instruction. Local dictation is interpreted when transcription completes. Accept waits until the current instruction is previewed. Failed or invalid output is shown and blocked; there is no deterministic-parser fallback. LLM interpretation requires internet and an API key, even though dictation and survey storage are local.
 
 The text is not given to the numerical loss as a raw string. The LLM turns it into a geometric proposal. User arrow/field edits refine that proposal. Apply commits the final positions and spreads, which become the interaction-loss target when training resumes. One interaction loss follows this final target, avoiding competing text and movement targets.
 
@@ -48,6 +48,9 @@ Structured session events include:
 | `STUDY_TASK_STARTED`, `STUDY_INTERACTION`, `STUDY_TASK_COMPLETED` | Session start, interaction count, and timing |
 
 Survey-launched desktop logs, latent-space snapshots, dictation audio, training reports, and new checkpoints live under `tool/<scenario>/attempt-<number>/` inside that same results folder. Each attempt has a `process.log` for startup and runtime output. The structured desktop logs use the same Study ID and session UUID as the survey response and recording manifest. If the tool needs a retry, it creates another attempt folder. Standalone desktop sessions still write under `user_study_logs/<ID>_<scenario>/`.
+
+For participant analysis, use `experiment_*.jsonl`. Join to the survey by `session_id` and use the scenario and handoff `sequence` to find the matching task. In each scenario attempt, match events for a suggestion by `uid` and use `review_epoch` to group the four rounds. `SUGGESTION_EDITED` with `input_method: "plot"` records a completed handle edit. `SUGGESTION_TEXT_CHANGED` records a changed instruction draft and distinguishes `"text"` from `"voice"`; `TEXT_INTERPRETATION` records whether the instruction was interpreted successfully. Arrow and Tighten checkbox changes use `input_method: "controls"` with the class, component, and enabled state. Match these events to `SUGGESTION_ACCEPTED` or `SUGGESTION_REJECTED` by suggestion ID. The desktop `time_utc` and browser `recording_started` event provide a common clock for aligning the two event streams with the screen recording.
+
 
 ## Checkpoints every five epochs
 
@@ -94,15 +97,10 @@ Tests cover interpretation validation, text-plus-movement audit records, unrestr
 
 ### Survey/tool handoff and participant layout
 
-Run the survey server in the desktop tool's Python environment and choose the entire screen when recording so the recording includes the survey and both tool windows. Selecting the scenario order starts loading the first dataset, epoch-25 checkpoint, and plot in a hidden tool window. At “Please wait while we open the tool,” the survey waits for the prepared window, then counts down for three seconds before it opens in Study mode. After **Return to survey** finishes saving and closes the first tool, the second loads in the background while the participant answers the first questionnaire. Study mode hides the left settings
-sidebar and shows elapsed time, interaction count, Start/Pause/Resume Training,
-Stop Training, and Return to survey above the plot. It has no interaction/time
-lockout and does not require a separate Begin action or a pretrained model.
+Run the survey server in the desktop tool's Python environment and choose the entire screen when recording so the recording includes the survey and both tool windows. Selecting the scenario order starts loading the first dataset, epoch-25 checkpoint, and plot in a hidden tool window. At “Please wait while we open the tool,” the survey waits for the prepared window, then counts down for three seconds before it opens in Study mode. After **Return to survey** finishes saving and closes the first tool, the second loads in the background while the participant answers the first questionnaire. Study mode collapses the left settings sidebar and shows the active scenario, elapsed time, and interaction count above the plot. In a survey-launched session, **Return to survey** appears next to the final results in the sidebar. For the study’s editable-suggestions strategy, the right sidebar guides participants from **Get Suggestions** through review and into **Continue Training**. Study mode uses GPT-6.2 Sol for suggestions and instruction previews.
 
-Apply and completed point/center drags signal a refreshed loss target before the
-next training batch; pending edits are also picked up on start/resume. Training
-and editing stay in the same experiment log. Use **Return to survey** explicitly
-when finished; only that action completes the survey handoff. Browser/OS focus
+During suggestion review, use the arrow and tightening circle to edit the plot preview. **Accept** commits the preview and refreshes the loss target for the next training block. Training
+and editing stay in the same experiment log. The final results countdown or the **Return to survey** button completes the survey handoff. Browser/OS focus
 restrictions can require selecting the survey tab manually. Keep the original
 survey tab and recording open. Restart both tool and server after updating code.
 
