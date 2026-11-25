@@ -30,7 +30,7 @@ Study mode covers the participant's entire UI session, including training and in
 
 ## Text, movement and training logs
 
-Edited instructions are interpreted by the selected LLM through OpenRouter. The UI exposes **Interpret text** for retrying an instruction. It also interprets a completed typed edit or local dictation. Apply waits for a successful interpretation and flushes unsent text changes before it can commit anything. Failed or invalid output is shown and blocked; there is no deterministic-parser fallback. LLM interpretation requires internet and an API key, even though dictation and survey storage are local.
+Edited instructions are interpreted by the selected LLM through OpenRouter. The UI exposes **Preview text on plot** for retrying an instruction. It also interprets a completed typed edit or local dictation. Apply waits for a successful interpretation and flushes unsent text changes before it can commit anything. Failed or invalid output is shown and blocked; there is no deterministic-parser fallback. LLM interpretation requires internet and an API key, even though dictation and survey storage are local.
 
 The text is not given to the numerical loss as a raw string. The LLM turns it into a geometric proposal. User arrow/field edits refine that proposal. Apply commits the final positions and spreads, which become the interaction-loss target when training resumes. One interaction loss follows this final target, avoiding competing text and movement targets.
 

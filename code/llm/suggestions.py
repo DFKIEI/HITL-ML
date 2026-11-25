@@ -76,10 +76,10 @@ sentences, and the class NAMES (never indices, metric names, level names such as
 metrics). Think "the cat and dog groups overlap a lot, so push them apart".
 The "global.issue" should summarize the main problem in one short sentence.
 The "global.strategy" should give the overall plan in one short sentence.
-The "suggestion" field must be one or two short sentences that say both:
-1) what to do with this pair, naming both classes (e.g. "Move cat away from dog",
-   "Pull the truck group tighter together"), and
-2) why, in plain words (e.g. "they are easily confused and sit on top of each other").
+The "suggestion" field is the editable instruction. Use one short sentence
+that names the affected class or classes and states the action directly,
+for example, "Move cat away from dog and pull cat tighter."
+Keep the reasoning in the global fields.
 Order suggestions from most to least important: the first one should be the
 change that would help the classifier most.
 The "direction" field states which way class_i should move: "toward_j" (towards

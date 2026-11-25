@@ -1,7 +1,6 @@
 """LLM suggestions panel, docked in the main window next to the scatter plot:
 ask an LLM what to do with the latent space, show its (top 5) suggestions
-one at a time (Previous / Skip), with the measured impact of each on the
-latent space (llm/impact.py), and - in strategy 4 - let the operator edit
+one at a time (Previous / Next) and - in strategy 4 - let the operator edit
 (typing or dictating), remove, add and apply them.
 
 Only the suggestion on screen is drawn on the scatter plot; hovering its
@@ -18,7 +17,7 @@ from tkinter import ttk
 import numpy as np
 
 from llm import openrouter, voice
-from llm.impact import describe_impact, suggestion_impact
+from llm.impact import suggestion_impact
 from llm.latent_state import get_class_names
 from llm.movement import move_fraction, suggestion_vectors
 from llm.strategies import get_strategy
@@ -31,10 +30,39 @@ from ui import ui_theme
 TEXT_PARSE_DELAY_MS = 600
 
 
+class LoadingSpinner(tk.Canvas):
+    """A small animated ring that uses Tk drawing and timers."""
+
+    def __init__(self, parent):
+        super().__init__(parent, width=22, height=22, bg=ui_theme.BG, highlightthickness=0)
+        self.create_oval(3, 3, 19, 19, outline=ui_theme.BORDER, width=2)
+        self.arc = self.create_arc(3, 3, 19, 19, extent=250, style=tk.ARC, outline=ui_theme.PRIMARY, width=2)
+        self.angle = 90
+        self.job = None
+
+    def start(self):
+        if self.job is None:
+            self._advance()
+
+    def _advance(self):
+        self.itemconfigure(self.arc, start=self.angle)
+        self.angle = (self.angle - 30) % 360
+        self.job = self.after(60, self._advance)
+
+    def stop(self):
+        if self.job is not None:
+            self.after_cancel(self.job)
+            self.job = None
+
+    def destroy(self):
+        self.stop()
+        super().destroy()
+
+
 class LLMSuggestionsPanel(ttk.Frame):
     def __init__(self, parent, ui):
         panel_width = min(600, max(440, int(parent.winfo_screenwidth() * 0.38)))
-        super().__init__(parent, width=panel_width, padding=(ui_theme.PAD_M, 0, 0, 0))
+        super().__init__(parent, width=panel_width, padding=(ui_theme.PAD_L, ui_theme.PAD_S))
         self.wrap_length = panel_width - 60
         self.pack_propagate(False)
         self.ui = ui
@@ -44,8 +72,8 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.text_interpretations = {}
         self.text_flush = {}
         self.text_setters = {}
+        self.preview_loaders = {}
         self.plot_retries = 0
-        self.global_summary = None
         self.color_dots = []  # (tk.Label, callable -> class index) to recolor on plot redraw
         self.current_index = 0  # the one suggestion on screen
         self.recorder = voice.Recorder()
@@ -53,76 +81,66 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.dictation_busy = False
         self.dictation_button = None
 
-        ttk.Label(self, text="LLM Suggestions", style='Heading.TLabel').pack(anchor=tk.W, pady=(0, ui_theme.PAD_S))
+        ttk.Label(self, text="AI Suggestions", style='Heading.TLabel').pack(anchor=tk.W, pady=(0, ui_theme.PAD_M))
         self._build_controls()
         self._build_suggestion_area()
         self.after(200, self._process_queue)
 
     # ----------------------------------------------------------------- layout
+    @staticmethod
+    def _set_button_loading(button, loader, loading):
+        button.configure(state='disabled' if loading else 'normal')
+        if loading and not loader.winfo_manager():
+            loader.pack(side=tk.LEFT, padx=(ui_theme.PAD_M, 0))
+            loader.start()
+        elif not loading and loader.winfo_manager():
+            loader.stop()
+            loader.pack_forget()
+
     def _build_controls(self):
         frame = ttk.Frame(self)
         frame.pack(fill=tk.X)
 
-        ttk.Label(frame, text="Model:").grid(row=0, column=0, sticky=tk.W)
-        self.model_var = tk.StringVar(value=openrouter.get_default_model())
-        model_values = list(openrouter.RECOMMENDED_MODELS)
-        if self.model_var.get() not in model_values:
-            model_values.insert(0, self.model_var.get())
-        ttk.Combobox(frame, textvariable=self.model_var, values=model_values).grid(
-            row=0, column=1, sticky=tk.EW, padx=5, pady=2)
-
-        ttk.Label(frame, text="Focus (optional):").grid(row=1, column=0, sticky=tk.W)
-        focus_row = ttk.Frame(frame)
-        focus_row.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
-        self.goal_var = tk.StringVar()
-        ttk.Entry(focus_row, textvariable=self.goal_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        actions = ttk.Frame(frame)
+        actions.pack(fill=tk.X)
+        request_actions = ttk.Frame(actions)
+        request_actions.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.request_button = ttk.Button(request_actions, text="Get Suggestions", style='Primary.TButton',
+                                         command=self.request_suggestions)
+        self.request_button.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.request_loader = LoadingSpinner(request_actions)
+        self.add_button = ttk.Button(actions, text="Add my own", command=self._add_suggestion)
+        self.add_button.pack(side=tk.RIGHT, padx=(ui_theme.PAD_M, 0))
 
         self.key_row = ttk.Frame(frame)
-        self.key_row.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=2)
         ttk.Label(self.key_row, text="API key:").pack(side=tk.LEFT)
         self.key_var = tk.StringVar()
         ttk.Entry(self.key_row, textvariable=self.key_var, show="*", width=24).pack(
             side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         ttk.Button(self.key_row, text="Use key", command=self._store_key).pack(side=tk.LEFT)
-        if openrouter.get_api_key():
-            self.key_row.grid_remove()
+        if not openrouter.get_api_key():
+            self.key_row.pack(fill=tk.X, pady=2)
 
-        buttons = ttk.Frame(frame)
-        buttons.grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(ui_theme.PAD_M, 0))
-        self.request_button = ttk.Button(buttons, text="Get Suggestions", style='Primary.TButton',
-                                         command=self.request_suggestions)
-        self.request_button.pack(side=tk.LEFT)
-        self.add_button = ttk.Button(buttons, text="+ Add", command=self._add_suggestion)
-        self.add_button.pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
-        ttk.Button(buttons, text="Clear", command=self._clear_all).pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
-
-        self.status_var = tk.StringVar(value=self._key_status())
+        self.status_var = tk.StringVar(value='' if openrouter.get_api_key() else self._key_status())
         status_label = ttk.Label(frame, textvariable=self.status_var, wraplength=self.wrap_length,
                                  justify=tk.LEFT, style='Muted.TLabel')
-        status_label.grid(
-            row=4, column=0, columnspan=2, sticky=tk.W, pady=(ui_theme.PAD_S, 0))
 
         def update_status_visibility(*_):
             if self.status_var.get():
-                status_label.grid()
+                status_label.pack(anchor=tk.W, pady=(ui_theme.PAD_S, 0))
             else:
-                status_label.grid_remove()
+                status_label.pack_forget()
 
         self.status_var.trace_add('write', update_status_visibility)
-
-        frame.columnconfigure(1, weight=1)
+        update_status_visibility()
 
     def _build_suggestion_area(self):
-        self.suggestion_view_var = tk.BooleanVar(
-            value=bool(getattr(self.ui, 'llm_only_suggestion_clusters', False)))
-        ttk.Checkbutton(self, text="Only this suggestion's clusters",
-                        variable=self.suggestion_view_var,
-                        command=self._toggle_suggestion_view).pack(anchor=tk.W, pady=(0, ui_theme.PAD_S))
-        nav = ttk.Frame(self)
-        nav.pack(fill=tk.X, pady=(0, ui_theme.PAD_S))
+        navigation = ttk.Frame(self)
+        navigation.pack(fill=tk.X, pady=(ui_theme.PAD_L, 0))
+        self.suggestion_nav = nav = ttk.Frame(navigation)
         self.prev_button = ttk.Button(nav, text="‹ Previous", command=lambda: self._step(-1))
         self.prev_button.pack(side=tk.LEFT)
-        self.skip_button = ttk.Button(nav, text="Skip ›", command=lambda: self._step(1))
+        self.skip_button = ttk.Button(nav, text="Next ›", command=lambda: self._step(1))
         self.skip_button.pack(side=tk.RIGHT)
         self.position_var = tk.StringVar(value="No suggestions yet")
         ttk.Label(nav, textvariable=self.position_var, style='Muted.TLabel').pack(side=tk.LEFT, expand=True)
@@ -132,19 +150,48 @@ class LLMSuggestionsPanel(ttk.Frame):
 
         self.canvas = tk.Canvas(container, width=1, highlightthickness=0, bg=ui_theme.BG)
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
-        self.suggestion_frame = ttk.Frame(self.canvas)
+        content = ttk.Frame(self.canvas)
+        self.suggestion_frame = ttk.Frame(content)
+        self.suggestion_frame.pack(fill=tk.X)
+        self._build_settings(content)
 
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ui_theme.hide_fitting_scrollbar(self.canvas, scrollbar)
 
-        frame_window = self.canvas.create_window((0, 0), window=self.suggestion_frame, anchor="nw")
-        self.suggestion_frame.bind(
+        frame_window = self.canvas.create_window((0, 0), window=content, anchor="nw")
+        content.bind(
             "<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(frame_window, width=e.width))
         # Scroll only while the pointer is over the suggestions, so the
         # control panel keeps its own scrolling
         self.canvas.bind("<Enter>", self._bind_wheel)
         self.canvas.bind("<Leave>", self._unbind_wheel)
+
+    def _build_settings(self, parent):
+        settings = ttk.LabelFrame(parent, text="Suggestion settings", padding=ui_theme.PAD_M)
+        settings.pack(fill=tk.X, pady=(ui_theme.PAD_L, ui_theme.PAD_M))
+        settings.columnconfigure(1, weight=1)
+
+        self.model_var = tk.StringVar(value=openrouter.get_default_model())
+        model_values = list(openrouter.RECOMMENDED_MODELS)
+        if self.model_var.get() not in model_values:
+            model_values.insert(0, self.model_var.get())
+        ttk.Label(settings, text="Model").grid(row=0, column=0, sticky=tk.W, padx=(0, ui_theme.PAD_M))
+        ttk.Combobox(settings, textvariable=self.model_var, values=model_values, width=1).grid(
+            row=0, column=1, sticky=tk.EW)
+
+        self.goal_var = tk.StringVar()
+        ttk.Label(settings, text="Focus (optional)").grid(row=1, column=0, sticky=tk.W, padx=(0, ui_theme.PAD_M))
+        ttk.Entry(settings, textvariable=self.goal_var, width=1).grid(
+            row=1, column=1, sticky=tk.EW, pady=(ui_theme.PAD_M, 0))
+
+        self.suggestion_view_var = tk.BooleanVar(
+            value=bool(getattr(self.ui, 'llm_only_suggestion_clusters', False)))
+        ttk.Checkbutton(settings, text="Show suggested classes only",
+                        variable=self.suggestion_view_var, command=self._toggle_suggestion_view).grid(
+            row=2, column=0, columnspan=2, sticky=tk.W, pady=(ui_theme.PAD_M, 0))
+        ttk.Button(settings, text="Clear suggestions", command=self._clear_all).grid(
+            row=3, column=0, columnspan=2, sticky=tk.W, pady=(ui_theme.PAD_M, 0))
 
     def _bind_wheel(self, _event=None):
         self.canvas.bind_all("<MouseWheel>", self._on_wheel)
@@ -195,7 +242,7 @@ class LLMSuggestionsPanel(ttk.Frame):
             return
         openrouter.set_api_key(key)
         self.key_var.set("")
-        self.key_row.grid_remove()
+        self.key_row.pack_forget()
         self.status_var.set(f"API key stored for this session only - add it to "
                             f"{openrouter.CONFIG_FILENAME} to keep it.")
 
@@ -206,7 +253,7 @@ class LLMSuggestionsPanel(ttk.Frame):
         if self.request_running:
             return
         if not openrouter.get_api_key():
-            self.key_row.grid()
+            self.key_row.pack(fill=tk.X, pady=2)
             self.status_var.set(self._key_status())
             return
 
@@ -223,7 +270,7 @@ class LLMSuggestionsPanel(ttk.Frame):
 
         self.plot_retries = 0
         self.request_running = True
-        self.request_button.configure(state='disabled')
+        self._set_button_loading(self.request_button, self.request_loader, True)
         self.status_var.set("Asking the model...")
 
         model = self.model_var.get().strip()
@@ -258,7 +305,7 @@ class LLMSuggestionsPanel(ttk.Frame):
                     self._dictation_done(*payload)
                     continue
                 self.request_running = False
-                self.request_button.configure(state='normal')
+                self._set_button_loading(self.request_button, self.request_loader, False)
                 if status == 'error':
                     self.status_var.set(payload)
                     self.ui.llm_tracker.log_error(payload)
@@ -282,7 +329,6 @@ class LLMSuggestionsPanel(ttk.Frame):
                   global_summary=global_summary.as_log_dict(),
                   suggestions=[dict(s.as_log_dict(), impact=self._impacts(s)) for s in suggestions])
 
-        self.global_summary = global_summary
         self.ui.latest_llm_suggestions = list(suggestions)
         self.ui.applied_llm_suggestion_ids = set()
         self.current_index = 0
@@ -345,7 +391,7 @@ class LLMSuggestionsPanel(ttk.Frame):
         self._render_cards(via=via or ('skip' if delta > 0 else 'previous'))
 
     def _render_cards(self, keep_scroll=False, via='render'):
-        """(Re)build the overall card and the card of the current suggestion
+        """(Re)build the card of the current suggestion
         from ui.latest_llm_suggestions - the cards are just views of those
         objects, edited in place. Only that suggestion is drawn on the plot."""
         for flush in list(self.text_flush.values()):
@@ -355,6 +401,9 @@ class LLMSuggestionsPanel(ttk.Frame):
                 pass
         self.text_flush = {}
         self.text_setters = {}
+        for set_loading in self.preview_loaders.values():
+            set_loading(False)
+        self.preview_loaders = {}
         highlight_classes(self.ui, None)
         for widget in self.suggestion_frame.winfo_children():
             widget.destroy()
@@ -366,16 +415,17 @@ class LLMSuggestionsPanel(ttk.Frame):
         previous_focus = getattr(self.ui, 'llm_focus_suggestion', None)
         self.ui.llm_focus_suggestion = current
 
-        if self.global_summary is not None and not self.global_summary.is_empty():
-            self._build_global_card(self.global_summary)
         if current is not None:
             if current.original_text is None:
                 current.original_text = current.suggestion
-            self._build_card(self.current_index, current, strategy)
+            self._build_card(current, strategy)
 
+        self.request_button.configure(style='TButton' if suggestions else 'Primary.TButton')
         if suggestions:
+            self.suggestion_nav.pack(fill=tk.X, pady=(0, ui_theme.PAD_M))
             self.position_var.set(f"Suggestion {self.current_index + 1} of {len(suggestions)}")
         else:
+            self.suggestion_nav.pack_forget()
             self.position_var.set("No suggestions")
         self.prev_button.configure(state='normal' if self.current_index > 0 else 'disabled')
         self.skip_button.configure(
@@ -405,25 +455,6 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.color_dots.append((dot, class_of))
         return dot
 
-    def _build_global_card(self, global_summary):
-        card = ttk.LabelFrame(self.suggestion_frame, text="Overall",
-                              padding=(ui_theme.PAD_M, ui_theme.PAD_S))
-        card.pack(fill=tk.X, padx=(0, 5), pady=(0, 6))
-        if global_summary.issue:
-            ttk.Label(card, text=global_summary.issue, wraplength=self.wrap_length - 20,
-                      justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
-        if global_summary.strategy:
-            ttk.Label(card, text=f"Plan: {global_summary.strategy}", wraplength=self.wrap_length - 20,
-                      justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(4, 2))
-        pending = self._pending()
-        impact = self._impact(pending) if len(pending) > 1 else None
-        if impact:
-            ttk.Label(card, text=(f"All {len(pending)} open suggestions together: separation "
-                                  f"{impact['silhouette_before']:+.2f} → {impact['silhouette_after']:+.2f}, "
-                                  f"shift {impact['shift_ratio']:.2f}x typical class gap"),
-                      wraplength=self.wrap_length - 20, justify=tk.LEFT, style='Status.TLabel').pack(
-                anchor=tk.W, pady=(2, 0))
-
     def _bind_hover(self, card, suggestion):
         """Highlight the card's classes on the plot while the pointer is
         anywhere over the card (including its child widgets)."""
@@ -439,42 +470,30 @@ class LLMSuggestionsPanel(ttk.Frame):
         card.bind("<Enter>", on_enter)
         card.bind("<Leave>", on_leave)
 
-    def _build_card(self, index, suggestion, strategy):
+    def _build_card(self, suggestion, strategy):
         applied = id(suggestion) in (getattr(self.ui, 'applied_llm_suggestion_ids', None) or set())
         editable = strategy.suggestions_editable and not applied
 
-        origin = "added by you" if suggestion.source == 'human' else (
-            "edited" if suggestion.edited else "LLM")
-        card = ttk.LabelFrame(self.suggestion_frame, text=f"{index + 1}  ·  {origin}",
-                              padding=(ui_theme.PAD_M, ui_theme.PAD_S))
-        card.pack(fill=tk.X, padx=(0, 5), pady=(0, 6))
+        title = "Applied" if applied else "Preview"
+        origin = "Your suggestion" if suggestion.source == 'human' else (
+            "Edited suggestion" if suggestion.edited else "AI suggestion")
+        card = ttk.LabelFrame(self.suggestion_frame, text=f"{title} · {origin}",
+                              padding=ui_theme.PAD_L)
+        card.pack(fill=tk.X)
         self._bind_hover(card, suggestion)
 
-        impact_var = tk.StringVar()
         if editable:
-            self._build_editable_body(card, suggestion, impact_var)
+            self._build_editable_body(card, suggestion)
+            buttons = ttk.Frame(card)
+            buttons.pack(fill=tk.X, pady=(ui_theme.PAD_L, 0))
+            ttk.Button(buttons, text="Apply suggestion", style='Primary.TButton',
+                       command=lambda: self._apply_one(suggestion, None)).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Button(buttons, text="Remove",
+                       command=lambda: self._remove(suggestion)).pack(side=tk.RIGHT, padx=(ui_theme.PAD_M, 0))
         else:
             self._build_readonly_body(card, suggestion)
-        self._build_impact(card, suggestion, impact_var, strategy)
-
-        if not strategy.suggestions_editable:
-            if strategy.llm_auto_apply:
+            if strategy.llm_auto_apply and not applied:
                 ttk.Label(card, text="(applied automatically)", style='Status.TLabel').pack(anchor=tk.W)
-            return
-
-        buttons = ttk.Frame(card)
-        buttons.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
-        status_var = tk.StringVar(value="applied to the plot" if applied else "")
-        if not applied:
-            ttk.Button(buttons, text="Apply", style='Primary.TButton',
-                       command=lambda: self._apply_one(suggestion, status_var)).pack(side=tk.LEFT)
-            ttk.Button(buttons, text="Remove",
-                       command=lambda: self._remove(suggestion)).pack(side=tk.LEFT, padx=(ui_theme.PAD_S, 0))
-        ttk.Label(buttons, textvariable=status_var, style='Status.TLabel').pack(side=tk.LEFT, padx=ui_theme.PAD_S)
-
-    def _pending(self):
-        applied = getattr(self.ui, 'applied_llm_suggestion_ids', None) or set()
-        return [s for s in self._suggestions() if id(s) not in applied]
 
     def _impact_spaces(self):
         """(name, points, labels) of the spaces impact is measured in: the
@@ -501,38 +520,6 @@ class LLMSuggestionsPanel(ttk.Frame):
             except Exception as e:
                 result[name] = {'error': f"{type(e).__name__}: {e}"}
         return result
-
-    def _impact(self, suggestions, space=None):
-        """Impact in ``space`` ('latent' or 'plot'; default the first one
-        available), or None."""
-        for name, points, labels in self._impact_spaces():
-            if space is None or name == space:
-                try:
-                    return suggestion_impact(points, labels, suggestions)
-                except Exception as e:
-                    print(f"Impact metrics failed: {type(e).__name__}: {e}")
-                    return None
-        return None
-
-    def _build_impact(self, card, suggestion, impact_var, strategy):
-        """Measured effect of this suggestion, in the space the active
-        strategy changes: the real latent space for strategy 2, the 2D plot
-        otherwise (see llm/impact.py)."""
-        space = 'latent' if strategy.space == 'high_dim' else 'plot'
-        title = "Impact on the model's latent space" if space == 'latent' else "Impact on the 2D plot"
-
-        def update():
-            impact = self._impact(suggestion, space)
-            impact_var.set(describe_impact(impact, suggestion.expected_benefit) if impact
-                           else "(impact shows once the scatter plot is ready)")
-
-        update()
-        impact_var.update_impact = update  # called after edits, see _build_editable_body
-        box = ttk.Frame(card)
-        box.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
-        ttk.Label(box, text=title, style='Status.TLabel').pack(anchor=tk.W)
-        ttk.Label(box, textvariable=impact_var, wraplength=self.wrap_length - 20, justify=tk.LEFT,
-                  style='Muted.TLabel').pack(anchor=tk.W)
 
     def _build_readonly_body(self, card, suggestion):
         header = ttk.Frame(card)
@@ -566,7 +553,7 @@ class LLMSuggestionsPanel(ttk.Frame):
             return 0.0
         return float(np.degrees(np.arctan2(vector[1], vector[0])) % 360)
 
-    def _build_editable_body(self, card, suggestion, impact_var):
+    def _build_editable_body(self, card, suggestion):
         """Strategy 4: the free text and the structured fields are both
         editable. Edited text is interpreted asynchronously by the selected LLM
         and updates the validated fields, which are what gets applied - and hence
@@ -583,55 +570,70 @@ class LLMSuggestionsPanel(ttk.Frame):
         scale_var = tk.StringVar(value=SCALE_LABELS.get(suggestion.scale))
         tighten_i_var = tk.BooleanVar(value=suggestion.tighten_i)
         tighten_j_var = tk.BooleanVar(value=suggestion.tighten_j)
-        summary_var = tk.StringVar(value=describe_movement(suggestion))
-
-        row = ttk.Frame(card)
-        row.pack(fill=tk.X)
-        ttk.Label(row, text="Move").pack(side=tk.LEFT)
-        self._color_dot(row, lambda: suggestion.class_i).pack(side=tk.LEFT, padx=(4, 0))
-        class_i_combo = ttk.Combobox(row, textvariable=class_i_var, values=name_list, state='readonly', width=12)
-        class_i_combo.pack(side=tk.LEFT)
-        scale_combo = ttk.Combobox(row, textvariable=scale_var, values=list(SCALE_LABELS.values()),
-                                   state='readonly', width=9)
-        scale_combo.pack(side=tk.LEFT, padx=(4, 0))
-
-        row2 = ttk.Frame(card)
-        row2.pack(fill=tk.X, pady=(4, 0))
-        direction_combo = ttk.Combobox(row2, textvariable=direction_var, values=list(DIRECTION_LABELS.values()),
-                                       state='readonly', width=14)
-        direction_combo.pack(side=tk.LEFT)
-        self._color_dot(row2, lambda: suggestion.class_j).pack(side=tk.LEFT, padx=(4, 0))
-        class_j_combo = ttk.Combobox(row2, textvariable=class_j_var, values=name_list, state='readonly', width=12)
-        class_j_combo.pack(side=tk.LEFT)
-
-        row3 = ttk.Frame(card)
-        row3.pack(fill=tk.X, pady=(4, 0))
-        ttk.Label(row3, text="Pull tighter:").pack(side=tk.LEFT)
-        tighten_i_check = ttk.Checkbutton(row3, variable=tighten_i_var, text=suggestion.class_i_name)
-        tighten_i_check.pack(side=tk.LEFT, padx=(4, 0))
-        tighten_j_check = ttk.Checkbutton(row3, variable=tighten_j_var, text=suggestion.class_j_name)
-        tighten_j_check.pack(side=tk.LEFT, padx=(4, 0))
-        edit_header = ttk.Frame(card)
-        edit_header.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
-        ttk.Label(edit_header, text="Edit suggestion:").pack(side=tk.LEFT)
-        self._dictate_button(edit_header, suggestion).pack(side=tk.RIGHT)
-        ttk.Button(edit_header, text='Interpret text',
-                   command=lambda: self._set_text(suggestion, text.get('1.0', 'end-1c'), class_names)).pack(side=tk.RIGHT, padx=4)
-        text_row = ttk.Frame(card)
-        text_row.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
-        text = tk.Text(text_row, height=3, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1,
+        ttk.Label(card, text="Instruction", style='Heading.TLabel').pack(anchor=tk.W)
+        text = tk.Text(card, height=3, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1,
                        font=ui_theme.fonts()['body'], bg=ui_theme.SURFACE, fg=ui_theme.TEXT,
-                       highlightthickness=0, padx=4, pady=3)
+                       highlightthickness=0, padx=ui_theme.PAD_M, pady=ui_theme.PAD_M)
         text.insert('1.0', suggestion.suggestion)
+        text.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
+
         def replace_editor(value):
             if text.get('1.0', 'end-1c') == value:
                 return
             text.delete('1.0', tk.END)
             text.insert('1.0', value)
+
         self.text_setters[suggestion.uid] = replace_editor
-        text.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Label(card, textvariable=summary_var, wraplength=self.wrap_length - 20,
-                  justify=tk.LEFT, style='Muted.TLabel').pack(anchor=tk.W, pady=(2, 0))
+        edit_actions = ttk.Frame(card)
+        edit_actions.pack(fill=tk.X, pady=(ui_theme.PAD_M, 0))
+        preview_actions = ttk.Frame(edit_actions)
+        preview_actions.pack(side=tk.LEFT)
+        preview_button = ttk.Button(preview_actions, text='Preview text on plot',
+                                    command=lambda: flush_text(retry=True))
+        preview_button.pack(side=tk.LEFT)
+        loader = LoadingSpinner(preview_actions)
+
+        def set_loading(loading):
+            self._set_button_loading(preview_button, loader, loading)
+
+        self.preview_loaders[suggestion.uid] = set_loading
+        set_loading(self.text_interpretations.get(suggestion.uid, (None, 'ready'))[1] == 'pending')
+        if voice.available():
+            self._dictate_button(edit_actions, suggestion).pack(side=tk.LEFT, padx=(ui_theme.PAD_M, 0))
+
+        ttk.Separator(card).pack(fill=tk.X, pady=ui_theme.PAD_L)
+        ttk.Label(card, text="Movement", style='Heading.TLabel').pack(anchor=tk.W)
+        ttk.Label(card, text="Drag plot handles to fine-tune.", style='Status.TLabel').pack(anchor=tk.W)
+        fields = ttk.Frame(card)
+        fields.pack(fill=tk.X, pady=(ui_theme.PAD_M, 0))
+        fields.columnconfigure(0, weight=1, uniform='movement')
+        fields.columnconfigure(1, weight=1, uniform='movement')
+
+        def movement_field(row, column, label, variable, values, class_of=None):
+            field = ttk.Frame(fields)
+            horizontal_pad = (0, ui_theme.PAD_S) if column == 0 else (ui_theme.PAD_S, 0)
+            field.grid(row=row, column=column, sticky=tk.EW, padx=horizontal_pad, pady=(0, ui_theme.PAD_M))
+            ttk.Label(field, text=label, style='Status.TLabel').pack(anchor=tk.W, pady=(0, ui_theme.PAD_S))
+            controls = ttk.Frame(field)
+            controls.pack(fill=tk.X)
+            if class_of is not None:
+                self._color_dot(controls, class_of).pack(side=tk.LEFT, padx=(0, ui_theme.PAD_S))
+            combo = ttk.Combobox(controls, textvariable=variable, values=values, state='readonly', width=1)
+            combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            return combo
+
+        class_i_combo = movement_field(0, 0, 'Class to move', class_i_var, name_list, lambda: suggestion.class_i)
+        scale_combo = movement_field(0, 1, 'Amount', scale_var, list(SCALE_LABELS.values()))
+        direction_combo = movement_field(1, 0, 'Direction', direction_var, list(DIRECTION_LABELS.values()))
+        class_j_combo = movement_field(1, 1, 'Reference class', class_j_var, name_list, lambda: suggestion.class_j)
+
+        ttk.Label(card, text="Tighten groups", style='Status.TLabel').pack(anchor=tk.W)
+        tighten = ttk.Frame(card)
+        tighten.pack(fill=tk.X, pady=(ui_theme.PAD_S, 0))
+        tighten_i_check = ttk.Checkbutton(tighten, variable=tighten_i_var, text=suggestion.class_i_name)
+        tighten_i_check.pack(side=tk.LEFT)
+        tighten_j_check = ttk.Checkbutton(tighten, variable=tighten_j_var, text=suggestion.class_j_name)
+        tighten_j_check.pack(side=tk.LEFT, padx=(ui_theme.PAD_M, 0))
 
         def sync_widgets():
             class_i_var.set(suggestion.class_i_name)
@@ -642,11 +644,7 @@ class LLMSuggestionsPanel(ttk.Frame):
             tighten_j_var.set(suggestion.tighten_j)
             tighten_i_check.configure(text=suggestion.class_i_name)
             tighten_j_check.configure(text=suggestion.class_j_name)
-            summary_var.set(describe_movement(suggestion))
             self.refresh_class_colors()
-            update = getattr(impact_var, 'update_impact', None)
-            if update is not None:
-                update()
 
         def changed(via):
             suggestion.edited = True
@@ -689,13 +687,16 @@ class LLMSuggestionsPanel(ttk.Frame):
         pending = {'job': None}
         self.text_flush[suggestion.uid] = lambda: flush_text()
 
-        def flush_text():
+        def flush_text(retry=False):
             if pending['job'] is not None:
                 text.after_cancel(pending['job'])
                 pending['job'] = None
             value = text.get('1.0', 'end-1c').strip()
-            if value != suggestion.suggestion:
+            preview_state = self.text_interpretations.get(suggestion.uid, (None, 'ready'))[1]
+            if value != suggestion.suggestion or (retry and preview_state == 'error'):
                 self._set_text(suggestion, value, class_names)
+            elif retry and preview_state == 'ready':
+                self.status_var.set('Preview is up to date.')
 
         def on_text_edit(_event=None):
             if pending['job'] is not None:
@@ -706,7 +707,7 @@ class LLMSuggestionsPanel(ttk.Frame):
             pending['job'] = None
             if not text.winfo_exists():
                 return
-            self._set_text(suggestion, text.get('1.0', 'end-1c'), class_names)
+            flush_text()
 
         text.bind("<KeyRelease>", on_text_edit)
 
@@ -728,9 +729,12 @@ class LLMSuggestionsPanel(ttk.Frame):
                   movement_before=suggestion.as_log_dict())
         revision = object()
         self.text_interpretations[suggestion.uid] = (revision, 'pending')
+        set_loading = getattr(self, 'preview_loaders', {}).get(suggestion.uid)
+        if set_loading is not None:
+            set_loading(True)
         current = suggestion.as_log_dict()
         model = self.model_var.get().strip()
-        self.status_var.set('Interpreting your instruction with the LLM...')
+        self.status_var.set('Updating preview…')
         def worker():
             try:
                 fields, raw = interpret_instruction(new_text, class_names, current, model=model)
@@ -750,8 +754,11 @@ class LLMSuggestionsPanel(ttk.Frame):
         self._log('TEXT_INTERPRETATION', uid=suggestion.uid, text=text, model=model,
                   fields=fields, raw=raw, error=error)
         self.text_interpretations[suggestion.uid] = (revision, 'error' if error else 'ready')
+        set_loading = getattr(self, 'preview_loaders', {}).get(suggestion.uid)
+        if set_loading is not None:
+            set_loading(False)
         if error:
-            self.status_var.set('Instruction could not be interpreted. Edit the text and retry: ' + error)
+            self.status_var.set('Could not update the preview. Edit the instruction or click Preview text on plot to retry.')
             return
         suggestion.set_classes(fields['class_i'], fields['class_j'], self._class_names())
         suggestion.move_overrides.clear()
@@ -762,7 +769,7 @@ class LLMSuggestionsPanel(ttk.Frame):
         suggestion.interpretation = {'model': model, 'text': text, 'fields': fields}
         self._log('SUGGESTION_EDITED', uid=suggestion.uid, via='llm_text', suggestion=suggestion.as_log_dict())
         self.refresh_cards()
-        self.status_var.set('Instruction interpreted. Review the arrows, then Apply.')
+        self.status_var.set('Preview updated.')
 
     # -------------------------------------------------------------- dictation
     def _dictate_button(self, parent, target):
@@ -863,8 +870,11 @@ class LLMSuggestionsPanel(ttk.Frame):
             except tk.TclError:
                 pass
         state = self.text_interpretations.get(suggestion.uid, (None, 'ready'))[1]
-        if state != 'ready':
-            self.status_var.set('Wait for a successful text interpretation before applying.')
+        if state == 'pending':
+            self.status_var.set('Wait for the preview to update before applying.')
+            return False
+        if state == 'error':
+            self.status_var.set('Update the preview before applying the edited instruction.')
             return False
         if hasattr(self.ui, 'study_allows_apply') and not self.ui.study_allows_apply():
             return False
@@ -885,6 +895,7 @@ class LLMSuggestionsPanel(ttk.Frame):
 
     def _apply_one(self, suggestion, status_var):
         if self._apply(suggestion, status_var):
+            self.status_var.set('Suggestion applied.')
             # Move on to the next one, like Skip.
             if self.current_index < len(self._suggestions()) - 1:
                 self.current_index += 1
@@ -920,7 +931,6 @@ class LLMSuggestionsPanel(ttk.Frame):
         """'Clear' button: also drops the overlay arrows and, for the high-dim
         strategy (2), the loss target they're built from."""
         self._log('SUGGESTIONS_CLEARED', uids=[s.uid for s in self._suggestions()])
-        self.global_summary = None
         self.ui.latest_llm_suggestions = []
         self.ui.applied_llm_suggestion_ids = set()
         self.current_index = 0
