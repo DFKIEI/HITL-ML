@@ -1,0 +1,2 @@
+Epoch,Train Loss,Validation Accuracy,Loss Type,Alpha,interaction Loss,CE loss,Beta,LLM loss
+6,1.1870530851577457,76.12136291381574,custom,0.33,0.05883870237065773,0.4119441962163699,0.0,0.0

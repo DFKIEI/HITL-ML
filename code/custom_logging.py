@@ -290,11 +290,11 @@ class SessionRecorder:
     Thread-safe: the training thread logs epochs while the UI logs drags.
     """
 
-    def __init__(self, probant_id: str = 'test', scenario: str = 'A1', log_path: str = ''):
+    def __init__(self, probant_id: str = 'test', scenario: str = 'A1', log_path: str = '', *, session_id=None):
         import threading
         import time
         self._time = time
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.log_path = log_path
         self.path = os.path.join(log_path, f'session_events_id_{probant_id}_scenario_{scenario}.jsonl')
         self.spaces_dir = os.path.join(log_path, 'spaces')
@@ -310,6 +310,7 @@ class SessionRecorder:
         self._experiment_file = None
         self.experiment_id = None
         self._experiment_start = None
+        self.identity = dict(study_id=probant_id, session_id=session_id, scenario=scenario) if session_id else {}
         self.log('SESSION_START', probant_id=probant_id, scenario=scenario, log_path=log_path,
                  wall_clock=self._time.strftime('%Y-%m-%d %H:%M:%S %z'))
 
@@ -331,6 +332,7 @@ class SessionRecorder:
                 'type': event_type,
             }
             record.update(_to_jsonable(payload))
+            record.update(self.identity)
             if self._experiment_file is not None:
                 record['experiment_id'] = self.experiment_id
                 record['study_elapsed_s'] = round(self._time.monotonic() - self._experiment_start, 3)
@@ -353,21 +355,27 @@ class SessionRecorder:
     def start_experiment(self, **context):
         """Create a participant record only when Study mode is enabled."""
         import uuid
-        if self._experiment_file is not None:
-            return self.experiment_id
         with self._lock:
+            if self._experiment_file is not None:
+                return self.experiment_id
             self.experiment_id = uuid.uuid4().hex
             self._experiment_start = self._time.monotonic()
             name = f'experiment_{self.experiment_id}.jsonl'
             self._experiment_file = open(os.path.join(self.log_path, name), 'x', encoding='utf-8')
-        self.log('EXPERIMENT_STARTED', **context)
-        return self.experiment_id
+            self.log('EXPERIMENT_STARTED', **context)
+            return self.experiment_id
 
     def end_experiment(self, reason='study_mode_disabled'):
-        if self._experiment_file is None:
-            return
-        self.log('EXPERIMENT_ENDED', reason=reason)
         with self._lock:
+            if self._experiment_file is None:
+                return
+            now = self.elapsed()
+            # Record the last open interval in the study log and keep timing
+            # the same view or phase in the broader desktop session.
+            for kind, segment in self._open_segments.items():
+                self._close_segment(kind, segment, now)
+                self._open_segments[kind] = (segment[0], now)
+            self.log('EXPERIMENT_ENDED', reason=reason)
             self._experiment_file.close()
             self._experiment_file = None
             self.experiment_id = None
@@ -395,17 +403,18 @@ class SessionRecorder:
         """Switch the open time segment of ``kind`` (e.g. 'space', 'phase',
         'suggestion') to ``key``; the previous one is closed and logged as
         TIME_SEGMENT. ``key=None`` just closes it."""
-        key = None if key is None else str(key)
-        current = self._open_segments.get(kind)
-        if current is not None and current[0] == key:
-            return
-        now = self.elapsed()
-        if current is not None:
-            self._close_segment(kind, current, now)
-        if key is None:
-            self._open_segments.pop(kind, None)
-        else:
-            self._open_segments[kind] = (key, now)
+        with self._lock:
+            key = None if key is None else str(key)
+            current = self._open_segments.get(kind)
+            if current is not None and current[0] == key:
+                return
+            now = self.elapsed()
+            if current is not None:
+                self._close_segment(kind, current, now)
+            if key is None:
+                self._open_segments.pop(kind, None)
+            else:
+                self._open_segments[kind] = (key, now)
 
     def _close_segment(self, kind, segment, now):
         key, start = segment
@@ -427,15 +436,15 @@ class SessionRecorder:
         return total
 
     def close(self):
-        if self.closed:
-            return
-        now = self.elapsed()
-        for kind, segment in list(self._open_segments.items()):
-            self._close_segment(kind, segment, now)
-        self._open_segments = {}
-        totals = {kind: {k: round(v, 3) for k, v in keys.items()} for kind, keys in self.totals.items()}
-        self.end_experiment(reason='window_closed')
-        self.log('SESSION_END', duration_s=round(now, 3), time_spent=totals)
         with self._lock:
+            if self.closed:
+                return
+            now = self.elapsed()
+            for kind, segment in list(self._open_segments.items()):
+                self._close_segment(kind, segment, now)
+            self._open_segments = {}
+            totals = {kind: {k: round(v, 3) for k, v in keys.items()} for kind, keys in self.totals.items()}
+            self.end_experiment(reason='window_closed')
+            self.log('SESSION_END', duration_s=round(now, 3), time_spent=totals)
             self.closed = True
             self._file.close()

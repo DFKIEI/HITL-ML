@@ -371,7 +371,7 @@
     "QID175": {
       "id": "QID175",
       "type": "DB",
-      "text": "Please switch to the tool",
+      "text": "Please wait while we open the tool",
       "required": false
     },
     "QID176": {

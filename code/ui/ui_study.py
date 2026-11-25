@@ -75,15 +75,41 @@ class StudyControls:
         self.update_study_status()
 
     def return_to_survey(self):
-        self.events.log('TOOL_SURVEY_HANDOFF', interactions=self.study_count)
-        if hasattr(self, 'study_bridge'):
-            self.study_bridge.publish('complete', interactions=self.study_count, reason='returned_to_survey')
-            if self.study_bridge.managed_sequence is not None:
-                self.stop_training.set()
-                self.pause_event.clear()
-        self.study_mode_var.set(False)
-        self.toggle_study_mode()
-        self.root.iconify()
+        if getattr(self, 'returning_to_survey', False):
+            return
+        self.returning_to_survey = True
+        bridge = getattr(self, 'study_bridge', None)
+        managed = bridge is not None and bridge.managed_sequence is not None
+        if managed:
+            self.stop_training.set()
+            self.pause_event.clear()
+            self.study_training_button.configure(state='disabled')
+
+        def finish():
+            if managed and self.training_thread is not None and self.training_thread.is_alive():
+                self.root.after(100, finish)
+                return
+            self.events.log('TOOL_SURVEY_HANDOFF', interactions=self.study_count)
+            self.study_mode_var.set(False)
+            self.toggle_study_mode()
+            if managed:
+                bridge.publish('complete', interactions=self.study_count, reason='returned_to_survey')
+            else:
+                self.root.iconify()
+                self.returning_to_survey = False
+
+        def countdown(seconds):
+            if seconds == 0:
+                self.root.withdraw()
+                finish()
+                return
+            self.study_status.set(f'Returning to the survey in {seconds}…')
+            self.root.after(1000, countdown, seconds - 1)
+
+        if managed:
+            countdown(3)
+        else:
+            finish()
 
     def begin_study_task(self):
         """Compatibility entry point for handoffs; no extra Begin step is required."""
@@ -111,7 +137,7 @@ class StudyControls:
             self.update_study_status()
 
     def update_study_status(self):
-        if not hasattr(self, 'study_status'):
+        if not hasattr(self, 'study_status') or getattr(self, 'returning_to_survey', False):
             return
         thread = getattr(self, 'training_thread', None)
         running = thread is not None and thread.is_alive()

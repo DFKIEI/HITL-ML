@@ -35,18 +35,23 @@ def main():
     parser.add_argument('--id', help='Participant Study ID')
     parser.add_argument('--scenario', help='Name of scenario')
     parser.add_argument('--survey-sequence', type=int, help=argparse.SUPPRESS)
+    parser.add_argument('--survey-session', help=argparse.SUPPRESS)
+    parser.add_argument('--survey-scenario', choices=['A', 'B'], help=argparse.SUPPRESS)
+    parser.add_argument('--study-output', help=argparse.SUPPRESS)
     parser.add_argument('--llm-model', type=str, default=openrouter.get_default_model(),
                         dest='llm_model',
                         help='OpenRouter model id used for the latent space suggestions')
     args = parser.parse_args()
-    if args.survey_sequence is None:
+    managed = args.survey_sequence is not None
+    if not managed:
         user_input = run_initial_ui()
         args.dataset = args.dataset or user_input['dataset']
         args.checkpoint = args.checkpoint or user_input.get('model_path')
         args.id = args.id or user_input['id']
         args.scenario = args.scenario or user_input['scenario']
-    elif not all((args.dataset, args.checkpoint, args.id, args.scenario)):
-        parser.error('Survey launch requires a dataset, checkpoint, Study ID and scenario.')
+    elif not all((args.dataset, args.checkpoint, args.id, args.scenario,
+                  args.survey_session, args.survey_scenario, args.study_output)):
+        parser.error('Survey launch requires a dataset, checkpoint, Study ID, scenario and session output.')
     args.model = args.model or f'CNN_{args.dataset}'
 
     # The suggestion window reads the default model from the environment
@@ -69,13 +74,18 @@ def main():
 
     # Create UI
     root = tk.Tk()
-    app = UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model, args.loss,
-       args.visualize,args.id, args.scenario)
-    app.study_bridge.managed_sequence = args.survey_sequence
+    if managed:
+        root.withdraw()
+    app = UI(root, model, optimizer, trainloader, valloader, testloader, device, args.dataset, args.model,
+             args.loss, args.visualize, args.id, args.scenario,
+             study_output=args.study_output, study_session_id=args.survey_session)
+    if managed:
+        app.study_bridge.managed_sequence = args.survey_sequence
+        app.study_bridge.scenario = args.survey_scenario
     if args.checkpoint:
         # Load before Tk's initial tab event builds the plot, avoiding a stale
         # untrained layout followed by a second full feature extraction.
-        app.load_pretrained_model(args.checkpoint, refresh=False)
+        app.load_pretrained_model(args.checkpoint, refresh=managed)
     root.mainloop()
 
 

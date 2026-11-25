@@ -31,7 +31,7 @@ from ui.ui_study import StudyControls
 
 class UI(StudyControls):
     def __init__(self, root, model, optimizer, trainloader, valloader, testloader, device, dataset_name, model_name,
-                 loss_type, visualization, probant_id, scenario):
+                 loss_type, visualization, probant_id, scenario, *, study_output=None, study_session_id=None):
         self.root = root
         self.model = model
         self.optimizer = optimizer
@@ -46,9 +46,10 @@ class UI(StudyControls):
         self.probant_id = probant_id
         self.scenario = scenario
 
-        self.probant_scenario_dir = f'user_study_logs/{probant_id}_{scenario}'
-        if not os.path.exists(self.probant_scenario_dir):
-            os.makedirs(self.probant_scenario_dir)
+        self.study_session_id = study_session_id
+        self.probant_scenario_dir = study_output or f'user_study_logs/{probant_id}_{scenario}'
+        os.makedirs(self.probant_scenario_dir, exist_ok=True)
+        self.report_dir = os.path.join(study_output, 'reports') if study_output else f'reports/{dataset_name}'
 
         self.point_tracker = PointTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
         self.all_datapoints_tracker = AllDataPointsTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
@@ -56,7 +57,8 @@ class UI(StudyControls):
         self.llm_tracker = LLMTracker(self.probant_id, self.scenario, self.probant_scenario_dir)
         # Structured, timestamped log of everything - enough to rebuild the
         # session (tools/reconstruct_session.py) and to time each space.
-        self.events = SessionRecorder(self.probant_id, self.scenario, self.probant_scenario_dir)
+        self.events = SessionRecorder(self.probant_id, self.scenario, self.probant_scenario_dir,
+                                      session_id=study_session_id)
         self.events.log('SESSION_CONFIG', dataset=dataset_name, model=model_name, loss=loss_type,
                         visualization=visualization, device=str(device),
                         llm_model=os.environ.get('OPENROUTER_MODEL'))
@@ -112,14 +114,18 @@ class UI(StudyControls):
         from ui.study_bridge import StudyBridge
         self.study_bridge = StudyBridge(self)
 
+    def maximize_window(self):
+        try:
+            self.root.state('zoomed')
+        except tk.TclError:
+            self.root.geometry("1440x900")
+
     def create_ui(self):
         apply_theme(self.root)
         self.root.title("HITL-ML — Human-in-the-Loop Training")
         self.root.minsize(1100, 700)
-        try:
-            self.root.state('zoomed')  # start maximized where supported (Windows/some Linux WMs)
-        except tk.TclError:
-            self.root.geometry("1440x900")
+        if not self.study_session_id:
+            self.maximize_window()
 
         padding_value = ui_theme.PAD_M
 
@@ -338,7 +344,7 @@ class UI(StudyControls):
     def run_training(self):
         train_model(self.model, self.optimizer, self.trainloader, self.valloader,
                     self.testloader, self.device, self.epoch_var.get(), self.freq_var.get(), self.alpha_var,
-                    f"reports/{self.dataset_name}",
+                    self.report_dir,
                     log_callback=self.update_log,
                     pause_event=self.pause_event,
                     stop_training=self.stop_training,
@@ -506,7 +512,10 @@ class UI(StudyControls):
 
     def on_tab_change(self, event):
         selected_tab = self.notebook.index(self.notebook.select())
-        self.current_plot_type = ['scatter', 'radar', 'parallel'][selected_tab]
+        plot_type = ['scatter', 'radar', 'parallel'][selected_tab]
+        if self.study_session_id and self.plot is not None and self.current_plot_type == plot_type:
+            return  # The survey can prepare the first tab while the window is hidden.
+        self.current_plot_type = plot_type
         self.events.log('TAB_CHANGED', plot_type=self.current_plot_type)
         self.update_visualization()
 

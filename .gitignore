@@ -228,5 +228,6 @@ user_study_logs/
 
 # Local participant survey data and screen/audio recordings
 study/results/
+/full_study_results/
 
 study/web/tutorial_cursor_voice.mp4

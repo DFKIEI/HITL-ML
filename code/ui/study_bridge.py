@@ -13,13 +13,14 @@ class StudyBridge:
         self.busy = False
         self.sequence = 0
         self.managed_sequence = None
+        self.scenario = None
         self.completion_sent = threading.Event()
         self.status = {'state': 'ready'}
         self.url = os.environ.get('HITL_SURVEY_URL', 'http://127.0.0.1:8765').rstrip('/')
         self.focused = None
         ui.root.bind('<FocusIn>', lambda e: ui.root.after_idle(self.log_focus), add='+')
         ui.root.bind('<FocusOut>', lambda e: ui.root.after_idle(self.log_focus), add='+')
-        ui.root.after(1000, self.poll)
+        ui.root.after(250 if ui.study_session_id else 1000, self.poll)
 
     def log_focus(self):
         if self.ui.events.closed:
@@ -44,26 +45,29 @@ class StudyBridge:
         if (command and command.get('sequence', 0) > self.sequence
                 and self.managed_sequence in (None, command['sequence'])):
             self.sequence = command['sequence']
-            ui.root.deiconify()
-            ui.root.lift()
-            ui.root.attributes('-topmost', True)
-            ui.root.after(250, lambda: ui.root.attributes('-topmost', False))
-            ui.root.focus_force()
             if not ui.study_mode_var.get():
                 ui.study_mode_var.set(True)
                 ui.toggle_study_mode()
             ui.events.log('SURVEY_TOOL_HANDOFF', **command)
             ui.begin_study_task()
-        if not self.busy:
+            ui.root.deiconify()
+            ui.maximize_window()
+            ui.root.lift()
+            ui.root.attributes('-topmost', True)
+            ui.root.after(250, lambda: ui.root.attributes('-topmost', False))
+            ui.root.focus_force()
+        if self.managed_sequence is not None and not self.busy:
             self.busy = True
-            payload = dict(study_id=str(ui.probant_id), acknowledged=self.sequence, **self.status)
+            payload = dict(study_id=str(ui.probant_id), session_id=ui.study_session_id,
+                           scenario=self.scenario, sequence=self.managed_sequence,
+                           acknowledged=self.sequence, **self.status)
             def worker():
                 try:
                     request = Request(self.url+'/api/tool', data=json.dumps(payload).encode(),
                                       headers={'Content-Type': 'application/json'})
                     with urlopen(request, timeout=1) as response:
                         result = json.load(response)
-                    if self.managed_sequence is not None and payload['state'] == 'complete':
+                    if payload['state'] == 'complete' and result.get('accepted'):
                         self.completion_sent.set()
                     if result.get('command'):
                         self.results.put(result['command'])
@@ -72,4 +76,4 @@ class StudyBridge:
                 finally:
                     self.busy = False
             threading.Thread(target=worker, daemon=True).start()
-        ui.root.after(1000, self.poll)
+        ui.root.after(250 if self.managed_sequence is not None else 1000, self.poll)

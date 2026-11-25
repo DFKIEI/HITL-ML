@@ -12,13 +12,13 @@ python study/server.py
 
 Open **http://127.0.0.1:8765** in Chrome or Edge. No account, public hosting or internet connection is needed to answer the survey. Keep the server running until responses and recordings have finished saving.
 
-Enter the Study ID in the survey. Automatic tool launches reuse it. New sessions save under `study/results/<Study ID>-<UTC timestamp>/`. The response JSON shares the folder name. Each video filename starts with the Study ID and its own UTC timestamp. The server adds a number if a name is already taken. Keep the `.sessions` index with the results if moving the directory. The file includes the Study ID, timestamps, event history and SHA-256 hash of the survey definition (`survey_sha256`). In response format version 3, `answers` groups readable fields under `participant`, `scenario_a`, and `scenario_b`, with `scenario_order` and `experimenter_notes` alongside them. Workload scores use the original 1-20 scale, including performance from Perfect to Failure. Tool rating scores use the original 0-100 scale. Each scenario includes a separate S-TIAS page after NASA-TLX. The export stores the three 1-7 responses and their mean once all three are answered. Version 2 exports also contained `answers_by_qid`. Older exports stored question IDs directly in `answers`. Browser local storage is a recovery copy; successful server saving is shown at the top. The optional backup button on the final screen downloads both the recording and a JSON copy of the responses. Opening or reloading the survey starts a fresh session. After you interact with the page, Chrome asks for confirmation before reloading or leaving it. Use **New participant** after saving the recording to start a fresh session directly.
+Enter the Study ID in the survey. The survey locks this ID when recording starts and passes it to both tool sessions. New sessions save under `full_study_results/<Study ID>-<UTC timestamp>/`. The response JSON shares the folder name. Each video filename starts with the Study ID and its own UTC timestamp. The server adds a number if a name is already taken. Keep the `.sessions` index with the results if moving the directory. Each session folder contains a `session.json` manifest with the shared Study ID and session UUID. The response file includes the Study ID, session UUID, timestamps, event history and SHA-256 hash of the survey definition (`survey_sha256`). In response format version 3, `answers` groups readable fields under `participant`, `scenario_a`, and `scenario_b`, with `scenario_order` and `experimenter_notes` alongside them. Workload scores use the original 1-20 scale, including performance from Perfect to Failure. Tool rating scores use the original 0-100 scale. Each scenario includes a separate S-TIAS page after NASA-TLX. The export stores the three 1-7 responses and their mean once all three are answered. Version 2 exports also contained `answers_by_qid`. Older exports stored question IDs directly in `answers`. Browser local storage is a recovery copy; successful server saving is shown at the top. The optional backup button on the final screen downloads both the recording and a JSON copy of the responses. Opening or reloading the survey starts a fresh session. After you interact with the page, Chrome asks for confirmation before reloading or leaving it. Use **New participant** after saving the recording to start a fresh session directly.
 
 The survey launches **A_Pamap** with the PAMAP2 epoch-25 checkpoint and **B_Cifar** with the CIFAR10 epoch-25 checkpoint. Workload sliders require an explicit selection rather than silently treating the initial position as an answer.
 
 ## Desktop study task
 
-1. Run the survey server using the Python environment with the tool dependencies. Continue to **Please switch to the tool** to launch a fresh tool session with the Study ID, dataset, and epoch-25 checkpoint already set.
+1. Run the survey server using the Python environment with the tool dependencies. Continue to **Please wait while we open the tool** to launch a fresh tool session with the Study ID, dataset, and epoch-25 checkpoint already set.
 2. For manual setup, run `python code/main.py`. The **Dataset** dropdown offers **A_Pamap** and **B_Cifar** and sets the scenario label automatically. Choose a pretrained model in setup, or use **Study & checkpoints → Load pretrained checkpoint** in the left sidebar.
 3. Select the study strategy. For editable LLM suggestions, choose the strategy that allows human edits.
 4. Enable **Study mode (participant session)**. Experiment logging and the elapsed timer start immediately; there is no separate Begin step.
@@ -47,7 +47,7 @@ Structured session events include:
 | `TRAINING_TARGET_BUILT` | Actual centres/spreads used by the loss, source suggestions, strategy, epoch and alpha |
 | `STUDY_TASK_STARTED`, `STUDY_INTERACTION`, `STUDY_TASK_COMPLETED` | Session start, interaction count, and timing |
 
-Desktop logs live under `user_study_logs/<ID>_<scenario>/`. Keep that folder together with the corresponding survey response/recordings. The participant ID is the join key; the survey UUID distinguishes browser sessions. No participant results are committed to Git.
+Survey-launched desktop logs, latent-space snapshots, dictation audio, training reports, and new checkpoints live under `tool/<scenario>/attempt-<number>/` inside that same results folder. Each attempt has a `process.log` for startup and runtime output. The structured desktop logs use the same Study ID and session UUID as the survey response and recording manifest. If the tool needs a retry, it creates another attempt folder. Standalone desktop sessions still write under `user_study_logs/<ID>_<scenario>/`.
 
 ## Checkpoints every five epochs
 
@@ -94,7 +94,7 @@ Tests cover interpretation validation, text-plus-movement audit records, unrestr
 
 ### Survey/tool handoff and participant layout
 
-Run the survey server in the desktop tool's Python environment. At each “Please switch to the tool” page the server launches the scenario-specific dataset and epoch-25 checkpoint, then the tool enters Study mode. Study mode hides the left settings
+Run the survey server in the desktop tool's Python environment and choose the entire screen when recording so the recording includes the survey and both tool windows. Selecting the scenario order starts loading the first dataset, epoch-25 checkpoint, and plot in a hidden tool window. At “Please wait while we open the tool,” the survey waits for the prepared window, then counts down for three seconds before it opens in Study mode. After **Return to survey** finishes saving and closes the first tool, the second loads in the background while the participant answers the first questionnaire. Study mode hides the left settings
 sidebar and shows elapsed time, interaction count, Start/Pause/Resume Training,
 Stop Training, and Return to survey above the plot. It has no interaction/time
 lockout and does not require a separate Begin action or a pretrained model.
@@ -143,7 +143,7 @@ second on the RTX A6000, since utilization alone does not measure throughput.
 ### Participant logging starts with Study mode
 
 Each time Study mode is enabled, the tool creates a new
-`user_study_logs/<participant>_<scenario>/experiment_<id>.jsonl`.
+`experiment_<id>.jsonl` in that attempt’s tool folder (or in the standalone desktop log directory).
 It starts with `EXPERIMENT_STARTED`, model/checkpoint/strategy information,
 current suggestions, and a saved snapshot of the starting layout. Text edits,
 movement edits, Apply actions, training, and handoffs are recorded while Study
