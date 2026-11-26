@@ -1,11 +1,14 @@
+How did you like the user interface?
+
+Could you clearly see the class colors?
+
+Did you understand the process and benefit of Latent Space optimization?
+
 Did you feel you were steering the suggestions? 
 
 Were there moments when you felt less in control? Why, Why not?
  
-What made AI suggestions seem credible or questionable?
+Did you understand why the AI selected the specific classes?
 
-Could you clearly see the class colors?
+Did you feel the amount of reveiws phases was too much? Too many suggestions at once? Exhausted?
 
-How did you like th euser interface?
-
-Did you understand the process and benefit of Latent Space optimization?
