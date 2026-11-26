@@ -70,6 +70,8 @@ For a screen-only recording, clear **Include microphone audio**. Confirm partici
 
 Recording continues while the participant works in the desktop app. Data is saved in ordered chunks to the participant session folder on the local server. Choose **Stop and save recording**, wait for the saved message, and retain the backup download if saving fails. Do not close the browser/server before that message. Browser memory also retains a backup until the recording is stopped; keep sessions reasonably short.
 
+The server uses FFmpeg to write a seekable MP4 after recording stops. Install the study requirements in the Python environment running the server to get the bundled FFmpeg, or make FFmpeg available on `PATH`. The recorder uses WebM if FFmpeg or the required browser encoder is unavailable. When MP4 finalization succeeds, the backup download uses the same indexed file. If saving fails, retain the browser backup, which may need to be remuxed.
+
 The automated test verifies ordered recording-chunk storage, not the browser permission dialog or actual screen capture. Perform a short practice recording on the study machine before recruiting participants. macOS/Windows screen and microphone permissions must be granted to the browser.
 
 ## Spoken tutorial

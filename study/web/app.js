@@ -117,7 +117,7 @@ function toolHandoff(){
   }catch{}
  },500);
 }
-let schema,surveySha256,state,page=0,pages=[],saveTimer,saveQueue=Promise.resolve(),recorder,recordStreams=[],recordChunks=[],uploadQueue=Promise.resolve(),recordId,part=0,recordingSession;
+let schema,surveySha256,state,page=0,pages=[],saveTimer,saveQueue=Promise.resolve(),recorder,recordStreams=[],recordChunks=[],uploadQueue=Promise.resolve(),recordId,part=0,recordingSession,canFinalizeMp4=false;
 function element(tag,text,attrs={}){const e=document.createElement(tag);if(text!==null)e.textContent=text;Object.assign(e,attrs);return e;}
 function fieldKey(q,row){return row?`${q.id}:${row}`:q.id;}
 function makePages(){
@@ -297,19 +297,63 @@ $('recordStart').onclick=async()=>{if(!$('consent').checked){$('recordStatus').t
  }
  stage='recorder';
  const combined=new MediaStream(recordStreams.flatMap(stream=>stream.getTracks()));
- const recordingFormats=includeMicrophone
-  ? ['video/mp4;codecs=avc1,mp4a.40.2','video/webm;codecs=vp8,opus','video/webm']
-  : ['video/mp4','video/webm;codecs=vp8','video/webm'];
+ const recordingFormats=[
+  ...(canFinalizeMp4?[includeMicrophone?'video/mp4;codecs=avc1,mp4a.40.2':'video/mp4']:[]),
+  includeMicrophone?'video/webm;codecs=vp8,opus':'video/webm;codecs=vp8','video/webm',
+ ];
  const mime=recordingFormats.find(format=>MediaRecorder.isTypeSupported(format));
- if(!mime&&includeMicrophone)throw Error('This browser cannot record MP4 with AAC or WebM with microphone audio.');
- recorder=new MediaRecorder(combined,mime?{mimeType:mime}:{});
+ if(!mime)throw Error('This browser cannot record in a format supported by the local survey server.');
+ recorder=new MediaRecorder(combined,{mimeType:mime});
  recordId=crypto.randomUUID();recordingSession=state.session_id;part=0;recordChunks=[];uploadQueue=Promise.resolve();let uploadFailed=false,savedFilename;
  recorder.ondataavailable=e=>{if(!e.data.size)return;recordChunks.push(e.data);const currentPart=part++;uploadQueue=uploadQueue.then(async()=>{const query=new URLSearchParams({session:recordingSession,recording:recordId,study_id:studyId,part:currentPart,mime:recorder.mimeType});const r=await fetch('/api/recordings?'+query,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:e.data});if(!r.ok)throw Error('Recording upload failed');savedFilename=(await r.json()).filename;}).catch(()=>{uploadFailed=true;$('recordStatus').textContent='Local recording save failed. Stop and download the backup before closing.';});};
  recorder.onstart=()=>{
   state.events.push({type:'recording_started',recording_id:recordId,time:new Date().toISOString()});
   saveNow().catch(()=>{});
  };
- recorder.onstop=async()=>{const stoppedAt=new Date().toISOString();updateBeginAvailability();for(const stream of recordStreams)stream.getTracks().forEach(t=>t.stop());await uploadQueue;const blob=new Blob(recordChunks,{type:recorder.mimeType});const backup=$('downloadRecording');backup.href=URL.createObjectURL(blob);backup.download=savedFilename||`${studyId}-${recordId.slice(0,8)}.${recorder.mimeType.includes('mp4')?'mp4':'webm'}`;backup.hidden=false;$('downloadBackup').hidden=false;$('recordStatus').textContent=uploadFailed?'Save failed: download the recording backup.':'Recording saved locally. A backup download is also available.';start.disabled=false;microphone.disabled=false;$('studyId').disabled=Boolean(state.study_id);$('recordStop').disabled=true;$('recording').classList.remove('recording');setRecordingControls(false);state.recordings.push({id:recordId,mime:recorder.mimeType,microphone:includeMicrophone,parts:part,save_failed:uploadFailed,stopped_at:stoppedAt});saveNow().catch(()=>{});};
+ recorder.onstop=async()=>{
+  const stoppedAt=new Date().toISOString();
+  updateBeginAvailability();
+  for(const stream of recordStreams)stream.getTracks().forEach(t=>t.stop());
+  await uploadQueue;
+  const mp4=recorder.mimeType.split(';')[0]==='video/mp4';
+  const identity={session:recordingSession,recording:recordId};
+  let finalized=false;
+  if(!uploadFailed&&mp4&&part){
+   status.textContent='Finalizing the MP4 timeline…';
+   try{
+    const response=await fetch('/api/recordings/finalize',{
+     method:'POST',headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({...identity,study_id:studyId,parts:part}),
+    });
+    if(!response.ok)throw Error('MP4 finalization failed');
+    savedFilename=(await response.json()).filename;
+    finalized=true;
+   }catch{
+    uploadFailed=true;
+   }
+  }
+  if(!part)uploadFailed=true;
+  const backup=$('downloadRecording');
+  backup.href=finalized
+   ? '/api/recordings/download?'+new URLSearchParams(identity)
+   : URL.createObjectURL(new Blob(recordChunks,{type:recorder.mimeType}));
+  recordChunks=[];
+  backup.download=mp4&&!finalized
+   ? `${studyId}-${recordId.slice(0,8)}-unfinalized.mp4`
+   : savedFilename||`${studyId}-${recordId.slice(0,8)}.webm`;
+  backup.hidden=!part;
+  $('downloadBackup').hidden=!part;
+  status.textContent=!part?'No recording data was captured. Start a new recording.'
+   : uploadFailed?'Save failed: download the recording backup.':'Recording saved locally. A backup download is also available.';
+  start.disabled=false;
+  microphone.disabled=false;
+  $('studyId').disabled=Boolean(state.study_id);
+  $('recordStop').disabled=true;
+  $('recording').classList.remove('recording');
+  setRecordingControls(false);
+  state.recordings.push({id:recordId,mime:recorder.mimeType,microphone:includeMicrophone,parts:part,save_failed:uploadFailed,stopped_at:stoppedAt});
+  saveNow().catch(()=>{});
+ };
  screen.getVideoTracks()[0].onended=()=>{if(recorder.state==='recording'){recorder.stop();updateBeginAvailability();}};recorder.start(2000);state.study_id=studyId;updateBeginAvailability();$('recordStart').disabled=true;$('recordStop').disabled=false;status.textContent=includeMicrophone?'Recording screen and microphone.':'Recording screen only.';$('recording').classList.add('recording');setRecordingControls($('finished').hidden);
  }catch(e){
   recordStreams.forEach(stream=>stream.getTracks().forEach(track=>track.stop()));
@@ -342,12 +386,16 @@ window.addEventListener('beforeunload',e=>{
  e.returnValue='';
 });
 (async()=>{
+ const capabilities=fetch('/api/recordings/capabilities')
+  .then(response=>response.ok?response.json():{})
+  .catch(()=>({}));
  const response=await fetch('survey.json', {cache:'no-cache'});
  if(!response.ok)throw Error(`Survey definition returned HTTP ${response.status}`);
  const bytes=await response.arrayBuffer();
  schema=JSON.parse(new TextDecoder().decode(bytes));
  const hash=await crypto.subtle.digest('SHA-256',bytes);
  surveySha256=Array.from(new Uint8Array(hash),byte=>byte.toString(16).padStart(2,'0')).join('');
+ canFinalizeMp4=(await capabilities).mp4===true;
  state={session_id:crypto.randomUUID(),study_id:'',answers:{},events:[],recordings:[],started_at:new Date().toISOString()};
  updateBeginAvailability();
  if($('tutorialVideo').error)showTutorialError();

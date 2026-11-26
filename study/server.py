@@ -1,5 +1,6 @@
 """Local survey and recording storage. Run: python study/server.py"""
 import argparse,json,os,re,subprocess,sys,threading
+from shutil import copyfileobj,which
 from itertools import count
 from datetime import datetime,timezone
 from http.server import SimpleHTTPRequestHandler,ThreadingHTTPServer
@@ -26,7 +27,7 @@ def timestamp():
 def available_path(path):
     candidate=path
     number=2
-    while candidate.exists():
+    while candidate.exists() or (candidate.suffix=='.mp4' and candidate.with_suffix('.mp4.part').exists()):
         candidate=path.with_name(f'{path.stem}-{number}{path.suffix}')
         number+=1
     return candidate
@@ -56,6 +57,28 @@ def session_folder(output,sid,study_id):
         manifest.write_text(json.dumps({'study_id':study_id,'session_id':sid},indent=2),encoding='utf-8')
     return folder
 
+def find_ffmpeg():
+    executable=which('ffmpeg')
+    if executable:
+        return executable
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+        return get_ffmpeg_exe()
+    except (ImportError,RuntimeError):
+        return None
+
+def finalize_mp4(source,destination,ffmpeg):
+    temporary=destination.with_suffix('.finalizing.mp4')
+    try:
+        subprocess.run(
+            [ffmpeg,'-nostdin','-hide_banner','-loglevel','error','-y','-i',str(source),
+             '-map','0:v:0','-map','0:a:0?','-c','copy','-movflags','+faststart',str(temporary)],
+            check=True,capture_output=True,
+        )
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(ROOT/'web'),**kwargs)
     def log_message(self,format,*args):pass
@@ -65,6 +88,30 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('Cache-Control','no-store');self.end_headers();self.wfile.write(data)
     def do_GET(self):
         parsed=urlparse(self.path)
+        if parsed.path=='/api/recordings/capabilities':
+            return self.reply(200,{'mp4':bool(self.server.ffmpeg)})
+        if parsed.path=='/api/recordings/download':
+            try:
+                query=parse_qs(parsed.query)
+                sid=identifier(query['session'][0]);rid=identifier(query['recording'][0])
+                folder=self.server.output/sid
+                if not folder.is_dir():
+                    folder=self.server.output/(self.server.output/'.sessions'/sid).read_text()
+                meta=json.loads((folder/(rid+'.json')).read_text())
+                if meta['mime']!='video/mp4':
+                    raise ValueError('Not an MP4 recording')
+                recording=(folder/meta['filename']).open('rb')
+            except (OSError,ValueError,KeyError,TypeError):
+                return self.reply(404,{'error':'Finalized recording not found'})
+            with recording:
+                self.send_response(200)
+                self.send_header('Content-Type','video/mp4')
+                self.send_header('Content-Length',str(os.fstat(recording.fileno()).st_size))
+                self.send_header('Content-Disposition',f'attachment; filename="{meta["filename"]}"')
+                self.send_header('Cache-Control','no-store')
+                self.end_headers()
+                copyfileobj(recording,self.wfile)
+            return
         if parsed.path=='/api/tool':
             query=parse_qs(parsed.query)
             with LOCK:
@@ -190,6 +237,32 @@ class Handler(SimpleHTTPRequestHandler):
                     response=folder/('response.json' if folder.name==sid else f'{folder.name}.json')
                     temp=folder/'response.tmp';temp.write_text(json.dumps(payload,indent=2,ensure_ascii=False),encoding='utf-8');temp.replace(response)
                 return self.reply(200,{'saved':True,'session_id':sid})
+            if parsed.path=='/api/recordings/finalize':
+                origin=self.headers.get('Origin')
+                if origin and origin != 'http://'+self.headers.get('Host',''):
+                    return self.reply(403,{'error':'Local survey origin required'})
+                payload=json.loads(body)
+                sid=identifier(payload['session']);rid=identifier(payload['recording'])
+                with LOCK:
+                    folder=session_folder(self.server.output,sid,payload['study_id'])
+                    manifest=folder/(rid+'.json')
+                    if not manifest.is_file():
+                        raise ValueError('Recording not found')
+                    meta=json.loads(manifest.read_text())
+                    if meta['mime']!='video/mp4' or meta['parts']!=payload['parts'] or not meta['parts']:
+                        raise ValueError('MP4 upload is incomplete')
+                    video=folder/meta['filename']
+                    if not video.is_file():
+                        if not self.server.ffmpeg:
+                            return self.reply(503,{'error':'FFmpeg is unavailable for MP4 finalization'})
+                        staged=video.with_suffix('.mp4.part')
+                        try:
+                            finalize_mp4(staged,video,self.server.ffmpeg)
+                        except (OSError,subprocess.CalledProcessError) as exc:
+                            print(f'MP4 finalization failed for {video.name}: {getattr(exc,"stderr",None) or exc}',file=sys.stderr,flush=True)
+                            return self.reply(500,{'error':'Could not make the MP4 seekable'})
+                        staged.unlink(missing_ok=True)
+                return self.reply(200,{'saved':True,'filename':video.name})
             if parsed.path=='/api/recordings':
                 q=parse_qs(parsed.query);sid=identifier(q['session'][0]);rid=identifier(q['recording'][0]);part=int(q['part'][0])
                 study_id=validate_study_id(q.get('study_id',[''])[0])
@@ -200,13 +273,17 @@ class Handler(SimpleHTTPRequestHandler):
                     manifest=folder/(rid+'.json')
                     meta=json.loads(manifest.read_text()) if manifest.exists() else {'parts':0,'mime':mime,'created_at_utc':datetime.now(timezone.utc).isoformat()}
                     meta.update(study_id=study_id,session_id=sid)
-                    if part!=meta['parts']:raise ValueError('Recording part out of order')
+                    if part!=meta['parts'] or mime!=meta['mime']:raise ValueError('Recording part out of order or format changed')
                     extension='webm' if mime=='video/webm' else 'mp4'
                     if not manifest.exists():
                         video=available_path(folder/f'{study_label(study_id)}-{timestamp()}.{extension}')
                         meta['filename']=video.name
                     filename=meta.get('filename',f'{rid}.{extension}')
-                    with (folder/filename).open('ab') as f:f.write(body)
+                    video=folder/filename
+                    if mime=='video/mp4':
+                        if video.exists():raise ValueError('Recording is already finalized')
+                        video=video.with_suffix('.mp4.part')
+                    with video.open('ab') as f:f.write(body)
                     meta['parts']+=1;manifest.write_text(json.dumps(meta,indent=2))
                 return self.reply(200,{'saved':True,'part':part,'filename':filename})
             self.reply(404,{'error':'Unknown endpoint'})
@@ -218,6 +295,7 @@ if __name__=='__main__':
     args.output.mkdir(parents=True,exist_ok=True)
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler);server.output=args.output.resolve()
     server.tool_sessions={};server.tool_sequences=count(1)
+    server.ffmpeg=find_ffmpeg()
     print(f'Local survey: http://127.0.0.1:{args.port}\nResponses and recordings: {server.output}',flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:

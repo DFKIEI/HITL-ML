@@ -6,3 +6,4 @@ torchvision
 scikit-learn
 six
 requests
+imageio-ffmpeg
