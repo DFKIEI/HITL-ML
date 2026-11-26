@@ -1,0 +1,25 @@
+WEBVTT
+
+1
+00:00:00.000 --> 00:00:15.000
+1. Get suggestions: This is the experiment view. The plot shows the latent space, and the sidebar holds the language model's suggestions. Click Get Suggestions. Each suggestion is previewed on the plot with dashed arrows and circles.
+
+2
+00:00:15.000 --> 00:00:28.000
+2. Move arrows and circles: Adjust a suggestion by dragging an arrow tip, to change its direction and distance. Or drag a circle edge, to change how tight a class is.
+
+3
+00:00:28.000 --> 00:00:40.000
+3. Edit the text: Or edit the suggested text. Type your own words, then click Update plot from instruction. The arrows and circles update to match.
+
+4
+00:00:40.000 --> 00:00:56.000
+4. Review every suggestion: Review all five suggestions. Accept applies one to the plot, and Reject discards it. You can tweak a suggestion before accepting it.
+
+5
+00:00:56.000 --> 00:01:13.000
+5. Add your own: Then add your own. Click Add my own, choose two classes, describe the change, update the plot, and accept.
+
+6
+00:01:13.000 --> 00:01:22.000
+6. Continue training: When you are done reviewing, click Continue Training. The model then trains with your changes.
