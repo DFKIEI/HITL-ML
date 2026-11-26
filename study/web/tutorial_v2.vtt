@@ -1,25 +1,37 @@
 WEBVTT
 
 1
-00:00:00.000 --> 00:00:15.000
-1. Get suggestions: This is the experiment view. The plot shows the latent space, and the sidebar holds the language model's suggestions. Click Get Suggestions. Each suggestion is previewed on the plot with dashed arrows and circles.
+00:00:00.000 --> 00:00:22.000
+About this tool: Welcome. This tool lets you steer how a neural network learns. The plot shows how the model groups its data, with one colour for each class. A language model suggests changes to the plot, such as moving one class away from another. You decide which suggestions to apply, then the model trains with your decisions.
 
 2
-00:00:15.000 --> 00:00:28.000
-2. Move arrows and circles: Adjust a suggestion by dragging an arrow tip, to change its direction and distance. Or drag a circle edge, to change how tight a class is.
+00:00:22.000 --> 00:00:44.000
+Reading the screen: Two things help you read the screen. The plot legend explains the symbols: a cross is a class center, a dashed arrow is a previewed move, a dashed circle is the target spread, and an outlined dot is a misclassified point. The training log lists test and validation accuracy after each epoch, so you can see whether your changes help.
 
 3
-00:00:28.000 --> 00:00:40.000
-3. Edit the text: Or edit the suggested text. Type your own words, then click Update plot from instruction. The arrows and circles update to match.
+00:00:44.000 --> 00:00:59.000
+1. Get suggestions: Click Get Suggestions. The language model proposes five changes, and each one is previewed on the plot. The Focus box is optional. Use it to tell the model what to concentrate on.
 
 4
-00:00:40.000 --> 00:00:56.000
-4. Review every suggestion: Review all five suggestions. Accept applies one to the plot, and Reject discards it. You can tweak a suggestion before accepting it.
+00:00:59.000 --> 00:01:19.000
+2. Read a suggestion: Each suggestion covers one pair of classes. The Arrow box moves a class, and the Tighten box makes its cluster more compact. Untick a box to leave that part out. Previous and Next switch between suggestions. Highlight suggested classes focuses the plot on them.
 
 5
-00:00:56.000 --> 00:01:13.000
-5. Add your own: Then add your own. Click Add my own, choose two classes, describe the change, update the plot, and accept.
+00:01:19.000 --> 00:01:32.000
+Optional: adjust on the plot: This step is optional. If you want a different move, drag an arrow tip to change its direction and distance, or drag a circle edge to change how tight a class is.
 
 6
-00:01:13.000 --> 00:01:22.000
-6. Continue training: When you are done reviewing, click Continue Training. The model then trains with your changes.
+00:01:32.000 --> 00:01:44.000
+Optional: edit the text: Also optional. You can rewrite the suggestion in your own words, then click Update plot from instruction. The arrows and circles update to match.
+
+7
+00:01:44.000 --> 00:02:00.000
+3. Accept or reject: Every suggestion needs a decision. Accept applies it to the plot, and Reject discards it. If you are happy with a suggestion as it is, you can accept it straight away, without adjusting anything.
+
+8
+00:02:00.000 --> 00:02:17.000
+Optional: add your own: You can also add your own idea. Click Add my own, choose two classes, describe the change, update the plot, and accept. Click Skip if you have nothing to add.
+
+9
+00:02:17.000 --> 00:02:28.000
+4. Continue training: When every suggestion is decided, click Continue Training. The model trains with your changes, and the training log shows the new accuracy.

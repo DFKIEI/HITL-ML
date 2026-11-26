@@ -29,12 +29,15 @@ from ui.ui_display import llm_overlay_press,llm_overlay_motion,llm_overlay_relea
 
 # (title, spoken text, on-screen caption)
 SCENES=[
-('1. Get suggestions','This is the experiment view. The plot shows the latent space, and the sidebar holds the language model\'s suggestions. Click Get Suggestions. Each suggestion is previewed on the plot with dashed arrows and circles.','Get Suggestions: each one is previewed with arrows and circles.',14),
-('2. Move arrows and circles','Adjust a suggestion by dragging an arrow tip, to change its direction and distance. Or drag a circle edge, to change how tight a class is.','Arrow tip: direction and distance. Circle edge: tightness.',13),
-('3. Edit the text','Or edit the suggested text. Type your own words, then click Update plot from instruction. The arrows and circles update to match.','Edit the text, then Update plot from instruction.',12),
-('4. Review every suggestion','Review all five suggestions. Accept applies one to the plot, and Reject discards it. You can tweak a suggestion before accepting it.','Accept applies a suggestion. Reject discards it.',16),
-('5. Add your own','Then add your own. Click Add my own, choose two classes, describe the change, update the plot, and accept.','Add my own: pick two classes, write the change, accept.',17),
-('6. Continue training','When you are done reviewing, click Continue Training. The model then trains with your changes.','Continue Training starts training with your changes.',9),
+('About this tool','Welcome. This tool lets you steer how a neural network learns. The plot shows how the model groups its data, with one colour for each class. A language model suggests changes to the plot, such as moving one class away from another. You decide which suggestions to apply, then the model trains with your decisions.','You steer the model: review AI suggestions, then train.',19),
+('Reading the screen','Two things help you read the screen. The plot legend explains the symbols: a cross is a class center, a dashed arrow is a previewed move, a dashed circle is the target spread, and an outlined dot is a misclassified point. The training log lists test and validation accuracy after each epoch, so you can see whether your changes help.','Legend: what the symbols mean. Training log: accuracy per epoch.',22),
+('1. Get suggestions','Click Get Suggestions. The language model proposes five changes, and each one is previewed on the plot. The Focus box is optional. Use it to tell the model what to concentrate on.','Get Suggestions. The Focus box is optional.',15),
+('2. Read a suggestion','Each suggestion covers one pair of classes. The Arrow box moves a class, and the Tighten box makes its cluster more compact. Untick a box to leave that part out. Previous and Next switch between suggestions. Highlight suggested classes focuses the plot on them.','Arrow: move the class. Tighten: shrink its spread. Untick to skip.',20),
+('Optional: adjust on the plot','This step is optional. If you want a different move, drag an arrow tip to change its direction and distance, or drag a circle edge to change how tight a class is.','Optional. Arrow tip: direction and distance. Circle edge: tightness.',13),
+('Optional: edit the text','Also optional. You can rewrite the suggestion in your own words, then click Update plot from instruction. The arrows and circles update to match.','Optional. Edit the text, then Update plot from instruction.',12),
+('3. Accept or reject','Every suggestion needs a decision. Accept applies it to the plot, and Reject discards it. If you are happy with a suggestion as it is, you can accept it straight away, without adjusting anything.','Accept applies a suggestion. Reject discards it.',16),
+('Optional: add your own','You can also add your own idea. Click Add my own, choose two classes, describe the change, update the plot, and accept. Click Skip if you have nothing to add.','Optional. Add my own: pick two classes, write the change, accept.',17),
+('4. Continue training','When every suggestion is decided, click Continue Training. The model trains with your changes, and the training log shows the new accuracy.','Continue Training starts training with your changes.',11),
 ]
 
 def ffmpeg_exe():
@@ -149,7 +152,6 @@ def main():
         draw=ImageDraw.Draw(canvas)
         if pointer is not None:
             px=(pointer[0]*scale-left)*cw/content.width;py=pointer[1]*scale*ch/content.height
-            if click:draw.ellipse((px-17,py-17,px+17,py+17),fill='#f9cd58',outline='#6b4c00',width=2)
             draw.polygon([(px,py),(px+1,py+29),(px+8,py+22),(px+15,py+35),(px+21,py+32),(px+14,py+20),(px+25,py+19)],fill='white',outline='#17212b',width=2)
         draw.text((24,ch+12),entries[scene]['title'],fill='white',font=bold)
         draw.text((24,ch+52),textwrap.fill(entries[scene]['short'],95),fill='#d6e5e8',font=font)
@@ -213,6 +215,17 @@ def main():
         w=find_widget(panel,has)
         if w is None:raise RuntimeError(f'Button not found: {text}')
         return w
+    def checkbox(text):
+        def has(w):
+            try:return w.cget('text')==text and w.winfo_class()=='TCheckbutton'
+            except tk.TclError:return False
+        w=find_widget(panel,has)
+        if w is None:raise RuntimeError(f'Checkbox not found: {text}')
+        return w
+    def toggle_box(text,hold=.5):
+        w=checkbox(text);pt=widget_point(w);capture(hold,pt);capture(.3,pt,True);w.invoke();root.update();capture(hold,pt)
+    def point_at(widget,hold=1.5):
+        capture(hold,widget_point(widget))
     def click(text,hold=.6):
         b=button(text);pt=widget_point(b);capture(hold,pt);capture(.4,pt,True);b.invoke();root.update()
     def wait_interpretation(s,limit=30):
@@ -234,8 +247,13 @@ def main():
         raise RuntimeError('No cached tutorial interpretation for this text')
     openrouter.chat_completion=fake_completion
 
-    # 1: Get Suggestions, replaying the recorded response through the real button
-    capture(1.)
+    # 0: intro, 1: legend and training log
+    capture(2.);finish_scene()
+    legend=find_widget(panel,lambda w:w.winfo_class()=='TLabel' and w.cget('text')=='Plot legend')
+    point_at(legend,2.5);point_at(panel.training_log,2.5);capture(.5,widget_point(panel.training_log));finish_scene()
+    # 2: Get Suggestions, replaying the recorded response through the real button
+    focus_entry=find_widget(panel.focus_row,lambda w:w.winfo_class()=='TEntry')
+    point_at(focus_entry,1.2)
     orig=panel_module.request_suggestions
     panel_module.request_suggestions=lambda *a,**kw:(summary,suggestions,{},record['raw'])
     b=button('Get Suggestions');capture(.8,widget_point(b));capture(.4,widget_point(b),True);b.invoke()
@@ -244,8 +262,15 @@ def main():
         root.update();time.sleep(.05)
         if time.monotonic()-t0>20:raise RuntimeError('Suggestions response timed out')
     panel_module.request_suggestions=orig
-    root.update();capture(2.);finish_scene()
-    # 2: arrows (direction, distance) and circle (tightness)
+    root.update();capture(1.5);finish_scene()
+    # 3: the Arrow / Tighten boxes, Previous / Next and Highlight
+    toggle_box('Tighten');toggle_box('Tighten')
+    toggle_box('Arrow');toggle_box('Arrow')
+    point_at(panel.prev_button,.8);point_at(panel.skip_button,.8)
+    hl=checkbox('Highlight suggested classes')
+    if 0<widget_point(hl)[1]-(panel.canvas.winfo_rooty()-root.winfo_rooty())<panel.canvas.winfo_height():toggle_box('Highlight suggested classes');toggle_box('Highlight suggested classes')
+    capture(.5);finish_scene()
+    # 4: arrows (direction, distance) and circle (tightness)
     s=app.llm_focus_suggestion
     h=next(h for h in app.llm_handles if h['kind']=='arrow' and h['class']==s.class_i)
     drag_handle('arrow',s.class_i,h['start']+.7*(h['end']-h['start']))
@@ -256,13 +281,13 @@ def main():
     if circles:
         h=circles[0];drag_handle('circle',h['class'],h['center']+np.array([1.4*h['radius'],0.]))
     capture(.6);finish_scene()
-    # 3: edit the text and press "Update plot from instruction"
+    # 5: edit the text and press "Update plot from instruction"
     instruction='Move cat a little away from dog. Tighten only cat.'
     replies[instruction]=CACHED_TEXT_REPLY
     editor=editor_widget();pt=(editor.winfo_rootx()-root.winfo_rootx()+40,editor.winfo_rooty()-root.winfo_rooty()+22)
     type_text(editor,pt,instruction)
     click('Update plot from instruction');wait_interpretation(s);root.update();capture(1.2);finish_scene()
-    # 4: review all five: accept, accept, reject, tweak+accept, reject
+    # 6: review all five: accept, accept, reject, tweak+accept, reject
     click('Accept');capture(.9)
     click('Accept');capture(.9)
     click('Reject');capture(.9)
@@ -271,7 +296,7 @@ def main():
     if h is not None:drag_handle('arrow',s4.class_i,h['start']+.6*(h['end']-h['start']))
     click('Accept');capture(.9)
     click('Reject');capture(1.);finish_scene()
-    # 5: add my own suggestion
+    # 7: add my own suggestion
     click('Add my own',hold=.8)
     def combos():
         out=[]
@@ -293,7 +318,7 @@ def main():
     h=next(h for h in app.llm_handles if h['kind']=='arrow' and h['class']==own.class_i)
     drag_handle('arrow',own.class_i,h['start']+.8*(h['end']-h['start']))
     click('Accept');capture(1.);finish_scene()
-    # 6: Continue Training is shown, not run
+    # 8: Continue Training is shown, not run
     b=button('Continue Training');capture(1.,widget_point(b));capture(2.,widget_point(b));finish_scene()
     if args.verify_ui:
         app.on_close();print('v2 UI walkthrough passed without capture or API calls.');return

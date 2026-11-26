@@ -1,38 +1,56 @@
 [
   {
+    "title": "About this tool",
+    "caption": "Welcome. This tool lets you steer how a neural network learns. The plot shows how the model groups its data, with one colour for each class. A language model suggests changes to the plot, such as moving one class away from another. You decide which suggestions to apply, then the model trains with your decisions.",
+    "short": "You steer the model: review AI suggestions, then train.",
+    "duration": 22
+  },
+  {
+    "title": "Reading the screen",
+    "caption": "Two things help you read the screen. The plot legend explains the symbols: a cross is a class center, a dashed arrow is a previewed move, a dashed circle is the target spread, and an outlined dot is a misclassified point. The training log lists test and validation accuracy after each epoch, so you can see whether your changes help.",
+    "short": "Legend: what the symbols mean. Training log: accuracy per epoch.",
+    "duration": 22
+  },
+  {
     "title": "1. Get suggestions",
-    "caption": "This is the experiment view. The plot shows the latent space, and the sidebar holds the language model's suggestions. Click Get Suggestions. Each suggestion is previewed on the plot with dashed arrows and circles.",
-    "short": "Get Suggestions: each one is previewed with arrows and circles.",
+    "caption": "Click Get Suggestions. The language model proposes five changes, and each one is previewed on the plot. The Focus box is optional. Use it to tell the model what to concentrate on.",
+    "short": "Get Suggestions. The Focus box is optional.",
     "duration": 15
   },
   {
-    "title": "2. Move arrows and circles",
-    "caption": "Adjust a suggestion by dragging an arrow tip, to change its direction and distance. Or drag a circle edge, to change how tight a class is.",
-    "short": "Arrow tip: direction and distance. Circle edge: tightness.",
+    "title": "2. Read a suggestion",
+    "caption": "Each suggestion covers one pair of classes. The Arrow box moves a class, and the Tighten box makes its cluster more compact. Untick a box to leave that part out. Previous and Next switch between suggestions. Highlight suggested classes focuses the plot on them.",
+    "short": "Arrow: move the class. Tighten: shrink its spread. Untick to skip.",
+    "duration": 20
+  },
+  {
+    "title": "Optional: adjust on the plot",
+    "caption": "This step is optional. If you want a different move, drag an arrow tip to change its direction and distance, or drag a circle edge to change how tight a class is.",
+    "short": "Optional. Arrow tip: direction and distance. Circle edge: tightness.",
     "duration": 13
   },
   {
-    "title": "3. Edit the text",
-    "caption": "Or edit the suggested text. Type your own words, then click Update plot from instruction. The arrows and circles update to match.",
-    "short": "Edit the text, then Update plot from instruction.",
+    "title": "Optional: edit the text",
+    "caption": "Also optional. You can rewrite the suggestion in your own words, then click Update plot from instruction. The arrows and circles update to match.",
+    "short": "Optional. Edit the text, then Update plot from instruction.",
     "duration": 12
   },
   {
-    "title": "4. Review every suggestion",
-    "caption": "Review all five suggestions. Accept applies one to the plot, and Reject discards it. You can tweak a suggestion before accepting it.",
+    "title": "3. Accept or reject",
+    "caption": "Every suggestion needs a decision. Accept applies it to the plot, and Reject discards it. If you are happy with a suggestion as it is, you can accept it straight away, without adjusting anything.",
     "short": "Accept applies a suggestion. Reject discards it.",
     "duration": 16
   },
   {
-    "title": "5. Add your own",
-    "caption": "Then add your own. Click Add my own, choose two classes, describe the change, update the plot, and accept.",
-    "short": "Add my own: pick two classes, write the change, accept.",
+    "title": "Optional: add your own",
+    "caption": "You can also add your own idea. Click Add my own, choose two classes, describe the change, update the plot, and accept. Click Skip if you have nothing to add.",
+    "short": "Optional. Add my own: pick two classes, write the change, accept.",
     "duration": 17
   },
   {
-    "title": "6. Continue training",
-    "caption": "When you are done reviewing, click Continue Training. The model then trains with your changes.",
+    "title": "4. Continue training",
+    "caption": "When every suggestion is decided, click Continue Training. The model trains with your changes, and the training log shows the new accuracy.",
     "short": "Continue Training starts training with your changes.",
-    "duration": 9
+    "duration": 11
   }
 ]
