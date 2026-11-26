@@ -35,7 +35,7 @@ def create_training_controls(self):
     loss_section = _section(self.control_panel, "Loss & Strategy")
 
     _field_label(loss_section, "Alpha (interaction loss weight)")
-    self.alpha_var = tk.DoubleVar(value=0.5)
+    self.alpha_var = tk.DoubleVar(value=0.40)
     self.alpha_entry = ttk.Entry(loss_section, textvariable=self.alpha_var)
     self.alpha_entry.pack(fill=tk.X, pady=(0, ui_theme.PAD_S))
 

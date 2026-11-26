@@ -3,11 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class CNN_PAMAP2(nn.Module):
-    def __init__(self, in_size, num_classes, **kwargs):
+    def __init__(self, in_size, num_classes, *, dropout=0.1, **kwargs):
         super(CNN_PAMAP2, self).__init__()
         hidden = 32, 64, 128, 1024
         kernel1, kernel2, kernel3 = 24, 16, 8
-        dropout = 0.1
         self.conv1 = nn.Conv1d(in_size, hidden[0], kernel_size=kernel1)
         self.dropout1 = nn.Dropout(dropout)
         self.conv2 = nn.Conv1d(hidden[0], hidden[1], kernel_size=kernel2)
@@ -317,9 +316,9 @@ class CNN_CIFAR100(nn.Module):
         return output.argmax(dim=-1)
 
 
-def get_model(model_name, input_shape, num_classes):
+def get_model(model_name, input_shape, num_classes, *, pamap2_dropout=0.1):
     if model_name == 'CNN_PAMAP2':
-        return CNN_PAMAP2(input_shape[0], num_classes)
+        return CNN_PAMAP2(input_shape[0], num_classes, dropout=pamap2_dropout)
     elif model_name == 'CNN_MNIST':
         return CNN_MNIST(input_shape[0], num_classes)
     if model_name == 'CNN_CIFAR10':

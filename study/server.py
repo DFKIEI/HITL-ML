@@ -86,9 +86,9 @@ class Handler(SimpleHTTPRequestHandler):
     def launch_tool(self,study_id,sid,scenario,sequence,session_directory):
         scenario_name,dataset=STUDY_SCENARIOS[scenario]
         project=ROOT.parent
-        checkpoint=project/'saved_checkpoints'/dataset/'checkpoint_epoch_25.pt'
-        if not checkpoint.is_file():
-            raise ValueError(f'Missing epoch-25 checkpoint for {dataset}.')
+        checkpoint=project/'saved_checkpoints'/'user_study'/dataset/'checkpoint_epoch_25.pt'
+        if not checkpoint.is_file() or not checkpoint.with_suffix('.json').is_file():
+            raise ValueError(f'Missing user-study checkpoint or manifest for {dataset}.')
         folder=session_directory/'tool'/scenario_name
         folder.mkdir(parents=True,exist_ok=True)
         attempt=available_path(folder/f'attempt-{sequence}')

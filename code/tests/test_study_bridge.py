@@ -90,6 +90,11 @@ class StudyBridgeTests(unittest.TestCase):
             arguments = call.args[0]
             destination = folder / 'tool' / scenario / f'attempt-{attempt}'
             self.assertIn(f'--study-output={destination}', arguments)
+            checkpoint = Path(next(arg.split('=', 1)[1] for arg in arguments if arg.startswith('--checkpoint=')))
+            dataset = 'CIFAR10' if scenario == 'B_Cifar' else 'PAMAP2'
+            self.assertEqual(checkpoint.parent.parent.name, 'user_study')
+            self.assertEqual(checkpoint.parent.name, dataset)
+            self.assertTrue(checkpoint.with_suffix('.json').is_file())
             self.assertIn('--survey-session=survey1', arguments)
             self.assertIn('--id=P1', arguments)
             self.assertTrue((destination / 'process.log').is_file())

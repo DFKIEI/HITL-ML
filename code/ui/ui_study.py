@@ -75,6 +75,7 @@ class StudyControls:
             self.events.start_experiment(dataset=getattr(self, 'dataset_name', None),
                 checkpoint=getattr(self, 'loaded_checkpoint', None),
                 epoch=(getattr(self, 'latest_metrics', None) or {}).get('epoch', 0),
+                checkpoint_settings=getattr(self, 'study_checkpoint_settings', None),
                 strategy=self.strategy_var.get() if hasattr(self, 'strategy_var') else None,
                 suggestions=[s.as_log_dict() for s in getattr(self, 'latest_llm_suggestions', [])])
             if getattr(self, 'data', None) is not None and getattr(self, 'plot', None) is not None:
@@ -225,6 +226,10 @@ class StudyControls:
         path = choose_checkpoint_file(self.root, title='Load pretrained model')
         if path:
             try:
+                checkpoint = Path(path).resolve()
+                if (checkpoint.with_suffix('.json').is_file()
+                        and checkpoint != getattr(self, 'study_checkpoint_path', None)):
+                    raise ValueError('Choose this checkpoint in Session Setup to load its matching data and model settings.')
                 self.load_pretrained_model(path)
             except Exception as exc:
                 messagebox.showerror('Could not load checkpoint', str(exc))
@@ -246,7 +251,10 @@ class StudyControls:
         self.llm_focus_suggestion = None
         self.latest_metrics = dict(scores, epoch=epoch)
         self.checkpoint_label.set(f'{Path(path).name} · epoch {epoch}')
-        self.events.log('CHECKPOINT_LOADED', path=self.loaded_checkpoint, epoch=epoch, scores=scores)
+        settings = (getattr(self, 'study_checkpoint_settings', None)
+                    if Path(self.loaded_checkpoint) == getattr(self, 'study_checkpoint_path', None) else None)
+        self.events.log('CHECKPOINT_LOADED', path=self.loaded_checkpoint, epoch=epoch, scores=scores,
+                        study_checkpoint_settings=settings)
         if refresh:
             self.update_visualization()
         if self.llm_panel is not None:

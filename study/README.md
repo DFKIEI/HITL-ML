@@ -14,7 +14,7 @@ Open **http://127.0.0.1:8765** in Chrome or Edge. No account, public hosting or 
 
 Enter the Study ID in the survey. The survey locks this ID when recording starts and passes it to both tool sessions. New sessions save under `full_study_results/<Study ID>-<UTC timestamp>/`. The response JSON shares the folder name. Each video filename starts with the Study ID and its own UTC timestamp. The server adds a number if a name is already taken. Keep the `.sessions` index with the results if moving the directory. Each session folder contains a `session.json` manifest with the shared Study ID and session UUID. The response file includes the Study ID, session UUID, timestamps, event history and SHA-256 hash of the survey definition (`survey_sha256`). In response format version 3, `answers` groups readable fields under `participant`, `scenario_a`, and `scenario_b`, with `scenario_order` and `experimenter_notes` alongside them. Workload scores use the original 1-20 scale, including performance from Perfect to Failure. Tool rating scores use the original 0-100 scale. Each scenario includes a separate S-TIAS page after NASA-TLX. The export stores the three 1-7 responses and their mean once all three are answered. Version 2 exports also contained `answers_by_qid`. Older exports stored question IDs directly in `answers`. Browser local storage is a recovery copy; successful server saving is shown at the top. The optional backup button on the final screen downloads both the recording and a JSON copy of the responses. Opening or reloading the survey starts a fresh session. After you interact with the page, Chrome asks for confirmation before reloading or leaving it. Use **New participant** after saving the recording to start a fresh session directly.
 
-The survey launches **A_Pamap** with the PAMAP2 epoch-25 checkpoint and **B_Cifar** with the CIFAR10 epoch-25 checkpoint. Workload sliders require an explicit selection rather than silently treating the initial position as an answer.
+The survey launches **A_Pamap** and **B_Cifar** with their bundled epoch-25 checkpoints from `saved_checkpoints/user_study/`. Workload sliders require an explicit selection rather than silently treating the initial position as an answer.
 
 ## Desktop study task
 
@@ -110,20 +110,14 @@ study events; incoming handoffs contain the survey session ID, page, and sequenc
 The bridge requires the local server to remain running and defaults to port 8765.
 For another local port, set `HITL_SURVEY_URL` before launching the tool.
 
-### Preparing epoch-25 study models
+### Epoch-25 user study checkpoints
 
-From the repository root:
+Use `saved_checkpoints/user_study/PAMAP2/` and `saved_checkpoints/user_study/CIFAR10/` for the participant sessions. Copy both the checkpoint and its adjacent JSON manifest when moving the study to another machine. For a manual launch with one of these checkpoints, select it in **Session Setup** so the tool can configure the dataset and model before loading the weights.
 
-```sh
-python code/tools/prepare_study_checkpoints.py --datasets CIFAR10 PAMAP2
-```
+- **A_Pamap** uses the clean epoch-25 checkpoint from the dropout experiment. Its manifest contains the normalization statistics fitted on training subjects 1, 2, 4, 5, and 8. The study applies those statistics to all three splits and uses dropout 0.20 when training resumes.
+- **B_Cifar** uses the existing CIFAR10 epoch-25 weights. The manifest pins the validation/test split to seed 0.
 
-This continues each existing epoch-20 model for five epochs using cross-entropy
-and the existing scale regularizer, without LLM calls. It leaves source files
-unchanged and writes `saved_checkpoints/<dataset>/checkpoint_epoch_25.pt` plus a
-manifest. Existing epoch-25 files are skipped. Historical checkpoint seeds/splits
-are unknown, so these files are study starting points rather than a controlled
-accuracy comparison. Copy both checkpoint files to the study computer.
+The older continuation recipe, `code/tools/prepare_study_checkpoints.py`, writes its checkpoints under `saved_checkpoints/<dataset>/`. The survey loads its models from the user study bundle.
 
 ### CUDA training throughput
 

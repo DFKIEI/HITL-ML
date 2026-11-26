@@ -60,7 +60,8 @@ class PAMAP2(Dataset):
     # Subject ID ,Sex, Age (years), Height (cm), Weight (kg), Resting HR (bpm), Max HR (bpm), Dominant hand
     # Note: Age, Height, Weight, Resting HR, Max HR
 
-    def __init__(self, window_size=200, window_step=50, transform=None, users=[1, 3, 6], columns=None, train_users=None, frequency=None):
+    def __init__(self, window_size=200, window_step=50, transform=None, users=[1, 3, 6], columns=None,
+                 train_users=None, frequency=None, *, normalization=None):
         """ PAMAP2 Dataset object. Data collected at 100Hz. Sensor positions: wrist on dominant arm, chest, ankle on dominant side"""
         headers = PAMAP2.headers()
         dataset_splits = {
@@ -105,7 +106,14 @@ class PAMAP2(Dataset):
 
         #####################################
         # mean & std
-        self.mean_std = self.compute_mean_std(train_users, save_at_original_file, protocol, columns_idx, frequency_factor)
+        if normalization is None:
+            self.mean_std = self.compute_mean_std(train_users, save_at_original_file, protocol,
+                                                  columns_idx, frequency_factor)
+        else:
+            self.mean_std = {name: np.asarray(normalization[name], dtype=float) for name in ('mean', 'std')}
+            if (any(values.shape != (len(columns_idx),) or not np.isfinite(values).all()
+                    for values in self.mean_std.values()) or np.any(self.mean_std['std'] <= 0)):
+                raise ValueError('Invalid PAMAP2 normalization for the selected sensor channels.')
         #####################################
 
         for user_id in self.users:

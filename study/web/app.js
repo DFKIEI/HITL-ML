@@ -296,7 +296,14 @@ $('recordStart').onclick=async()=>{if(!$('consent').checked){$('recordStatus').t
   recordStreams.push(await navigator.mediaDevices.getUserMedia({audio:true}));
  }
  stage='recorder';
- const combined=new MediaStream(recordStreams.flatMap(stream=>stream.getTracks()));const mime=['video/mp4','video/webm;codecs=vp8,opus','video/webm'].find(m=>MediaRecorder.isTypeSupported(m));recorder=new MediaRecorder(combined,mime?{mimeType:mime}:{});recordId=crypto.randomUUID();recordingSession=state.session_id;part=0;recordChunks=[];uploadQueue=Promise.resolve();let uploadFailed=false,savedFilename;
+ const combined=new MediaStream(recordStreams.flatMap(stream=>stream.getTracks()));
+ const recordingFormats=includeMicrophone
+  ? ['video/mp4;codecs=avc1,mp4a.40.2','video/webm;codecs=vp8,opus','video/webm']
+  : ['video/mp4','video/webm;codecs=vp8','video/webm'];
+ const mime=recordingFormats.find(format=>MediaRecorder.isTypeSupported(format));
+ if(!mime&&includeMicrophone)throw Error('This browser cannot record MP4 with AAC or WebM with microphone audio.');
+ recorder=new MediaRecorder(combined,mime?{mimeType:mime}:{});
+ recordId=crypto.randomUUID();recordingSession=state.session_id;part=0;recordChunks=[];uploadQueue=Promise.resolve();let uploadFailed=false,savedFilename;
  recorder.ondataavailable=e=>{if(!e.data.size)return;recordChunks.push(e.data);const currentPart=part++;uploadQueue=uploadQueue.then(async()=>{const query=new URLSearchParams({session:recordingSession,recording:recordId,study_id:studyId,part:currentPart,mime:recorder.mimeType});const r=await fetch('/api/recordings?'+query,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:e.data});if(!r.ok)throw Error('Recording upload failed');savedFilename=(await r.json()).filename;}).catch(()=>{uploadFailed=true;$('recordStatus').textContent='Local recording save failed. Stop and download the backup before closing.';});};
  recorder.onstart=()=>{
   state.events.push({type:'recording_started',recording_id:recordId,time:new Date().toISOString()});

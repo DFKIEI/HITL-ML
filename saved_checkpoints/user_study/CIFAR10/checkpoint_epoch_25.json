@@ -1,0 +1,16 @@
+{
+  "dataset": "CIFAR10",
+  "model": "CNN_CIFAR10",
+  "epoch": 25,
+  "sha256": "c09935ea9ea38ca0d12b8232d7dacd249a68645fdf381289d88362a148c2683b",
+  "source": "saved_checkpoints/CIFAR10/checkpoint_epoch_25.pt",
+  "split_seed": 0,
+  "metrics": {
+    "val_accuracy": 85.56,
+    "test_accuracy": 85.62
+  },
+  "verified_validation": {
+    "accuracy": 85.58,
+    "macro_f1": 0.854618
+  }
+}

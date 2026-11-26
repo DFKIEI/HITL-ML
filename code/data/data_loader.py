@@ -18,13 +18,13 @@ def loader_options():
     return options
 
 
-def load_dataset(dataset_name, batch_size=32):
+def load_dataset(dataset_name, batch_size=32, *, normalization=None, split_seed=None):
     if dataset_name == 'PAMAP2':
-        return load_pamap2(batch_size)
+        return load_pamap2(batch_size, normalization=normalization)
     elif dataset_name == 'MNIST':
         return load_mnist(batch_size)
     elif dataset_name == 'CIFAR10':
-        return load_cifar10(batch_size)
+        return load_cifar10(batch_size, split_seed=split_seed)
     elif dataset_name == 'CIFAR100':
         return load_cifar100(batch_size)
     else:
@@ -35,7 +35,8 @@ def load_dataset(dataset_name, batch_size=32):
     ###################    
 
 
-def load_pamap2(batch_size=32, window_size=200, window_step=50, frequency=50, split_ratio=0.8):
+def load_pamap2(batch_size=32, window_size=200, window_step=50, frequency=50, split_ratio=0.8,
+                *, normalization=None):
     columns = ['hand_acc_16g_x', 'hand_acc_16g_y', 'hand_acc_16g_z',
                'hand_gyroscope_x', 'hand_gyroscope_y', 'hand_gyroscope_z',
                'hand_magnometer_x', 'hand_magnometer_y', 'hand_magnometer_z',
@@ -46,12 +47,13 @@ def load_pamap2(batch_size=32, window_size=200, window_step=50, frequency=50, sp
                'ankle_gyroscope_x', 'ankle_gyroscope_y', 'ankle_gyroscope_z',
                'ankle_magnometer_x', 'ankle_magnometer_y', 'ankle_magnometer_z']
 
-    train_dataset = PAMAP2(window_size=window_size, window_step=window_step, users='train', columns=columns,
+    dataset_options = dict(window_size=window_size, window_step=window_step, columns=columns,
                            train_users=[1, 3, 4, 5, 6, 8], frequency=frequency)
-    val_dataset = PAMAP2(window_size=window_size, window_step=window_step, users='val', columns=columns,
-                         train_users=[1, 3, 4, 5, 6, 8], frequency=frequency)
-    test_dataset = PAMAP2(window_size=window_size, window_step=window_step, users='test', columns=columns,
-                          train_users=[1, 3, 4, 5, 6, 8], frequency=frequency)
+    if normalization is not None:
+        dataset_options.update(train_users='train', normalization=normalization)
+    train_dataset = PAMAP2(users='train', **dataset_options)
+    val_dataset = PAMAP2(users='val', **dataset_options)
+    test_dataset = PAMAP2(users='test', **dataset_options)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=torch.cuda.is_available())
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=torch.cuda.is_available())
@@ -164,7 +166,7 @@ def study_plot_loader(dataset_name, train_loader):
     return DataLoader(Subset(dataset, indices), batch_size=train_loader.batch_size, shuffle=False)
 
 
-def load_cifar10(batch_size=32, val_split=0.5):
+def load_cifar10(batch_size=32, val_split=0.5, *, split_seed=None):
     # Define transformations for the training data
     transform_train = transforms.Compose([
         transforms.RandomHorizontalFlip(),
@@ -184,7 +186,11 @@ def load_cifar10(batch_size=32, val_split=0.5):
     # Split the test dataset into validation and test sets
     val_size = int(len(full_test_dataset) * val_split)
     test_size = len(full_test_dataset) - val_size
-    val_dataset, test_dataset = random_split(full_test_dataset, [val_size, test_size])
+    if split_seed is None:
+        val_dataset, test_dataset = random_split(full_test_dataset, [val_size, test_size])
+    else:
+        generator = torch.Generator().manual_seed(split_seed)
+        val_dataset, test_dataset = random_split(full_test_dataset, [val_size, test_size], generator=generator)
 
     # Create DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, **loader_options())

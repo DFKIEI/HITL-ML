@@ -3,6 +3,7 @@ import torch
 import torch.optim as optim
 import argparse
 import ctypes
+from pathlib import Path
 
 import os
 import sys
@@ -14,6 +15,7 @@ sys.path.insert(0, parent_dir)
 from ui.ui import UI
 from data.data_loader import load_dataset, study_plot_loader
 from model import get_model
+from study_checkpoint import read_study_checkpoint
 from ui.ui_init_window import run_initial_ui
 from ui.ui_study import STUDY_REVIEW_EPOCHS
 from llm import openrouter
@@ -53,7 +55,18 @@ def main():
     elif not all((args.dataset, args.checkpoint, args.id, args.scenario,
                   args.survey_session, args.survey_scenario, args.study_output)):
         parser.error('Survey launch requires a dataset, checkpoint, Study ID, scenario and session output.')
+    try:
+        checkpoint_settings = read_study_checkpoint(args.checkpoint, required=managed)
+    except (OSError, ValueError, KeyError) as error:
+        parser.error(str(error))
+    if checkpoint_settings is not None:
+        if checkpoint_settings['dataset'] != args.dataset:
+            parser.error('The study checkpoint is for a different dataset.')
+        if args.model is not None and args.model != checkpoint_settings['model']:
+            parser.error('The requested model does not match the study checkpoint.')
+        args.model = checkpoint_settings['model']
     args.model = args.model or f'CNN_{args.dataset}'
+    settings = checkpoint_settings or {}
 
     # The suggestion window reads the default model from the environment
     os.environ[openrouter.MODEL_ENV_VAR] = openrouter.STUDY_MODEL if managed else args.llm_model
@@ -67,12 +80,14 @@ def main():
         device = torch.device("cpu")
 
     # Load dataset
-    trainloader, valloader, testloader, num_classes, input_shape = load_dataset(args.dataset, args.batch)
+    trainloader, valloader, testloader, num_classes, input_shape = load_dataset(
+        args.dataset, args.batch, normalization=settings.get('normalization'), split_seed=settings.get('split_seed'),
+    )
     plot_loader = study_plot_loader(args.dataset, trainloader) if managed else None
     if managed:
         args.visualize = 'train'
 
-    model = get_model(args.model, input_shape, num_classes).to(device)
+    model = get_model(args.model, input_shape, num_classes, pamap2_dropout=settings.get('dropout', 0.1)).to(device)
     torch.manual_seed(42)
     optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
 
@@ -86,10 +101,15 @@ def main():
     if managed:
         app.study_bridge.managed_sequence = args.survey_sequence
         app.study_bridge.scenario = args.survey_scenario
+    if checkpoint_settings is not None:
+        app.study_checkpoint_path = Path(args.checkpoint).resolve()
+        app.study_checkpoint_settings = checkpoint_settings
     if args.checkpoint:
         # Load before Tk's initial tab event builds the plot, avoiding a stale
         # untrained layout followed by a second full feature extraction.
         epoch = app.load_pretrained_model(args.checkpoint, refresh=managed)
+        if checkpoint_settings is not None and epoch != settings['epoch']:
+            raise ValueError(f'The checkpoint stores epoch {epoch}, but its manifest specifies epoch {settings["epoch"]}.')
         if managed and epoch != STUDY_REVIEW_EPOCHS[0]:
             raise ValueError(f'The study requires an epoch-{STUDY_REVIEW_EPOCHS[0]} checkpoint, got epoch {epoch}.')
     root.mainloop()
