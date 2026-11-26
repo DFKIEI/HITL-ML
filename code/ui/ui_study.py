@@ -253,6 +253,12 @@ class StudyControls:
         self.checkpoint_label.set(f'{Path(path).name} · epoch {epoch}')
         settings = (getattr(self, 'study_checkpoint_settings', None)
                     if Path(self.loaded_checkpoint) == getattr(self, 'study_checkpoint_path', None) else None)
+        baseline = dict(self.latest_metrics)
+        for split, key in (('validation', 'val_accuracy'), ('test', 'test_accuracy')):
+            verified = (settings or {}).get(f'verified_{split}', {})
+            if 'accuracy' in verified:
+                baseline[key] = verified['accuracy']
+        self.log_messages.put((baseline, True))
         self.events.log('CHECKPOINT_LOADED', path=self.loaded_checkpoint, epoch=epoch, scores=scores,
                         study_checkpoint_settings=settings)
         if refresh:

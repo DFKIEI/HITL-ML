@@ -146,6 +146,9 @@ def apply_theme(root):
     style.configure('Heading.TLabel', background=BG, foreground=TEXT, font=f['heading'])
     style.configure('Title.TLabel', background=BG, foreground=TEXT, font=f['title'])
     style.configure('Status.TLabel', background=BG, foreground=TEXT_MUTED, font=f['small'])
+    style.configure('Training.Treeview', font=f['small'],
+                    rowheight=tkfont.Font(root=root, font=f['small']).metrics('linespace') + PAD_S)
+    style.configure('Training.Treeview.Heading', font=f['small'])
     style.configure('Success.TLabel', background=BG, foreground=SUCCESS, font=f['body'])
     style.configure('Danger.TLabel', background=BG, foreground=DANGER, font=f['body'])
 

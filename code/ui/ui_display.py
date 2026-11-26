@@ -6,6 +6,7 @@ import tkinter as tk
 
 from matplotlib import patheffects
 from matplotlib.backend_tools import Cursors
+from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.patches import Circle
 
 from llm.movement import (CUSTOM_TIGHTEN_RANGE, compute_class_movements, compute_class_tighten_factors,
@@ -16,6 +17,20 @@ from ui import ui_theme
 # How close (screen pixels) the pointer must be to an arrow tip or a circle
 # edge to grab it.
 HANDLE_PIXELS = 10
+
+
+class _ScatterLayout(ConstrainedLayoutEngine):
+    """Fit axes and the colorbar on resize, with stable geometry between resizes."""
+
+    def __init__(self):
+        super().__init__()
+        self.last_size = None
+
+    def execute(self, fig):
+        size = (fig.bbox.width, fig.bbox.height, fig.dpi)
+        if size != self.last_size:
+            super().execute(fig)
+            self.last_size = size
 
 
 def _style_figure(fig, *axes):
@@ -102,13 +117,55 @@ def log_modification(self, kind, **payload):
         changed.set()
 
 
+def _misclassification_tooltip(ax, markers, data, class_names):
+    point_indices = np.flatnonzero(data['predicted_labels'] != data['labels'])
+    tooltip = ax.annotate(
+        '', xy=(0, 0), xytext=(10, 10), textcoords='offset points',
+        fontsize=9, color=ui_theme.TEXT, zorder=8,
+        bbox=dict(boxstyle='round,pad=0.35', fc=ui_theme.SURFACE,
+                  ec=ui_theme.BORDER_STRONG, alpha=0.96),
+    )
+    tooltip.set_visible(False)
+    tooltip.set_in_layout(False)
+
+    def update(event=None):
+        if event is not None and event.inaxes is ax and ax.get_navigate_mode() is None:
+            hit, details = markers.contains(event)
+            if hit:
+                candidates = details['ind']
+                positions = markers.get_offsets()[candidates]
+                pixels = ax.transData.transform(positions)
+                nearest = np.argmin(np.sum((pixels - [event.x, event.y]) ** 2, axis=1))
+                point = point_indices[candidates[nearest]]
+                position = tuple(positions[nearest])
+                predicted, actual = int(data['predicted_labels'][point]), int(data['labels'][point])
+                text = (f"Predicted: {class_names.get(predicted, predicted)}\n"
+                        f"Actual: {class_names.get(actual, actual)}")
+                if not tooltip.get_visible() or tooltip.xy != position or tooltip.get_text() != text:
+                    x_offset = -10 if event.x > ax.bbox.x0 + ax.bbox.width / 2 else 10
+                    y_offset = -10 if event.y > ax.bbox.y0 + ax.bbox.height / 2 else 10
+                    tooltip.xy = position
+                    tooltip.set_position((x_offset, y_offset))
+                    tooltip.set_horizontalalignment('right' if x_offset < 0 else 'left')
+                    tooltip.set_verticalalignment('top' if y_offset < 0 else 'bottom')
+                    tooltip.set_text(text)
+                    tooltip.set_visible(True)
+                    ax.figure.canvas.draw_idle()
+                return
+        if tooltip.get_visible():
+            tooltip.set_visible(False)
+            ax.figure.canvas.draw_idle()
+
+    return update
+
+
 def display_scatter_plot(self, data, tab):
     self.selected_point_index = None
     self.selected_point_label = None
     self.data = data
     self.dragging_point = None
 
-    fig, ax = plt.subplots(figsize=(12, 12), layout='constrained')
+    fig, ax = plt.subplots(figsize=(12, 12), layout=_ScatterLayout())
     ax.set_aspect('equal', adjustable='datalim')
     self.ax = ax
     self.scatter_fig = fig
@@ -145,6 +202,7 @@ def display_scatter_plot(self, data, tab):
     self.incorrect_colors[:, 3] = 0.8
     self.incorrect_scatter = ax.scatter(data['features'][incorrect_mask, 0], data['features'][incorrect_mask, 1],
                                         c=self.incorrect_colors, s=50, edgecolor='black', linewidth=2.0)
+    update_tooltip = _misclassification_tooltip(ax, self.incorrect_scatter, data, sequential_mapping)
 
     self.original_points = data['features'].copy()
     self.moved_points = data['features'].copy()
@@ -181,6 +239,7 @@ def display_scatter_plot(self, data, tab):
     _log_space_shown(self, data)
 
     def on_press(event):
+        update_tooltip()
         if event.inaxes is not ax or event.xdata is None or event.ydata is None:
             return
         if hasattr(self, 'study_allows_apply') and not self.study_allows_apply():
@@ -258,9 +317,11 @@ def display_scatter_plot(self, data, tab):
 
     def on_motion(event):
         if llm_overlay_motion(self, event):
+            update_tooltip()
             return
         if self.dragging is None and self.dragging_point is None:
-            llm_overlay_hover(self, event)
+            over_handle = llm_overlay_hover(self, event)
+            update_tooltip(None if over_handle else event)
         if self.dragging is not None and event.inaxes is ax:
             old_center = np.array(data['centers'][self.dragging])
             new_center = np.array((event.xdata + self.offset[0], event.ydata + self.offset[1]))
@@ -338,6 +399,7 @@ def display_scatter_plot(self, data, tab):
     fig.canvas.mpl_connect('button_press_event', on_press)
     fig.canvas.mpl_connect('button_release_event', on_release)
     fig.canvas.mpl_connect('motion_notify_event', on_motion)
+    fig.canvas.mpl_connect('figure_leave_event', lambda _event: update_tooltip())
     fig.canvas.mpl_connect('button_press_event', lambda event: on_double_click(event) if event.dblclick else None)
 
     self.llm_overlay_artists = []
@@ -695,15 +757,15 @@ def llm_overlay_release(self, event):
 
 
 def llm_overlay_hover(self, event):
-    """Hand cursor over a draggable arrow tip / circle edge."""
+    """Set the cursor and report whether a draggable handle is under it."""
     over = _llm_handle_at(self, event) is not None
-    if over == getattr(self, 'llm_cursor_on_handle', False):
-        return
-    self.llm_cursor_on_handle = over
-    try:
-        self.scatter_fig.canvas.set_cursor(Cursors.HAND if over else Cursors.POINTER)
-    except Exception:  # backends without cursor support
-        pass
+    if over != getattr(self, 'llm_cursor_on_handle', False):
+        self.llm_cursor_on_handle = over
+        try:
+            self.scatter_fig.canvas.set_cursor(Cursors.HAND if over else Cursors.POINTER)
+        except Exception:  # backends without cursor support
+            pass
+    return over
 
 
 def _class_position(unique_labels, class_index):

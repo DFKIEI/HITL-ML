@@ -27,6 +27,7 @@ from llm.latent_state import (
 )
 
 MAX_SUGGESTIONS = 5
+STUDY_MAX_SUGGESTIONS = 4
 MAX_PAIRS = 100
 
 PROMPT_HEADER = """\
@@ -273,7 +274,7 @@ def describe_movement(suggestion):
     return text or 'No movement selected.'
 
 
-def request_suggestions(ui, model=None, user_goal=None):
+def request_suggestions(ui, model=None, user_goal=None, *, study_mode=False):
     """Build the semantic state, ask the model, return
     (global_summary, suggestions, state, raw_content).
 
@@ -285,20 +286,25 @@ def request_suggestions(ui, model=None, user_goal=None):
     return ask_for_suggestions(
         np.asarray(ui.plot.latent_features, dtype=float), np.asarray(ui.plot.selected_labels),
         get_class_names(ui.plot), getattr(ui.plot, 'dataset_name', 'the current'),
-        model=model, user_goal=user_goal)
+        model=model, user_goal=user_goal,
+        max_suggestions=STUDY_MAX_SUGGESTIONS if study_mode else MAX_SUGGESTIONS,
+        distinct_pairs=study_mode)
 
 
-def ask_for_suggestions(points, labels, class_names, dataset_name, model=None, user_goal=None):
+def ask_for_suggestions(points, labels, class_names, dataset_name, model=None, user_goal=None, *,
+                        max_suggestions=MAX_SUGGESTIONS, distinct_pairs=False):
     """``request_suggestions`` without the UI: also used by
     ``tests/llm_eval.py`` to check the answers on known latent spaces."""
     state, class_indices = build_semantic_state(points, labels, class_names)
     messages = [
         {'role': 'system', 'content': 'Return only JSON that matches the requested schema.'},
-        {'role': 'user', 'content': build_prompt(state, dataset_name, user_goal)},
+        {'role': 'user', 'content': build_prompt(
+            state, dataset_name, user_goal, max_suggestions=max_suggestions, distinct_pairs=distinct_pairs)},
     ]
     content, _ = openrouter.chat_completion(messages, model=model)
 
-    global_summary, suggestions = parse_suggestions(content, class_names, set(class_indices))
+    global_summary, suggestions = parse_suggestions(
+        content, class_names, set(class_indices), max_suggestions=max_suggestions, distinct_pairs=distinct_pairs)
     return global_summary, suggestions, state, content
 
 
@@ -320,22 +326,27 @@ def build_semantic_state(points, labels, class_names):
     return {'global_metrics': global_metrics, 'pairs': pairs_summary}, class_indices
 
 
-def build_prompt(state, dataset_name, user_goal=None):
+def build_prompt(state, dataset_name, user_goal=None, *, max_suggestions=MAX_SUGGESTIONS, distinct_pairs=False):
     parts = [
         PROMPT_HEADER,
-        f'Return only the {MAX_SUGGESTIONS} most important suggestions (or fewer) to improve the '
+        f'Return only the {max_suggestions} most important suggestions (or fewer) to improve the '
         f'latent space of this {dataset_name} classifier.\n',
         PROMPT_FOOTER,
     ]
+    if distinct_pairs:
+        parts.append('\nUse each class pair at most once, regardless of class order. '
+                     'Include movement and tightening in the same suggestion when both are useful.\n')
     if user_goal:
         parts.append(f"\nAdditional operator focus for this round: {user_goal}\n")
     parts.append(f"\nData (JSON):\n{json.dumps(state, indent=2)}\n")
     return ''.join(parts)
 
 
-def parse_suggestions(content: str, class_names: Dict[int, str],
-                       known_indices: Set[int]) -> Tuple[GlobalSummary, List[PairSuggestion]]:
-    """Parse the model answer. Suggestions with unknown/duplicate classes are dropped."""
+def parse_suggestions(
+    content: str, class_names: Dict[int, str], known_indices: Set[int], *,
+    max_suggestions=MAX_SUGGESTIONS, distinct_pairs=False,
+) -> Tuple[GlobalSummary, List[PairSuggestion]]:
+    """Validate class indices and optionally keep only the first suggestion per pair."""
     payload = _extract_json(content)
 
     global_raw = payload.get('global') or {}
@@ -353,7 +364,11 @@ def parse_suggestions(content: str, class_names: Dict[int, str],
         raw_suggestions = []
 
     suggestions = []
-    for raw in raw_suggestions[:MAX_SUGGESTIONS]:
+    seen_pairs = set()
+    candidates = raw_suggestions if distinct_pairs else raw_suggestions[:max_suggestions]
+    for raw in candidates:
+        if len(suggestions) >= max_suggestions:
+            break
         if not isinstance(raw, dict):
             continue
         text = str(raw.get('suggestion') or '').strip()
@@ -366,6 +381,11 @@ def parse_suggestions(content: str, class_names: Dict[int, str],
             continue
         if class_i == class_j or class_i not in known_indices or class_j not in known_indices:
             continue
+        if distinct_pairs:
+            pair = tuple(sorted((class_i, class_j)))
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
 
         direction = str(raw.get('direction') or '').strip()
         if direction not in DIRECTIONS:

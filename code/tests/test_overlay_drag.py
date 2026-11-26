@@ -179,6 +179,67 @@ def test_hover_sets_hand_cursor():
     assert ui.llm_cursor_on_handle
 
 
+@pytest.mark.parametrize('figsize', [(15, 6), (7, 10)])
+def test_misclassification_tooltip_yields_to_arrow_and_circle_handles(monkeypatch, figsize):
+    from matplotlib.backend_bases import MouseEvent
+    from ui import ui_display
+
+    ui, points, labels = plot_ui([suggestion(tighten_i=True)])
+    plt.close(ui.scatter_fig)
+    ui.dragging = None
+    ui.plot.dataloader.dataset = SimpleNamespace(classes=['cat', 'dog', 'ship'])
+    misclassified = np.flatnonzero(labels == 2)[0]
+    predicted = labels.copy()
+    predicted[misclassified] = 1
+    data = dict(ui.data, predicted_labels=predicted, dataset_name='CIFAR10')
+    monkeypatch.setattr(ui_display, 'display_plot', lambda *_: None)
+    ui_display.display_scatter_plot(ui, data, None)
+    ui.scatter_fig.set_size_inches(figsize)
+    canvas = ui.scatter_fig.canvas
+    canvas.draw()
+    tooltip = ui.ax.texts[0]
+
+    def mouse_event(name, point, button=None):
+        x, y = ui.ax.transData.transform(point)
+        canvas.callbacks.process(name, MouseEvent(name, canvas, x, y, button=button))
+
+    try:
+        np.testing.assert_allclose(ui.incorrect_scatter.get_facecolors()[0, :3], ui.class_colors[2][:3])
+        np.testing.assert_allclose(ui.incorrect_scatter.get_edgecolors()[0, :3], [0, 0, 0])
+        view = ui.ax.viewLim.bounds
+        plot_size = ui.ax.bbox.size
+        assert plot_size[0] > 0.75 * ui.scatter_fig.bbox.width
+        assert plot_size[1] > 0.80 * ui.scatter_fig.bbox.height
+        assert plot_size[0] / view[2] == pytest.approx(plot_size[1] / view[3], rel=0.005)
+        mouse_event('motion_notify_event', points[misclassified])
+        assert tooltip.get_visible()
+        assert tooltip.get_text() == 'Predicted: dog\nActual: ship'
+        assert ui.ax.viewLim.bounds == view
+        assert ui.ax.bbox.size == pytest.approx(plot_size, abs=0.1)
+        mouse_event('motion_notify_event', points[np.flatnonzero(labels == 0)[0]])
+        assert not tooltip.get_visible()
+        assert ui.ax.viewLim.bounds == view
+        assert ui.ax.bbox.size == pytest.approx(plot_size, abs=0.1)
+
+        circle = handle(ui, 'circle', 0)
+        targets = {'arrow': handle(ui, 'arrow', 0)['end'],
+                   'circle': circle['center'] - [0, circle['radius']]}
+        for kind, point in targets.items():
+            ui.incorrect_scatter.set_offsets([point])
+            for _ in range(2):
+                mouse_event('motion_notify_event', point)
+                assert ui.llm_cursor_on_handle
+                assert not tooltip.get_visible()
+            mouse_event('button_press_event', point, button=1)
+            assert ui.llm_drag['kind'] == kind
+            ui.incorrect_scatter.set_offsets([points[misclassified]])
+            mouse_event('motion_notify_event', points[misclassified])
+            assert not tooltip.get_visible()
+            mouse_event('button_release_event', point, button=1)
+    finally:
+        plt.close(ui.scatter_fig)
+
+
 @pytest.mark.parametrize('degrees, snapped', [(SNAP_DEGREES - 2, True), (SNAP_DEGREES + 5, False)])
 def test_snap_threshold(degrees, snapped):
     points, labels = make_points()

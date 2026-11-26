@@ -12,5 +12,10 @@
   "verified_validation": {
     "accuracy": 85.58,
     "macro_f1": 0.854618
+  },
+  "verified_test": {
+    "accuracy": 85.6,
+    "macro_f1": 0.855737,
+    "examples": 5000
   }
 }

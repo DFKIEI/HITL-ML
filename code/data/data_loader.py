@@ -1,4 +1,7 @@
 import os
+import threading
+import time
+from concurrent.futures import Future
 from copy import copy
 import numpy as np
 from torch.utils.data import DataLoader, Subset, random_split
@@ -16,6 +19,53 @@ def loader_options():
     if workers:
         options.update(persistent_workers=True, prefetch_factor=2)
     return options
+
+
+class _PreparedLoader:
+    """Reuse the prefetched iterator on the first pass, then iterate normally."""
+
+    def __init__(self, loader):
+        self.loader = loader
+        self.first_iterator = Future()
+
+    def __len__(self):
+        return len(self.loader)
+
+    def __iter__(self):
+        if self.first_iterator is not None:
+            iterator = self.first_iterator.result()
+            self.first_iterator = None
+            if iterator is not None:
+                return iterator
+        return iter(self.loader)
+
+
+def prepare_training_loaders(loaders, stop_event, *, plot_loader):
+    """Prefetch training data without resetting the loader used by the plot."""
+    prepared = tuple(_PreparedLoader(loader) if loader.persistent_workers and loader is not plot_loader else loader
+                     for loader in loaders)
+    if not any(isinstance(loader, _PreparedLoader) for loader in prepared):
+        return loaders
+
+    def prepare():
+        for name, loader in zip(('training', 'validation', 'test'), prepared):
+            if not isinstance(loader, _PreparedLoader):
+                continue
+            iterator = None
+            try:
+                if not stop_event.is_set():
+                    started = time.perf_counter()
+                    iterator = iter(loader.loader)
+                    print(f'Prepared {name} data workers in {time.perf_counter() - started:.1f}s',
+                          flush=True)
+            except Exception as error:
+                print(f'Could not prepare {name} data workers: {error}. Will retry on use.',
+                      flush=True)
+            finally:
+                loader.first_iterator.set_result(iterator)
+
+    threading.Thread(target=prepare, name='training-data-preparation', daemon=True).start()
+    return prepared
 
 
 def load_dataset(dataset_name, batch_size=32, *, normalization=None, split_seed=None):

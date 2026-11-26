@@ -80,5 +80,10 @@
   "verified_validation": {
     "accuracy": 70.20526643168152,
     "macro_f1": 0.6487381338550974
+  },
+  "verified_test": {
+    "accuracy": 74.78587196467991,
+    "macro_f1": 0.7116905408864062,
+    "examples": 22650
   }
 }

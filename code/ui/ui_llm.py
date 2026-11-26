@@ -1,5 +1,5 @@
 """LLM suggestions panel, docked in the main window next to the scatter plot:
-ask an LLM what to do with the latent space, show its (top 5) suggestions
+ask an LLM what to do with the latent space, show its suggestions
 one at a time (Previous / Next) and - in strategy 4 - let the operator edit
 (typing or dictating), remove, add and apply them.
 
@@ -89,7 +89,14 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.dictation_busy = False
         self.dictation_button = None
 
-        self.suggestions_heading = ttk.Label(self, text="AI Suggestions", style='Heading.TLabel')
+        footer = ttk.Frame(self)
+        footer.pack(side=tk.BOTTOM, fill=tk.X, pady=(ui_theme.PAD_S, 0))
+        self._build_training_log(footer)
+        self._build_plot_legend(footer)
+
+        self.suggestion_content = ttk.Frame(self)
+        self.suggestion_content.pack(fill=tk.BOTH, expand=True)
+        self.suggestions_heading = ttk.Label(self.suggestion_content, text="AI Suggestions", style='Heading.TLabel')
         self.suggestions_heading.pack(anchor=tk.W, pady=(0, ui_theme.PAD_M))
         self._build_controls()
         self._build_suggestion_area()
@@ -107,7 +114,7 @@ class LLMSuggestionsPanel(ttk.Frame):
             loader.pack_forget()
 
     def _build_controls(self):
-        frame = ttk.Frame(self)
+        frame = ttk.Frame(self.suggestion_content)
         frame.pack(fill=tk.X)
 
         self.goal_var = tk.StringVar()
@@ -148,8 +155,64 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.status_var.trace_add('write', update_status_visibility)
         update_status_visibility()
 
+    def _build_training_log(self, footer):
+        ttk.Separator(footer).pack(fill=tk.X)
+        ttk.Label(footer, text="Training log", font=ui_theme.fonts()['body_bold']).pack(
+            anchor=tk.W, pady=(ui_theme.PAD_S, 0))
+        frame = ttk.Frame(footer)
+        frame.pack(fill=tk.X, pady=(ui_theme.PAD_S, ui_theme.PAD_L))
+        self.training_log = ttk.Treeview(
+            frame, columns=('epoch', 'test', 'validation'), show='headings',
+            height=4, selectmode='none', style='Training.Treeview')
+        for key, title, width in (('epoch', 'Epoch', 90), ('test', 'Test accuracy', 130),
+                                  ('validation', 'Validation accuracy', 170)):
+            self.training_log.heading(key, text=title)
+            self.training_log.column(key, width=width, minwidth=50, anchor=tk.CENTER)
+        self.training_log.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.training_log.yview)
+        ui_theme.hide_fitting_scrollbar(self.training_log, scrollbar)
+
+    def append_training_scores(self, metrics, *, baseline=False):
+        if baseline:
+            self.training_log.delete(*self.training_log.get_children())
+        test, validation = metrics.get('test_accuracy'), metrics.get('val_accuracy')
+        if test is None and validation is None:
+            return
+        epoch = f"{metrics['epoch']} (start)" if baseline else str(metrics['epoch'])
+        values = [epoch, *(f'{score:.2f}%' if score is not None else '—' for score in (test, validation))]
+        row = self.training_log.insert('', 'end', values=values)
+        self.training_log.see(row)
+
+    def _build_plot_legend(self, footer):
+        color = ui_theme.DANGER
+        ttk.Separator(footer).pack(fill=tk.X)
+        ttk.Label(footer, text="Plot legend", style='Heading.TLabel', foreground='black').pack(
+            anchor=tk.W, pady=(ui_theme.PAD_S, 0))
+
+        grid = ttk.Frame(footer)
+        grid.pack(fill=tk.X)
+        grid.columnconfigure((0, 1), weight=1, uniform='legend')
+        symbols = []
+        for index, title in enumerate(("Class center", "Move preview",
+                                       "Data point", "Target spread",
+                                       "Misclassified")):
+            item = ttk.Frame(grid)
+            item.grid(row=index // 2, column=index % 2, sticky=tk.W)
+            symbol = tk.Canvas(item, width=28, height=20, bg=ui_theme.BG, highlightthickness=0)
+            symbol.pack(side=tk.LEFT, padx=(0, ui_theme.PAD_S))
+            ttk.Label(item, text=title, style='Status.TLabel', foreground='black').pack(side=tk.LEFT)
+            symbols.append(symbol)
+
+        center, arrow, point, spread, misclassified = symbols
+        center.create_line(10, 6, 18, 14, fill=color, width=2)
+        center.create_line(18, 6, 10, 14, fill=color, width=2)
+        arrow.create_line(3, 10, 25, 10, arrow=tk.LAST, fill=color, width=2, dash=(4, 2))
+        point.create_oval(10, 6, 18, 14, fill=color, outline='')
+        spread.create_oval(6, 2, 22, 18, outline=color, width=2, dash=(3, 2))
+        misclassified.create_oval(9, 5, 19, 15, fill=color, outline='black', width=2)
+
     def _build_suggestion_area(self):
-        navigation = ttk.Frame(self)
+        navigation = ttk.Frame(self.suggestion_content)
         navigation.pack(fill=tk.X, pady=(ui_theme.PAD_L, 0))
         self.suggestion_nav = nav = ttk.Frame(navigation)
         self.prev_button = ttk.Button(nav, text="‹ Previous", command=lambda: self._step(-1))
@@ -159,7 +222,7 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.position_var = tk.StringVar(value="No suggestions yet")
         ttk.Label(nav, textvariable=self.position_var, style='Muted.TLabel').pack(side=tk.LEFT, expand=True)
 
-        container = ttk.Frame(self)
+        container = ttk.Frame(self.suggestion_content)
         container.pack(fill=tk.BOTH, expand=True)
 
         self.canvas = tk.Canvas(container, width=1, highlightthickness=0, bg=ui_theme.BG)
@@ -227,16 +290,19 @@ class LLMSuggestionsPanel(ttk.Frame):
             return
         self.update_idletasks()
         current = self.current_suggestion()
-        visible = self.winfo_ismapped() and 'llm' not in getattr(self.ui, 'collapsed_sidebars', ())
+        visible = self.suggestion_content.winfo_ismapped() and 'llm' not in getattr(self.ui, 'collapsed_sidebars', ())
         events.enter('suggestion', current.uid if visible and current is not None else None)
 
-    def refresh_for_strategy(self):
-        """Called whenever the operator changes strategy in the main window,
-        so the panel's controls and cards match it (see llm/strategies.py)."""
-        strategy = get_strategy(self.ui.strategy_var.get())
-        state = 'normal' if strategy.suggestions_editable else 'disabled'
-        self.add_button.configure(state=state)
-        self._render_cards()
+    def show_suggestions(self, visible):
+        if visible:
+            if not self.suggestion_content.winfo_manager():
+                self.suggestion_content.pack(fill=tk.BOTH, expand=True)
+            strategy = get_strategy(self.ui.strategy_var.get())
+            self.add_button.configure(state='normal' if strategy.suggestions_editable else 'disabled')
+            self._render_cards()
+        else:
+            self.suggestion_content.pack_forget()
+        self.on_visibility_change()
 
     def guided_review(self):
         return getattr(self, 'study_mode', False) and get_strategy(self.ui.strategy_var.get()).suggestions_editable
@@ -361,13 +427,14 @@ class LLMSuggestionsPanel(ttk.Frame):
         model = self.active_model()
         goal = self.goal_var.get().strip() or None
         self._log('LLM_REQUEST', model=model, goal=goal, strategy=self.ui.strategy_var.get())
-        threading.Thread(target=self._worker, args=(model, goal, self.guided_review()), daemon=True).start()
+        threading.Thread(target=self._worker, args=(model, goal, self.guided_review()),
+                         kwargs={'study_mode': self.study_mode}, daemon=True).start()
 
-    def _worker(self, model, goal, allow_empty=False):
+    def _worker(self, model, goal, allow_empty=False, *, study_mode=False):
         started = time.monotonic()
         try:
             global_summary, suggestions, state, raw = request_suggestions(
-                self.ui, model=model, user_goal=goal)
+                self.ui, model=model, user_goal=goal, study_mode=study_mode)
             if not suggestions and not allow_empty:
                 self.result_queue.put(('error', 'The model returned no usable suggestions. Click Get Suggestions to try again.'))
                 return
@@ -537,7 +604,7 @@ class LLMSuggestionsPanel(ttk.Frame):
 
         events = getattr(self.ui, 'events', None)
         if events is not None:
-            visible = self.winfo_ismapped() and 'llm' not in getattr(self.ui, 'collapsed_sidebars', ())
+            visible = self.suggestion_content.winfo_ismapped() and 'llm' not in getattr(self.ui, 'collapsed_sidebars', ())
             shown = current.uid if current is not None and visible else None
             events.enter('suggestion', shown)
             if current is not None and current is not previous_focus:
@@ -609,7 +676,13 @@ class LLMSuggestionsPanel(ttk.Frame):
                 target = self.study_review_epoch + STUDY_EPOCHS_PER_PHASE
                 text = (f'Final training through epoch {target}…' if target == STUDY_FINAL_EPOCH
                         else f'Training through epoch {target}…')
-            ttk.Label(self.suggestion_frame, text=text, wraplength=self.wrap_length).pack(anchor=tk.W)
+            row = ttk.Frame(self.suggestion_frame)
+            row.pack(fill=tk.X)
+            spinner = LoadingSpinner(row)
+            spinner.pack(side=tk.LEFT, padx=(0, ui_theme.PAD_M))
+            ttk.Label(row, text=text, wraplength=self.wrap_length - spinner.winfo_reqwidth() - ui_theme.PAD_M).pack(
+                side=tk.LEFT)
+            spinner.start()
         elif self.study_stage == 'finished':
             if scheduled:
                 self._render_study_results()
@@ -768,7 +841,10 @@ class LLMSuggestionsPanel(ttk.Frame):
 
     def _build_editable_body(self, card, suggestion):
         class_names = self._class_names()
-        ttk.Label(card, text="Edit the instruction, use the checkboxes, or drag the arrow and circle handles.",
+        help_text = ("Choose two classes and adjust the preview with the checkboxes or plot handles."
+                     if suggestion.source == 'human' else
+                     "Edit the instruction, use the checkboxes, or drag the arrow and circle handles.")
+        ttk.Label(card, text=help_text,
                   style='Muted.TLabel', wraplength=self.wrap_length - 20).pack(anchor=tk.W)
         ttk.Label(card, text="Instruction", style='Heading.TLabel').pack(anchor=tk.W)
         text = tk.Text(card, height=3, wrap=tk.WORD, relief=tk.SOLID, borderwidth=1,
@@ -812,7 +888,8 @@ class LLMSuggestionsPanel(ttk.Frame):
             elif enabled:
                 message = 'Update the plot to preview your edited instruction.'
             elif not value:
-                message = 'Enter an instruction to preview it on the plot.'
+                message = ('Enter an instruction if you want to describe the change in words.' if suggestion.source == 'human'
+                           else 'Enter an instruction to preview it on the plot.')
             elif suggestion.interpretation:
                 message = 'Instruction previewed on the plot.'
             else:
@@ -822,8 +899,8 @@ class LLMSuggestionsPanel(ttk.Frame):
         def set_loading(loading):
             self._set_button_loading(preview_button, loader, loading)
             text.configure(state=tk.DISABLED if loading else tk.NORMAL)
-            for checkbox in component_controls:
-                checkbox.configure(state='disabled' if loading else 'normal')
+            for control in component_controls:
+                control.state(['disabled' if loading else '!disabled'])
             update_preview_controls(loading)
 
         self.preview_loaders[suggestion.uid] = set_loading
@@ -847,10 +924,10 @@ class LLMSuggestionsPanel(ttk.Frame):
         self.text_flush[suggestion.uid] = flush_text
         text.edit_modified(False)
         text.bind('<<Modified>>', on_text_edit)
-        component_controls = self._build_component_controls(card, suggestion, flush_text)
+        component_controls = self._build_component_controls(card, suggestion, flush_text, class_names)
         set_loading(self.text_interpretations.get(suggestion.uid, (None, 'ready'))[1] == 'pending')
 
-    def _build_component_controls(self, card, suggestion, flush_text):
+    def _build_component_controls(self, card, suggestion, flush_text, class_names):
         rows = ttk.Frame(card)
         rows.pack(fill=tk.X, pady=(ui_theme.PAD_M, 0))
         rows.columnconfigure(0, weight=1)
@@ -879,10 +956,27 @@ class LLMSuggestionsPanel(ttk.Frame):
             (suggestion.class_j, suggestion.class_j_name, 'tighten_j'),
         )):
             label = ttk.Frame(rows)
-            label.grid(row=row, column=0, sticky=tk.W)
+            label.grid(row=row, column=0, sticky=tk.EW)
             self._color_dot(label, lambda index=class_index: index).pack(side=tk.LEFT, padx=(0, ui_theme.PAD_S))
-            ttk.Label(label, text=name, wraplength=self.wrap_length - 180,
-                      justify=tk.LEFT).pack(side=tk.LEFT)
+            if suggestion.source == 'human':
+                other_class = suggestion.class_j if row == 0 else suggestion.class_i
+                choices = [index for index in sorted(class_names) if index != other_class]
+                selector = ttk.Combobox(label, values=[class_names[index] for index in choices],
+                                        state='readonly', width=1)
+                selector.set(name)
+                selector.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, ui_theme.PAD_S))
+
+                def select_class(_event, widget=selector, indices=choices, slot=row):
+                    selected = widget.current()
+                    if selected >= 0:
+                        flush_text()
+                        self._set_suggestion_class(suggestion, slot, indices[selected], class_names)
+
+                selector.bind('<<ComboboxSelected>>', select_class)
+                controls.append(selector)
+            else:
+                ttk.Label(label, text=name, wraplength=self.wrap_length - 180,
+                          justify=tk.LEFT).pack(side=tk.LEFT)
             arrow = tk.BooleanVar(master=rows, value=bool(np.any(vectors.get(class_index, 0))))
             tighten = tk.BooleanVar(master=rows, value=getattr(suggestion, tighten_field))
             for column, (title, component, variable) in enumerate(
@@ -895,6 +989,35 @@ class LLMSuggestionsPanel(ttk.Frame):
                 checkbox.grid(row=row, column=column, sticky=tk.W, padx=(ui_theme.PAD_S, 0))
                 controls.append(checkbox)
         return controls
+
+    def _set_suggestion_class(self, suggestion, slot, class_index, class_names):
+        previous = (suggestion.class_i, suggestion.class_j)
+        if class_index in previous or class_index not in class_names:
+            return
+        if self.text_interpretations.get(suggestion.uid, (None, 'ready'))[1] == 'pending':
+            return
+        unchanged = previous[1 - slot]
+        unchanged_move = suggestion.move_overrides.get(unchanged)
+        unchanged_disabled = unchanged in suggestion.disabled_arrows
+        pair = (class_index, unchanged) if slot == 0 else (unchanged, class_index)
+        suggestion.set_classes(*pair, class_names)
+        if unchanged_move is not None:
+            suggestion.move_overrides[unchanged] = unchanged_move
+        if unchanged_disabled:
+            suggestion.disabled_arrows.add(unchanged)
+        if slot == 0:
+            suggestion.tighten_amount_i = None
+            if suggestion.direction == 'custom_angle':
+                suggestion.direction, suggestion.move_angle = 'away_from_j', None
+            if suggestion.scale == 'custom':
+                suggestion.scale, suggestion.move_amount = 'medium', None
+        else:
+            suggestion.tighten_amount_j = None
+        suggestion.edited = True
+        self._log('SUGGESTION_EDITED', uid=suggestion.uid, via='dropdown', input_method='controls',
+                  component='class', previous_class_index=previous[slot], class_index=class_index,
+                  suggestion=suggestion.as_log_dict())
+        self.refresh_cards()
 
     def _set_text(self, suggestion, new_text, class_names=None, *, interpret=True, input_method='text'):
         class_names = class_names or self._class_names()

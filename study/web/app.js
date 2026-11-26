@@ -275,36 +275,35 @@ function setRecordingControls(compact){
 }
 
 $('recordStart').onclick=async()=>{if(!$('consent').checked){$('recordStatus').textContent='Participant agreement is required before recording.';return;}
- const start=$('recordStart'),status=$('recordStatus'),microphone=$('recordMicrophone');
+ const start=$('recordStart'),status=$('recordStatus');
  if(!state){status.textContent='Wait for the survey to load before recording.';return;}
  const studyId=state.study_id||$('studyId').value.trim();
  if(!studyId||/[\\/:*?"<>|\x00-\x1f]/.test(studyId)||studyId.length>80){
   status.textContent='Enter a Study ID of up to 80 characters without path punctuation.';
   return;
  }
- const includeMicrophone=microphone.checked;
  start.disabled=true;
- microphone.disabled=true;
  $('studyId').disabled=true;
  let stage='screen';
- try{state.events.push({type:'recording_consent_confirmed',microphone:includeMicrophone,time:new Date().toISOString()});const screen=await navigator.mediaDevices.getDisplayMedia({video:{displaySurface:'monitor'},audio:false});recordStreams=[screen];
+ try{state.events.push({type:'recording_consent_confirmed',microphone:true,time:new Date().toISOString()});const screen=await navigator.mediaDevices.getDisplayMedia({video:{displaySurface:'monitor'},audio:false});recordStreams=[screen];
  const surface=screen.getVideoTracks()[0].getSettings().displaySurface;
  if(surface&&surface!=='monitor')throw Error('Select the entire screen so the study can record the survey and both tool windows.');
- if(includeMicrophone){
-  stage='microphone';
-  status.textContent='Waiting for microphone access...';
-  recordStreams.push(await navigator.mediaDevices.getUserMedia({audio:true}));
- }
+ stage='microphone';
+ status.textContent='Waiting for microphone access...';
+ const microphone=await navigator.mediaDevices.getUserMedia({audio:true});
+ recordStreams.push(microphone);
+ const audioTrack=microphone.getAudioTracks().find(track=>track.readyState==='live');
+ if(!audioTrack)throw new DOMException('No active microphone track', 'NotFoundError');
  stage='recorder';
  const combined=new MediaStream(recordStreams.flatMap(stream=>stream.getTracks()));
  const recordingFormats=[
-  ...(canFinalizeMp4?[includeMicrophone?'video/mp4;codecs=avc1,mp4a.40.2':'video/mp4']:[]),
-  includeMicrophone?'video/webm;codecs=vp8,opus':'video/webm;codecs=vp8','video/webm',
+  ...(canFinalizeMp4?['video/mp4;codecs=avc1,mp4a.40.2']:[]),
+  'video/webm;codecs=vp8,opus','video/webm',
  ];
  const mime=recordingFormats.find(format=>MediaRecorder.isTypeSupported(format));
  if(!mime)throw Error('This browser cannot record in a format supported by the local survey server.');
  recorder=new MediaRecorder(combined,{mimeType:mime});
- recordId=crypto.randomUUID();recordingSession=state.session_id;part=0;recordChunks=[];uploadQueue=Promise.resolve();let uploadFailed=false,savedFilename;
+ recordId=crypto.randomUUID();recordingSession=state.session_id;part=0;recordChunks=[];uploadQueue=Promise.resolve();let uploadFailed=false,microphoneLost=false,savedFilename;
  recorder.ondataavailable=e=>{if(!e.data.size)return;recordChunks.push(e.data);const currentPart=part++;uploadQueue=uploadQueue.then(async()=>{const query=new URLSearchParams({session:recordingSession,recording:recordId,study_id:studyId,part:currentPart,mime:recorder.mimeType});const r=await fetch('/api/recordings?'+query,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:e.data});if(!r.ok)throw Error('Recording upload failed');savedFilename=(await r.json()).filename;}).catch(()=>{uploadFailed=true;$('recordStatus').textContent='Local recording save failed. Stop and download the backup before closing.';});};
  recorder.onstart=()=>{
   state.events.push({type:'recording_started',recording_id:recordId,time:new Date().toISOString()});
@@ -319,7 +318,7 @@ $('recordStart').onclick=async()=>{if(!$('consent').checked){$('recordStatus').t
   const identity={session:recordingSession,recording:recordId};
   let finalized=false;
   if(!uploadFailed&&mp4&&part){
-   status.textContent='Finalizing the MP4 timeline…';
+   if(!microphoneLost)status.textContent='Finalizing the MP4 timeline…';
    try{
     const response=await fetch('/api/recordings/finalize',{
      method:'POST',headers:{'Content-Type':'application/json'},
@@ -343,33 +342,43 @@ $('recordStart').onclick=async()=>{if(!$('consent').checked){$('recordStatus').t
    : savedFilename||`${studyId}-${recordId.slice(0,8)}.webm`;
   backup.hidden=!part;
   $('downloadBackup').hidden=!part;
-  status.textContent=!part?'No recording data was captured. Start a new recording.'
+  const saveStatus=!part?'No recording data was captured. Start a new recording.'
    : uploadFailed?'Save failed: download the recording backup.':'Recording saved locally. A backup download is also available.';
+  status.textContent=microphoneLost?'Microphone disconnected. '+saveStatus+' Reconnect it before starting a new recording.':saveStatus;
   start.disabled=false;
-  microphone.disabled=false;
   $('studyId').disabled=Boolean(state.study_id);
   $('recordStop').disabled=true;
   $('recording').classList.remove('recording');
   setRecordingControls(false);
-  state.recordings.push({id:recordId,mime:recorder.mimeType,microphone:includeMicrophone,parts:part,save_failed:uploadFailed,stopped_at:stoppedAt});
+  state.recordings.push({id:recordId,mime:recorder.mimeType,microphone:true,parts:part,save_failed:uploadFailed,stopped_at:stoppedAt});
   saveNow().catch(()=>{});
  };
- screen.getVideoTracks()[0].onended=()=>{if(recorder.state==='recording'){recorder.stop();updateBeginAvailability();}};recorder.start(2000);state.study_id=studyId;updateBeginAvailability();$('recordStart').disabled=true;$('recordStop').disabled=false;status.textContent=includeMicrophone?'Recording screen and microphone.':'Recording screen only.';$('recording').classList.add('recording');setRecordingControls($('finished').hidden);
+ audioTrack.onended=()=>{
+  if(recorder.state!=='recording')return;
+  microphoneLost=true;
+  recorder.stop();
+  updateBeginAvailability();
+  $('recordStop').disabled=true;
+  setRecordingControls(false);
+  status.textContent='Microphone disconnected. Saving the recording so far…';
+ };
+ screen.getVideoTracks()[0].onended=()=>{if(recorder.state==='recording'){recorder.stop();updateBeginAvailability();}};recorder.start(2000);state.study_id=studyId;updateBeginAvailability();$('recordStart').disabled=true;$('recordStop').disabled=false;status.textContent='Recording screen and microphone.';$('recording').classList.add('recording');setRecordingControls($('finished').hidden);
  }catch(e){
   recordStreams.forEach(stream=>stream.getTracks().forEach(track=>track.stop()));
   recordStreams=[];
   start.disabled=false;
-  microphone.disabled=false;
   $('studyId').disabled=Boolean(state.study_id);
   updateBeginAvailability();
   if(stage==='screen'&&e.name==='NotFoundError'){
    status.textContent='Chrome could not find a screen or window to share. If you are connected remotely, try recording from Chrome on the PC itself.';
   }else if(stage==='microphone'&&e.name==='NotFoundError'){
-   status.textContent='No microphone was found. Turn off Include microphone audio for a screen-only recording, or connect a microphone and try again.';
+   status.textContent='No microphone was found. Connect a microphone and try again. Microphone audio is required for this study.';
   }else if(stage==='microphone'&&e.name==='NotAllowedError'){
-   status.textContent='Microphone access was blocked. Allow it in your browser and system privacy settings, then start recording again.';
+   status.textContent='Microphone access was blocked. Allow it in your browser and system privacy settings, then try again. Microphone audio is required for this study.';
+  }else if(stage==='microphone'){
+   status.textContent='Could not open the microphone: '+e.message+'. Microphone audio is required for this study.';
   }else{
-   const action={screen:'share the screen',microphone:'open the microphone',recorder:'start the recorder'}[stage];
+   const action={screen:'share the screen',recorder:'start the recorder'}[stage];
    status.textContent='Could not '+action+': '+e.message;
   }
  }
@@ -401,7 +410,6 @@ window.addEventListener('beforeunload',e=>{
  if($('tutorialVideo').error)showTutorialError();
  $('studyId').value=new URLSearchParams(location.search).get('studyId')||'';
  $('consent').checked=false;
- $('recordMicrophone').checked=$('recordMicrophone').defaultChecked;
  $('saveStatus').textContent='Ready — saves locally';
 })().catch(e=>{$('saveStatus').textContent='Could not load survey: '+e.message;});
 

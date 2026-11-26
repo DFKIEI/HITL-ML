@@ -22,6 +22,35 @@ def test_llm_interpretation_and_invalid_class_rejection(monkeypatch):
     with pytest.raises(ValueError,match='unknown class'):interpret_instruction('move',{0:'cat',1:'dog'},dict(class_i=0,class_j=1))
 
 
+@pytest.mark.parametrize('study_mode, limit', [(True, 4), (False, 5)])
+def test_suggestion_request_enforces_review_limit(monkeypatch, study_mode, limit):
+    from ui.ui_llm import LLMSuggestionsPanel
+    from queue import Queue
+
+    pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3)]
+    model_order = [pairs[0], (1, 0), pairs[0], *pairs[1:]]
+    reply = json.dumps({'suggestions': [
+        {'class_i': i, 'class_j': j, 'suggestion': f'Move {i} away from {j}'}
+        for i, j in model_order
+    ]})
+    chat = MagicMock(return_value=(reply, {}))
+    monkeypatch.setattr(openrouter, 'chat_completion', chat)
+    dataset = SimpleNamespace(classes=['cat', 'dog', 'ship', 'truck'])
+    plot = SimpleNamespace(dataloader=SimpleNamespace(dataset=dataset),
+                           latent_features=np.array([[0, 0], [1, 1], [2, 2], [3, 3]]),
+                           selected_labels=np.arange(4), dataset_name='CIFAR10')
+    panel = SimpleNamespace(ui=SimpleNamespace(plot=plot), result_queue=Queue())
+
+    LLMSuggestionsPanel._worker(panel, 'test-model', None, study_mode=study_mode)
+    status, payload = panel.result_queue.get_nowait()
+    assert status == 'ok', payload
+    expected_pairs = pairs if study_mode else model_order
+    assert [(item.class_i, item.class_j) for item in payload[1]] == expected_pairs[:limit]
+    prompt = chat.call_args.args[0][1]['content']
+    assert f'Return only the {limit} most important suggestions' in prompt
+    assert ('Use each class pair at most once' in prompt) == study_mode
+
+
 def test_study_never_blocks_apply_for_begin_count_or_time_limits():
     variable=lambda x:SimpleNamespace(get=lambda:x)
     panel=SimpleNamespace(study_mode_var=variable(True),study_started=None,study_count=0,
@@ -33,6 +62,65 @@ def test_study_never_blocks_apply_for_begin_count_or_time_limits():
     assert StudyControls.study_allows_apply(panel)
 
 
+def test_training_loader_reuses_prefetched_batches_and_retries_failed_preparation():
+    import threading
+    from data.data_loader import prepare_training_loaders
+
+    class Loader:
+        persistent_workers = True
+
+        def __init__(self, fail_once=False):
+            self.iterations = 0
+            self.fail_once = fail_once
+
+        def __iter__(self):
+            self.iterations += 1
+            if self.fail_once and self.iterations == 1:
+                raise RuntimeError('worker startup failed')
+            return iter([0, 1, 2])
+
+        def __len__(self):
+            return 3
+
+    train, validation, test = Loader(), Loader(fail_once=True), Loader()
+    prepared_train, prepared_validation, untouched_test = prepare_training_loaders(
+        (train, validation, test), threading.Event(), plot_loader=test)
+    assert untouched_test is test and test.iterations == 0
+    assert len(prepared_train) == 3
+    assert list(prepared_train) == [0, 1, 2]
+    assert train.iterations == 1
+    assert list(prepared_train) == [0, 1, 2]
+    assert train.iterations == 2
+    assert list(prepared_validation) == [0, 1, 2]
+    assert validation.iterations == 2
+
+
+def test_initial_standalone_plot_starts_background_preparation_once(monkeypatch):
+    from queue import Queue
+    import matplotlib
+
+    with monkeypatch.context() as backend_patch:
+        backend_patch.setattr(matplotlib, 'use', lambda *args, **kwargs: None)
+        from ui import ui as ui_module
+
+    train, validation, test = object(), object(), object()
+    prepared = (object(), validation, object())
+    prepare = MagicMock(return_value=prepared)
+    monkeypatch.setattr(ui_module, 'prepare_training_loaders', prepare)
+    plot = SimpleNamespace(dataloader=validation, prepare_data=MagicMock(), get_plot_data=MagicMock())
+    app = SimpleNamespace(
+        study_session_id=None, prepared_training_loaders=None, training_thread=None,
+        plot=plot, current_plot_type='scatter', selected_layer=None,
+        trainloader=train, valloader=validation, testloader=test, stop_training=object(),
+        visualization_queue=Queue(),
+    )
+
+    ui_module.UI.update_visualization(app)
+    ui_module.UI.update_visualization(app)
+    prepare.assert_called_once_with((train, validation, test), app.stop_training, plot_loader=validation)
+    assert app.prepared_training_loaders == prepared
+
+
 def test_checkpoint_loader_supports_weights_only_and_rolls_back_bad_weights(tmp_path):
     model=torch.nn.Linear(2,2);optimizer=torch.optim.Adam(model.parameters())
     original={k:v.clone() for k,v in model.state_dict().items()}
@@ -41,6 +129,23 @@ def test_checkpoint_loader_supports_weights_only_and_rolls_back_bad_weights(tmp_
     bad=tmp_path/'bad.pt';torch.save({'weight':torch.zeros(3,2),'bias':torch.ones(2)},bad)
     with pytest.raises(RuntimeError):load_checkpoint(model,optimizer,bad)
     for k,v in model.state_dict().items():assert torch.equal(v,original[k])
+
+
+def test_study_checkpoint_displays_verified_starting_accuracies(monkeypatch, tmp_path):
+    from queue import Queue
+    from ui import ui_study
+
+    path = tmp_path / 'checkpoint_epoch_25.pt'
+    monkeypatch.setattr(ui_study, 'load_checkpoint', lambda *args: (25, {'val_accuracy': 81.0}))
+    panel = SimpleNamespace(
+        model=object(), optimizer=object(), visualization_queue=Queue(), log_messages=Queue(),
+        checkpoint_label=MagicMock(), events=MagicMock(), llm_panel=None, update_study_status=MagicMock(),
+        study_checkpoint_path=path.resolve(),
+        study_checkpoint_settings={'verified_validation': {'accuracy': 82.1}, 'verified_test': {'accuracy': 83.2}},
+    )
+
+    assert StudyControls.load_pretrained_model(panel, path, refresh=False) == 25
+    assert panel.log_messages.get_nowait() == ({'epoch': 25, 'val_accuracy': 82.1, 'test_accuracy': 83.2}, True)
 
 
 def test_five_epoch_checkpoints_independent_of_pause_schedule(monkeypatch,tmp_path):
@@ -121,6 +226,29 @@ def test_apply_logs_original_text_user_text_interpretation_and_movements(monkeyp
     for c in np.unique(ui.data['labels']):
         np.testing.assert_allclose(target_event['target'][str(c)]['center'],
                                    ui.moved_points[ui.data['labels']==c].mean(axis=0),atol=1e-6)
+
+
+def test_custom_suggestion_class_selection_applies_without_instruction():
+    from test_overlay_drag import plot_ui, suggestion
+    from ui.ui_llm import LLMSuggestionsPanel
+
+    custom = suggestion(source='human')
+    ui, points, labels = plot_ui([custom])
+    ui.update_log = MagicMock()
+    panel = SimpleNamespace(ui=ui, text_flush={}, text_interpretations={}, _log=MagicMock(),
+                            status_var=MagicMock(), refresh_cards=MagicMock())
+    class_names = {0: 'cat', 1: 'dog', 2: 'ship'}
+
+    LLMSuggestionsPanel._set_suggestion_class(panel, custom, 1, 0, class_names)
+    assert not custom.edited
+    LLMSuggestionsPanel._set_suggestion_class(panel, custom, 1, 2, class_names)
+    assert (custom.class_i, custom.class_j, custom.class_j_name) == (0, 2, 'ship')
+    assert custom.edited and not custom.suggestion
+    panel.refresh_cards.assert_called_once()
+    assert panel._log.call_args.kwargs['input_method'] == 'controls'
+    assert LLMSuggestionsPanel._apply(panel, custom)
+    np.testing.assert_allclose(ui.moved_points[labels == 1], points[labels == 1])
+    assert not np.allclose(ui.moved_points[labels == 2], points[labels == 2])
 
 
 def test_study_guard_covers_auto_apply_and_counts_committed_movement_once():

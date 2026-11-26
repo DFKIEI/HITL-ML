@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk
 import threading
 import traceback
 import queue
@@ -16,6 +16,7 @@ matplotlib.use('TkAgg')
 SHOW_EXTRA_PLOTS = False
 
 from plots.plots import InteractivePlot
+from data.data_loader import prepare_training_loaders
 from training.training import train_model
 from ui.ui_control import create_info_labels, create_training_controls
 from ui.ui_display import (display_scatter_plot, display_parallel_plot, display_radar_plot, get_label_names,
@@ -46,6 +47,7 @@ class UI(StudyControls):
         self.loss_type = loss_type
         self.visualization = visualization
         self.study_plot_loader = study_plot_loader
+        self.prepared_training_loaders = None
         self.probant_id = probant_id
         self.scenario = scenario
 
@@ -201,8 +203,7 @@ class UI(StudyControls):
 
         ttk.Separator(main_frame, orient=tk.VERTICAL).pack(side="left", fill="y", padx=ui_theme.PAD_M)
 
-        # LLM suggestions docked right of the plot, in a collapsible sidebar;
-        # shown only for strategies that use the LLM (see on_strategy_change).
+        # The collapsible right sidebar contains suggestions, scores and the plot legend.
         self.llm_sidebar = tk.Frame(main_frame, bg=ui_theme.BG)
         self.llm_sidebar.pack(side=tk.RIGHT, fill=tk.Y)
         right_strip = tk.Frame(self.llm_sidebar, bg=ui_theme.BG)
@@ -231,13 +232,6 @@ class UI(StudyControls):
         self.notebook = ttk.Notebook(self.center_panel)
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.training_log_frame = ttk.LabelFrame(self.center_panel, text='Training log', padding=5)
-        self.training_log_frame.pack(side=tk.BOTTOM, fill=tk.X, before=self.notebook)
-        ttk.Label(self.training_log_frame, textvariable=self.status_var).pack(anchor=tk.W)
-        self.training_log_text = scrolledtext.ScrolledText(self.training_log_frame, height=5, wrap=tk.WORD)
-        ui_theme.style_scrolled_text(self.training_log_text)
-        self.training_log_text.configure(state=tk.DISABLED)
-        self.training_log_text.pack(fill=tk.X)
         self.root.after(100, self.process_log_queue)
 
         self.scatter_tab = ttk.Frame(self.notebook)
@@ -354,8 +348,10 @@ class UI(StudyControls):
     def run_training(self):
         try:
             start_epoch, epochs, pause_every = self.training_schedule()
-            train_model(self.model, self.optimizer, self.trainloader, self.valloader,
-                        self.testloader, self.device, epochs, self.freq_var.get(), self.alpha_var,
+            trainloader, valloader, testloader = self.prepared_training_loaders or (
+                self.trainloader, self.valloader, self.testloader)
+            train_model(self.model, self.optimizer, trainloader, valloader,
+                        testloader, self.device, epochs, self.freq_var.get(), self.alpha_var,
                         self.report_dir,
                         log_callback=self.update_log,
                         pause_event=self.pause_event,
@@ -394,6 +390,7 @@ class UI(StudyControls):
     def record_metrics(self, metrics):
         """Keep the newest scores so the LLM sees how the model is doing."""
         self.latest_metrics = metrics
+        self.log_messages.put((metrics, False))
         self.loaded_checkpoint_epoch = metrics['epoch']
         if self.study_schedule_enabled():
             self.record_study_test(metrics)
@@ -415,13 +412,7 @@ class UI(StudyControls):
         self.dragging_enabled = strategy.human_drag
 
         if self.llm_panel is not None:
-            if strategy.llm_suggestions:
-                if not self.llm_sidebar.winfo_ismapped():
-                    self.llm_sidebar.pack(side=tk.RIGHT, fill=tk.Y, before=self.center_panel)
-                self.llm_panel.refresh_for_strategy()
-            else:
-                self.llm_sidebar.pack_forget()
-            self.llm_panel.on_visibility_change()
+            self.llm_panel.show_suggestions(strategy.llm_suggestions)
 
         self.events.log('STRATEGY_CHANGED', strategy=strategy.id, label=strategy.label)
         self.update_log(f"Strategy set to: {strategy.label}")
@@ -449,14 +440,15 @@ class UI(StudyControls):
         try:
             while True:
                 message = self.log_messages.get_nowait()
+                if isinstance(message, tuple):
+                    metrics, baseline = message
+                    self.llm_panel.append_training_scores(metrics, baseline=baseline)
+                    continue
                 if message in ('Finished Training', 'Training stopped') or message.startswith('Training failed:'):
                     self.status_var.set(message)
                     self.training_button.configure(text='Start Training')
-                for widget in (self.log_text, self.training_log_text):
-                    widget.configure(state=tk.NORMAL)
-                    widget.insert(tk.END, message + "\n")
-                    widget.see(tk.END)
-                self.training_log_text.configure(state=tk.DISABLED)
+                self.log_text.insert(tk.END, message + "\n")
+                self.log_text.see(tk.END)
         except queue.Empty:
             pass
         self.root.after(100, self.process_log_queue)
@@ -533,6 +525,10 @@ class UI(StudyControls):
             self.plot.selected_layer = self.selected_layer
         # self.plot.selected_classes = selected_classes
         plot_data = self.plot.get_plot_data(self.current_plot_type)
+        if self.prepared_training_loaders is None and self.training_thread is None:
+            self.prepared_training_loaders = prepare_training_loaders(
+                (self.trainloader, self.valloader, self.testloader), self.stop_training,
+                plot_loader=self.plot.dataloader)
         self.visualization_queue.put((plot_data, self.current_plot_type))
 
     def on_tab_change(self, event):

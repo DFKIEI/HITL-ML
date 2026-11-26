@@ -66,7 +66,7 @@ This **starts real training** when run; it was not launched as part of setup. Fi
 
 ## Screen and microphone recording
 
-For a screen-only recording, clear **Include microphone audio**. Confirm participant agreement, choose **Start recording**, and select the application window (or entire screen if switching windows must be captured). Allow microphone access if you enabled audio. The browser displays its own capture permission and recording indicator. Screen and microphone are combined in one WebM/MP4 file. The app does not silently start recording.
+Screen and microphone audio are required for the study. Confirm participant agreement, choose **Start recording**, select the entire screen, and allow microphone access. If the browser cannot open a microphone, the survey shows an error and recording cannot start. If the microphone disconnects during recording, the survey stops and saves what it captured. Screen and microphone are combined in one WebM/MP4 file.
 
 Recording continues while the participant works in the desktop app. Data is saved in ordered chunks to the participant session folder on the local server. Choose **Stop and save recording**, wait for the saved message, and retain the backup download if saving fails. Do not close the browser/server before that message. Browser memory also retains a backup until the recording is stopped; keep sessions reasonably short.
 
@@ -149,6 +149,6 @@ The existing session and legacy logs remain application diagnostics and can
 contain setup activity; use `experiment_*.jsonl` for participant analysis.
 
 The desktop UI defaults to **strategy 4: LLM suggests, human edits (2D)**.
-A scrolling **Training log** stays below the plot, including when Study mode
-hides the left settings sidebar. It mirrors the activity log and shows training
-progress, loss/accuracy, validation/test results, pauses, and checkpoint messages.
+The **Training log** sits above the plot legend in the right sidebar. It shows
+test and validation accuracy by epoch, starting with the verified scores for the
+study's epoch-25 checkpoint.
