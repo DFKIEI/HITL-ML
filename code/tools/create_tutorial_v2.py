@@ -7,6 +7,7 @@ Windows needs ffmpeg on PATH and the existing narration files, so use --reuse-na
 Run from the repository root. Output: study/web/tutorial_v2.{mp4,vtt,m4a}, tutorial_v2_script.json
 """
 import os,sys,time,json,subprocess,argparse,math,wave,textwrap
+os.environ.setdefault('HITL_NUM_WORKERS','0')  # no loader worker processes: they crash on exit under Windows spawn
 if sys.platform=='win32':
     import ctypes
     try:ctypes.windll.shcore.SetProcessDpiAwareness(2)  # physical pixels, so screen grabs match widget geometry
@@ -36,6 +37,29 @@ SCENES=[
 ('6. Continue training','When you are done reviewing, click Continue Training. The model then trains with your changes.','Continue Training starts training with your changes.',9),
 ]
 
+def ffmpeg_exe():
+    import shutil
+    found=shutil.which('ffmpeg')
+    if found:return found
+    try:
+        import imageio_ffmpeg  # bundled binary, listed in requirements.txt
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        raise SystemExit('ffmpeg not found. Install it (winget install ffmpeg) or pip install imageio-ffmpeg.')
+
+def encode(entries,output,frames,name,frame_count=None):
+    manifest=frames/'v2_frames.txt'
+    if not manifest.is_file():raise SystemExit(f'{manifest} not found; run the recording first.')
+    total=sum(e['duration'] for e in entries);dest=output/f'{name}.mp4'
+    subprocess.run([ffmpeg_exe(),'-y','-v','error','-f','concat','-safe','0','-i',str(manifest),'-i',str(output/'tutorial_v2_narration.m4a'),
+                    '-t',str(total),'-vf','fps=24,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p','-c:v','libx264','-preset','fast','-crf','22',
+                    '-c:a','aac','-metadata:s:a:0','language=eng','-disposition:a:0','default','-movflags','+faststart',str(dest)],check=True)
+    def stamp(sec):return f'{sec//3600:02d}:{sec//60%60:02d}:{sec%60:02d}.000'
+    start=0;vtt=['WEBVTT\n']
+    for i,e in enumerate(entries):vtt.append(f"{i+1}\n{stamp(start)} --> {stamp(start+e['duration'])}\n{e['title']}: {e['caption']}\n");start+=e['duration']
+    (output/f'{name}.vtt').write_text('\n'.join(vtt))
+    print(f'Tutorial generated: {dest}; {total} s',flush=True)
+
 def build_narration(frames,output,voice,rate):
     entries=[]
     for i,(title,text,cap,floor) in enumerate(SCENES):
@@ -47,17 +71,17 @@ def build_narration(frames,output,voice,rate):
         if seconds<1:raise RuntimeError('Speech synthesis returned no usable audio.')
         duration=max(floor,math.ceil(seconds+1.0))
         padded=frames/f'v2_audio_{i:02d}.wav'
-        subprocess.run(['ffmpeg','-y','-v','error','-i',str(wav),'-af','apad','-t',str(duration),str(padded)],check=True)
+        subprocess.run([ffmpeg_exe(),'-y','-v','error','-i',str(wav),'-af','apad','-t',str(duration),str(padded)],check=True)
         entries.append(dict(title=title,caption=text,short=cap,duration=duration,audio=str(padded)))
     manifest=frames/'v2_audio.txt';manifest.write_text(''.join(f"file '{e['audio']}'\n" for e in entries))
-    subprocess.run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(manifest),'-c:a','aac','-b:a','128k',str(output/'tutorial_v2_narration.m4a')],check=True)
+    subprocess.run([ffmpeg_exe(),'-y','-v','error','-f','concat','-safe','0','-i',str(manifest),'-c:a','aac','-b:a','128k',str(output/'tutorial_v2_narration.m4a')],check=True)
     (output/'tutorial_v2_script.json').write_text(json.dumps([{k:v for k,v in e.items() if k!='audio'} for e in entries],indent=2))
     print('Narration ready:',sum(e['duration'] for e in entries),'seconds',flush=True)
     return entries
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--narration-only',action='store_true');p.add_argument('--verify-ui',action='store_true')
+    p.add_argument('--narration-only',action='store_true');p.add_argument('--encode-only',action='store_true',help='re-encode the saved frames without recording');p.add_argument('--name',default='tutorial_v2',help='output file name without extension');p.add_argument('--verify-ui',action='store_true')
     p.add_argument('--reuse-narration',action='store_true');p.add_argument('--voice',default='Daniel');p.add_argument('--rate',type=int,default=155)
     args=p.parse_args()
     if sys.platform!='darwin' and not args.verify_ui:args.reuse_narration=True  # speech synthesis uses macOS `say`
@@ -66,6 +90,7 @@ def main():
              json.loads((output/'tutorial_v2_script.json').read_text()) if args.reuse_narration else
              build_narration(frames,output,args.voice,args.rate))
     if args.narration_only:return
+    if args.encode_only:encode(entries,output,frames,args.name);return
     device=torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     train,val,test,classes,shape=load_dataset('CIFAR10',512)
     model=get_model('CNN_CIFAR10',shape,classes).to(device)
@@ -274,14 +299,6 @@ def main():
         app.on_close();print('v2 UI walkthrough passed without capture or API calls.');return
     manifest=frames/'v2_frames.txt'
     manifest.write_text(''.join(f"file '{Path(p).as_posix()}'\nduration {d:.6f}\n" for p,d in timeline)+f"file '{Path(timeline[-1][0]).as_posix()}'\n")
-    total=sum(e['duration'] for e in entries);dest=output/'tutorial_v2.mp4'
-    subprocess.run(['ffmpeg','-y','-v','error','-f','concat','-safe','0','-i',str(manifest),'-i',str(output/'tutorial_v2_narration.m4a'),
-                    '-t',str(total),'-vf','fps=24,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p','-c:v','libx264','-preset','fast','-crf','22',
-                    '-c:a','aac','-metadata:s:a:0','language=eng','-disposition:a:0','default','-movflags','+faststart',str(dest)],check=True)
-    def stamp(sec):return f'{sec//3600:02d}:{sec//60%60:02d}:{sec%60:02d}.000'
-    start=0;vtt=['WEBVTT\n']
-    for i,e in enumerate(entries):vtt.append(f"{i+1}\n{stamp(start)} --> {stamp(start+e['duration'])}\n{e['title']}: {e['caption']}\n");start+=e['duration']
-    (output/'tutorial_v2.vtt').write_text('\n'.join(vtt))
-    print(f'Tutorial v2 generated: {dest}; {total} s; {frame_number} frames',flush=True)
+    encode(entries,output,frames,args.name);print(f'{frame_number} frames captured',flush=True)
     app.on_close()
 if __name__=='__main__':main()
